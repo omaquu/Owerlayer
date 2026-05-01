@@ -1,0 +1,203 @@
+pub fn render_toolbar(
+    ctx: &egui::Context,
+    active_tool: &mut Tool,
+    settings: &mut Settings,
+    show_settings_panel: &mut bool,
+    show_layers_panel: &mut bool,
+    project: &mut crate::project::Project,
+) {
+    let frame = glass_frame(settings.menu_hue, settings.menu_opacity);
+
+    // Detect if we should snap to vertical layout based on current window position
+    let mut is_vertical = false;
+    let screen_width = ctx.screen_rect().width();
+    if let Some(rect) = ctx.memory(|mem| mem.area_rect(egui::Id::new("toolbar_window"))) {
+        if rect.min.x < 30.0 || rect.max.x > screen_width - 30.0 {
+            is_vertical = true;
+        }
+    }
+
+    egui::Window::new("toolbar_window")
+        .title_bar(false)
+        .resizable(false)
+        .collapsible(false)
+        .movable(true)
+        .default_pos(egui::pos2(12.0, 200.0))
+        .frame(frame)
+        .show(ctx, |ui| {
+            let accent = color32(&settings.accent_color);
+            ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0); // Tighter spacing
+
+            // ── Photoshop-style Drag Handle & Close ──
+            ui.horizontal(|ui| {
+                // Subtle drag handle texture (dots or lines)
+                ui.label(egui::RichText::new("⠿").size(10.0).color(egui::Color32::from_gray(100)));
+                
+                // Push close button to the far right reliably
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let close = ui.add(
+                        egui::Button::new(egui::RichText::new("×").size(12.0).color(egui::Color32::from_gray(140)))
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE)
+                            .min_size(egui::vec2(16.0, 16.0)),
+                    );
+                    if close.on_hover_text("Close Owerlayer").clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+            });
+
+            ui.add(egui::Separator::default().spacing(4.0));
+
+            // ── Tools layout (vertical or horizontal) ──
+            let mut tools_ui = |ui: &mut egui::Ui, is_vertical: bool, active_tool: &mut Tool| {
+                // Unicode icons for tools
+                if tool_btn(ui, "👆", *active_tool == Tool::Move, "Move", accent) { *active_tool = Tool::Move; }
+                if tool_btn(ui, "🖌", *active_tool == Tool::Pen, "Brush", accent) { *active_tool = Tool::Pen; }
+                if tool_btn(ui, "T", *active_tool == Tool::Text, "Text", accent) { *active_tool = Tool::Text; }
+                if tool_btn(ui, "▱", *active_tool == Tool::Eraser, "Eraser", accent) { *active_tool = Tool::Eraser; }
+                if tool_btn(ui, "╱", *active_tool == Tool::Line, "Line", accent) { *active_tool = Tool::Line; }
+                if tool_btn(ui, "↗", *active_tool == Tool::Arrow, "Arrow", accent) { *active_tool = Tool::Arrow; }
+                if tool_btn(ui, "✂", *active_tool == Tool::Snip, "Snip", accent) { *active_tool = Tool::Snip; }
+                if tool_btn(ui, "⬚", matches!(*active_tool, Tool::Shape(_)), "Shapes", accent) {
+                    *active_tool = Tool::Shape(ShapeType::Rect);
+                }
+
+                if is_vertical { ui.add(egui::Separator::default().spacing(4.0)); } else { ui.add(egui::Separator::default().spacing(4.0).vertical()); }
+
+                if tool_btn(ui, "🖼", false, "Import Local Image", accent) {
+                    if let Some(path) = rfd::FileDialog::new().add_filter("Image", &["png", "jpg", "jpeg", "gif"]).pick_file() {
+                        if let Ok(img) = image::open(&path) {
+                            let rgba = img.to_rgba8();
+                            let pixels = rgba.into_raw();
+                            let size = [img.width() as usize, img.height() as usize];
+                            if let Some(layer) = project.get_active_layer_mut() {
+                                layer.placed_images.push(PlacedImage {
+                                    id: layer.placed_images.len(),
+                                    position: egui::pos2(100.0, 100.0),
+                                    size,
+                                    display_size: None,
+                                    pixels,
+                                    texture: None,
+                                });
+                            }
+                            // Auto create layer
+                            project.layers.push(crate::project::Layer::new(&format!("Image {}", project.layers.len() + 1)));
+                            project.active_layer = project.layers.len() - 1;
+                            let img = project.layers[project.active_layer - 1].placed_images.pop().unwrap();
+                            project.layers.last_mut().unwrap().placed_images.push(img);
+                        }
+                    }
+                }
+                if tool_btn(ui, "🔗", false, "Import Image from URL (WIP)", accent) {}
+
+                if is_vertical { ui.add(egui::Separator::default().spacing(4.0)); } else { ui.add(egui::Separator::default().spacing(4.0).vertical()); }
+
+                if tool_btn(ui, "📑", *show_layers_panel, "Layers", accent) {
+                    *show_layers_panel = !*show_layers_panel;
+                }
+                if tool_btn(ui, "⚙", *show_settings_panel, "Settings", accent) {
+                    *show_settings_panel = !*show_settings_panel;
+                }
+            };
+
+            let mut sub_options_ui = |ui: &mut egui::Ui, is_vertical: bool, active_tool: &mut Tool| {
+                // ── Color pickers ──
+                let mut bg = color32(&settings.background_color);
+                if ui.color_edit_button_srgba(&mut bg).on_hover_text("Fill Color").changed() {
+                    settings.background_color = [bg.r(), bg.g(), bg.b(), bg.a()];
+                }
+                
+                let mut fg = color32(&settings.pen_color);
+                if ui.color_edit_button_srgba(&mut fg).on_hover_text("Stroke Color").changed() {
+                    settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()];
+                }
+
+                if is_vertical { ui.add_space(4.0); } else { ui.add_space(8.0); }
+                
+                // ── Width Boxes ──
+                ui.horizontal(|ui| {
+                    ui.label("Brush:");
+                    ui.add(egui::DragValue::new(&mut settings.pen_width).range(1.0..=100.0).speed(0.5));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Stroke:");
+                    ui.add(egui::DragValue::new(&mut settings.stroke_width).range(1.0..=50.0).speed(0.5));
+                });
+
+                if is_vertical { ui.add(egui::Separator::default().spacing(4.0)); } else { ui.add(egui::Separator::default().spacing(4.0).vertical()); }
+
+                // ── Tool Specific Options ──
+                if *active_tool == Tool::Pen {
+                    if is_vertical {
+                        if tool_btn(ui, "■", settings.brush_mode == BrushMode::Solid, "Solid", accent) { settings.brush_mode = BrushMode::Solid; }
+                        if tool_btn(ui, "▤", settings.brush_mode == BrushMode::Highlighter, "Highlighter", accent) { settings.brush_mode = BrushMode::Highlighter; }
+                        if tool_btn(ui, "✒", settings.brush_mode == BrushMode::Calligraphy, "Calligraphy", accent) { settings.brush_mode = BrushMode::Calligraphy; }
+                    } else {
+                        if ui.selectable_label(settings.brush_mode == BrushMode::Solid, "Solid").clicked() { settings.brush_mode = BrushMode::Solid; }
+                        if ui.selectable_label(settings.brush_mode == BrushMode::Highlighter, "Highlighter").clicked() { settings.brush_mode = BrushMode::Highlighter; }
+                        if ui.selectable_label(settings.brush_mode == BrushMode::Calligraphy, "Calligraphy").clicked() { settings.brush_mode = BrushMode::Calligraphy; }
+                    }
+                }
+                
+                if matches!(*active_tool, Tool::Shape(_)) {
+                    let mut st = match *active_tool {
+                        Tool::Shape(s) => s,
+                        _ => ShapeType::Rect,
+                    };
+                    if is_vertical {
+                        if tool_btn(ui, "◻", st == ShapeType::Rect, "Rectangle", accent) { st = ShapeType::Rect; }
+                        if tool_btn(ui, "◯", st == ShapeType::Circle, "Circle", accent) { st = ShapeType::Circle; }
+                        if tool_btn(ui, "★", st == ShapeType::Star, "Star", accent) { st = ShapeType::Star; }
+                        if tool_btn(ui, "♥", st == ShapeType::Heart, "Heart", accent) { st = ShapeType::Heart; }
+                    } else {
+                        if ui.selectable_label(st == ShapeType::Rect, "Rect").clicked() { st = ShapeType::Rect; }
+                        if ui.selectable_label(st == ShapeType::Circle, "Circle").clicked() { st = ShapeType::Circle; }
+                        if ui.selectable_label(st == ShapeType::Star, "Star").clicked() { st = ShapeType::Star; }
+                        if ui.selectable_label(st == ShapeType::Heart, "Heart").clicked() { st = ShapeType::Heart; }
+                    }
+                    *active_tool = Tool::Shape(st);
+                }
+                
+                if *active_tool == Tool::Eraser {
+                    if is_vertical {
+                        if tool_btn(ui, "S", settings.eraser_mode == EraserMode::Stroke, "Stroke", accent) { settings.eraser_mode = EraserMode::Stroke; }
+                        if tool_btn(ui, "P", settings.eraser_mode == EraserMode::Split, "Split", accent) { settings.eraser_mode = EraserMode::Split; }
+                    } else {
+                        if ui.selectable_label(settings.eraser_mode == EraserMode::Stroke, "Stroke").clicked() { settings.eraser_mode = EraserMode::Stroke; }
+                        if ui.selectable_label(settings.eraser_mode == EraserMode::Split, "Split").clicked() { settings.eraser_mode = EraserMode::Split; }
+                    }
+                }
+
+                if *active_tool == Tool::Text {
+                    if is_vertical {
+                        ui.checkbox(&mut settings.text_monospace, "M");
+                        ui.checkbox(&mut settings.text_shadow, "Sh");
+                        ui.checkbox(&mut settings.text_outline, "O");
+                    } else {
+                        ui.checkbox(&mut settings.text_monospace, "Mono");
+                        ui.checkbox(&mut settings.text_shadow, "Shadow");
+                        ui.checkbox(&mut settings.text_outline, "Outline");
+                    }
+                }
+            };
+
+            if is_vertical {
+                ui.vertical_centered(|ui| {
+                    tools_ui(ui, true, active_tool);
+                    ui.add(egui::Separator::default().spacing(4.0));
+                    sub_options_ui(ui, true, active_tool);
+                });
+            } else {
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        tools_ui(ui, false, active_tool);
+                    });
+                    ui.add(egui::Separator::default().spacing(4.0));
+                    ui.horizontal(|ui| {
+                        sub_options_ui(ui, false, active_tool);
+                    });
+                });
+            }
+        });
+}
