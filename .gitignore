@@ -1,3 +1,14 @@
 /target/
 **/*.rs.bk
 Cargo.lock
+
+# Backups
+backup/
+backup_v*/
+
+# IDE and temp files
+.vscode/
+*.txt
+*.rs
+!src/**/*.rs
+icon.png
