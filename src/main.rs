@@ -380,6 +380,7 @@ impl eframe::App for OwerlayerApp {
             // Check if mouse is over any active egui area (windows, panels)
             // We use the area_rects from the previous frame
             mem.layer_ids().any(|layer| {
+                if layer.order == egui::Order::Background { return false; }
                 if let Some(rect) = mem.area_rect(layer.id) {
                     rect.contains(mouse.pos)
                 } else {
@@ -561,17 +562,14 @@ impl eframe::App for OwerlayerApp {
         // ctx.is_pointer_over_area() is always true because the CentralPanel covers the screen.
         let mouse_pos_points = ctx.input(|i| i.pointer.hover_pos()).unwrap_or(mouse.pos);
         let is_over_ui_window = ctx.memory(|mem| {
-            [
-                egui::Id::new("photoshop_panel"),
-                egui::Id::new("Settings"),
-                egui::Id::new("Layers & Projects"),
-                egui::Id::new("subtools_popup"),
-                egui::Id::new("Exit Owerlayer?"),
-                egui::Id::new("Debug Overlay"),
-                egui::Id::new("mode_indicator"),
-            ]
-            .iter()
-            .any(|id| mem.area_rect(*id).map_or(false, |r| r.contains(mouse_pos_points)))
+            mem.layer_ids().any(|layer| {
+                if layer.order == egui::Order::Background { return false; }
+                if let Some(rect) = mem.area_rect(layer.id) {
+                    rect.contains(mouse_pos_points)
+                } else {
+                    false
+                }
+            })
         });
         let can_draw = !is_over_ui_window;
         egui::CentralPanel::default()
