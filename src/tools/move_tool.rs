@@ -29,7 +29,7 @@ pub fn update(ctx: &mut ToolContext) {
     let render_offset = ctx.render_offset;
     let active_layer_idx = project.active_layer;
 
-                let mut found_handle = false;
+                let mut click_consumed = false;
 
                 if let Some(sel) = project.selected_object {
                     let layer = &mut project.layers[sel.layer_idx];
@@ -332,12 +332,18 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                     }
                     if !hit && raw_bounds.contains(pos) {
+                        // Click INSIDE body → move this object
                         *line_start = Some(pos);
                         *drag_state = 0;
                         *initial_bounds = Some(raw_bounds);
                         *initial_layer = Some(layer.clone());
+                        click_consumed = true;
+                    } else if !hit {
+                        // Click OUTSIDE selected object → deselect it
+                        project.selected_object = None;
+                        // Do NOT set click_consumed — outer block will handle layer drag
                     }
-                    if hit || raw_bounds.contains(pos) { found_handle = true; }
+                    if hit { click_consumed = true; }
                 }
                 
                 if let Some(start) = *line_start {
@@ -426,20 +432,9 @@ pub fn update(ctx: &mut ToolContext) {
                     }
                 }
                 
-                // Track if we clicked in the HUD to prevent deselection
-                let mut clicked_in_hud = false;
-                if let Some(sel) = project.selected_object {
-                    let layer = &mut project.layers[sel.layer_idx];
-                    if let Some(raw_bounds) = object_bounds(layer, sel.object_type, sel.object_idx) {
-                        let bounds = raw_bounds.translate(-render_offset);
-                        let sel_is_embed = sel.object_type == crate::project::ObjectType::Image && sel.object_idx < layer.placed_images.len() && layer.placed_images[sel.object_idx].url.is_some();
-                        let bar_height = if sel_is_embed { 52.0 } else { 32.0 };
-                        let top_btns_rect = egui::Rect::from_min_size(bounds.left_top() - egui::vec2(0.0, bar_height), egui::vec2(bounds.width().max(320.0), bar_height));
-                        if top_btns_rect.contains(pos) { clicked_in_hud = true; }
-                    }
-                }
 
-                if left_just_pressed && !found_handle && !clicked_in_hud && !ui.ctx().is_pointer_over_area() {
+
+                if left_just_pressed && !click_consumed && !ui.ctx().is_pointer_over_area() {
                     let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
                     let mut found_objects = Vec::new();
                     
@@ -496,50 +491,31 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                     }
 
-                    if found_objects.is_empty() {
-                        project.selected_object = None;
-                        if let Some(layer) = project.get_active_layer() {
-                            *line_start = Some(pos);
-                            *drag_state = 0;
-                            *initial_layer = Some(layer.clone());
-                        }
-                    } else {
-                        // Sort by layer index (highest first) to match visual order
+                    // Always start layer drag on single click (objects need double-click to select)
+                    // Start layer drag from active layer
+                    if let Some(layer) = project.get_active_layer() {
+                        *line_start = Some(pos);
+                        *drag_state = 0;
+                        *initial_layer = Some(layer.clone());
+                    }
+                    // On double-click, also select the topmost object under cursor
+                    if is_double_click && !found_objects.is_empty() {
                         found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
-
-                        if is_double_click {
-                            // Cycle through objects under cursor
-                            let current = project.selected_object;
-                            let mut next_idx = 0;
-                            if let Some(curr) = current {
-                                if let Some(i) = found_objects.iter().position(|o| o.layer_idx == curr.layer_idx && o.object_type == curr.object_type && o.object_idx == curr.object_idx) {
-                                    // If we double-click the ALREADY selected text, edit it!
-                                    if curr.object_type == crate::project::ObjectType::Text {
-                                        let layer = &mut project.layers[curr.layer_idx];
-                                        let txt = layer.text_annotations.remove(curr.object_idx);
-                                        *pending_text = Some(crate::types::PendingText {
-                                            position: txt.position,
-                                            buffer: txt.text.clone(),
-                                        });
-                                        *active_tool = crate::overlay::Tool::Text;
-                                        project.selected_object = None;
-                                        return;
-                                    }
-                                    next_idx = (i + 1) % found_objects.len();
-                                }
-                            }
-                            let next = found_objects[next_idx];
-                            project.active_layer = next.layer_idx;
-                            project.selected_object = Some(next);
-                        } else {
-                            // Single click: Deselect and start layer drag
-                            project.selected_object = None;
-                            if let Some(layer) = project.get_active_layer() {
-                                *line_start = Some(pos);
-                                *drag_state = 0;
-                                *initial_layer = Some(layer.clone());
+                        let current = project.selected_object;
+                        let top = found_objects[0];
+                        // If double-clicking already-selected text, enter edit mode
+                        if let Some(curr) = current {
+                            if curr.object_type == crate::project::ObjectType::Text && curr == top {
+                                let layer = &mut project.layers[curr.layer_idx];
+                                let txt = layer.text_annotations.remove(curr.object_idx);
+                                *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
+                                *active_tool = crate::overlay::Tool::Text;
+                                project.selected_object = None;
+                                return;
                             }
                         }
+                        project.active_layer = top.layer_idx;
+                        project.selected_object = Some(top);
                     }
                 }
 

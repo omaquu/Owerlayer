@@ -50,6 +50,7 @@ pub fn render_layers_window(
                 let mut layer_to_move_down = None;
                 let mut object_to_delete = None;
                 let mut object_to_select = None;
+                let mut object_to_move: Option<(usize, crate::project::ObjectType, usize, i32)> = None; // (layer, type, idx, +1/-1)
                 let object_to_clone: Option<(usize, crate::project::ObjectType, usize)> = None;
                 let total_layers = project.layers.len();
 
@@ -181,6 +182,8 @@ pub fn render_layers_window(
                                                 }
                                                 let mut op_val = (img.opacity * 100.0) as i32;
                                                 if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { img.opacity = op_val as f32 / 100.0; }
+                                                if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Image, img_idx, -1)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Image, img_idx, 1)); }
                                             });
                                         });
                                     }
@@ -207,6 +210,8 @@ pub fn render_layers_window(
                                                 }
                                                 let mut op_val = (ann.opacity * 100.0) as i32;
                                                 if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { ann.opacity = op_val as f32 / 100.0; }
+                                                if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Text, t_idx, -1)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Text, t_idx, 1)); }
                                             });
                                         });
                                     }
@@ -243,6 +248,8 @@ pub fn render_layers_window(
                                                 }
                                                 let mut op_val = (s.opacity * 100.0) as i32;
                                                 if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { s.opacity = op_val as f32 / 100.0; }
+                                                if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Stroke, s_idx, -1)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Stroke, s_idx, 1)); }
                                             });
                                         });
                                     }
@@ -324,6 +331,24 @@ pub fn render_layers_window(
                 if let Some((l_idx, obj_type, o_idx)) = object_to_select {
                     project.active_layer = l_idx;
                     project.selected_object = Some(crate::project::SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: o_idx });
+                }
+                if let Some((l_idx, obj_type, o_idx, dir)) = object_to_move {
+                    let layer = &mut project.layers[l_idx];
+                    match obj_type {
+                        crate::project::ObjectType::Image => {
+                            let new_idx = (o_idx as i32 + dir).clamp(0, layer.placed_images.len() as i32 - 1) as usize;
+                            if new_idx != o_idx { layer.placed_images.swap(o_idx, new_idx); }
+                        }
+                        crate::project::ObjectType::Text => {
+                            let new_idx = (o_idx as i32 + dir).clamp(0, layer.text_annotations.len() as i32 - 1) as usize;
+                            if new_idx != o_idx { layer.text_annotations.swap(o_idx, new_idx); }
+                        }
+                        crate::project::ObjectType::Stroke => {
+                            let new_idx = (o_idx as i32 + dir).clamp(0, layer.strokes.len() as i32 - 1) as usize;
+                            if new_idx != o_idx { layer.strokes.swap(o_idx, new_idx); }
+                        }
+                    }
+                    project.selected_object = None;
                 }
             });
         });
