@@ -197,34 +197,77 @@ pub fn update(ctx: &mut ToolContext) {
                     }
                     BrushMode::Real => {
                         let mut rng = 42u32;
-                        let num_bristles = (s.width * 0.5).clamp(4.0, 15.0) as usize;
+                        let num_bristles = (s.width * 0.4).clamp(4.0, 10.0) as usize;
+                        let mut bristle_offsets = Vec::new();
+                        
                         for _ in 0..num_bristles {
                             rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-                            let off_x = ((rng % 1000) as f32 / 500.0 - 1.0) * s.width * 0.4;
+                            let rx = ((rng % 1000) as f32 / 500.0 - 1.0);
                             rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-                            let off_y = ((rng % 1000) as f32 / 500.0 - 1.0) * s.width * 0.4;
+                            let ry = ((rng % 1000) as f32 / 500.0 - 1.0);
                             
-                            let mut bristle_pts = Vec::with_capacity(pts.len());
-                            for &pt in &pts {
-                                bristle_pts.push(pt + egui::vec2(off_x, off_y));
-                            }
+                            let (off_x, off_y) = if s.brush_shape == BrushShape::Round {
+                                let len = (rx*rx + ry*ry).sqrt().max(0.001);
+                                let scale = if len > 1.0 { 1.0 / len } else { 1.0 };
+                                (rx * scale * s.width * 0.45, ry * scale * s.width * 0.45)
+                            } else {
+                                (rx * s.width * 0.45, ry * s.width * 0.45)
+                            };
                             
                             rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-                            let alpha_mod = (rng % 100) as f32 / 100.0 * 0.4 + 0.2;
+                            let alpha_mod = (rng % 100) as f32 / 100.0 * 0.5 + 0.1;
                             let mut b_col = stroke_color;
                             b_col = egui::Color32::from_rgba_unmultiplied(b_col.r(), b_col.g(), b_col.b(), (b_col.a() as f32 * alpha_mod) as u8);
                             
                             let b_width = (s.width * 0.25).max(1.0);
-                            p.add(egui::Shape::line(bristle_pts, egui::Stroke::new(b_width, b_col)));
+                            bristle_offsets.push((egui::vec2(off_x, off_y), b_col, b_width));
                         }
+                        
+                        let mut mesh = egui::Mesh::default();
+                        let mut smoothed: Vec<egui::Pos2> = Vec::new();
+                        let min_dist = (s.width * 0.15).clamp(2.0, 10.0);
+                        for &pt in &pts {
+                            if smoothed.is_empty() || smoothed.last().unwrap().distance(pt) > min_dist {
+                                smoothed.push(pt);
+                            }
+                        }
+                        if smoothed.len() < 2 { smoothed = pts.clone(); }
+
+                        for (offset, col, b_width) in bristle_offsets {
+                            let start_idx_base = mesh.vertices.len() as u32;
+                            for i in 0..smoothed.len() {
+                                let dir = if i < smoothed.len() - 1 {
+                                    let d = smoothed[i+1] - smoothed[i];
+                                    if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                                } else if i > 0 {
+                                    let d = smoothed[i] - smoothed[i-1];
+                                    if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                                } else {
+                                    egui::vec2(1.0, 0.0)
+                                };
+                                let perp = egui::vec2(-dir.y, dir.x) * b_width * 0.5;
+                                let pt = smoothed[i] + offset;
+                                
+                                mesh.vertices.push(egui::epaint::Vertex { pos: pt + perp, uv: egui::Pos2::ZERO, color: col });
+                                mesh.vertices.push(egui::epaint::Vertex { pos: pt - perp, uv: egui::Pos2::ZERO, color: col });
+                                
+                                if i > 0 {
+                                    let idx = start_idx_base + (i as u32) * 2;
+                                    mesh.indices.extend_from_slice(&[idx-2, idx-1, idx]);
+                                    mesh.indices.extend_from_slice(&[idx-1, idx+1, idx]);
+                                }
+                            }
+                        }
+                        p.add(egui::Shape::mesh(mesh));
                     }
                     _ => {
                         // Solid or Highlighter: Custom continuous non-overlapping mesh
                         let mut mesh = egui::Mesh::default();
                         
                         let mut smoothed: Vec<egui::Pos2> = Vec::new();
+                        let min_dist = (s.width * 0.15).clamp(2.0, 10.0);
                         for &pt in &pts {
-                            if smoothed.is_empty() || smoothed.last().unwrap().distance(pt) > 1.5 {
+                            if smoothed.is_empty() || smoothed.last().unwrap().distance(pt) > min_dist {
                                 smoothed.push(pt);
                             }
                         }
@@ -232,7 +275,13 @@ pub fn update(ctx: &mut ToolContext) {
                         let render_pts = smoothed;
 
                         for i in 0..render_pts.len() {
-                            let dir = if i < render_pts.len() - 1 {
+                            let dir = if i > 0 && i < render_pts.len() - 1 {
+                                let d1 = (render_pts[i] - render_pts[i-1]).normalized();
+                                let d2 = (render_pts[i+1] - render_pts[i]).normalized();
+                                let mut miter = d1 + d2;
+                                if miter.length() < 0.001 { miter = d1; }
+                                miter.normalized()
+                            } else if i < render_pts.len() - 1 {
                                 let d = render_pts[i+1] - render_pts[i];
                                 if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
                             } else if i > 0 {
@@ -241,15 +290,8 @@ pub fn update(ctx: &mut ToolContext) {
                             } else {
                                 egui::vec2(1.0, 0.0)
                             };
-                            
-                            let final_dir = if i > 0 && i < render_pts.len() - 1 {
-                                let d_prev = (render_pts[i] - render_pts[i-1]).normalized();
-                                (dir + d_prev).normalized()
-                            } else {
-                                dir
-                            };
 
-                            let perp = egui::vec2(-final_dir.y, final_dir.x) * s.width * 0.5;
+                            let perp = egui::vec2(-dir.y, dir.x) * s.width * 0.5;
                             
                             mesh.vertices.push(egui::epaint::Vertex { pos: render_pts[i] + perp, uv: egui::Pos2::ZERO, color: stroke_color });
                             mesh.vertices.push(egui::epaint::Vertex { pos: render_pts[i] - perp, uv: egui::Pos2::ZERO, color: stroke_color });
