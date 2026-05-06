@@ -22,8 +22,8 @@ use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 pub fn force_dpi_aware() {
     use windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext;
     unsafe {
-        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-        let _ = SetProcessDpiAwarenessContext(-4isize as _);
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE (V1) - less aggressive FSO trigger than V2
+        let _ = SetProcessDpiAwarenessContext(-3isize as _);
     }
 }
 
@@ -66,11 +66,11 @@ pub fn get_virtual_origin() -> (f32, f32) { (0.0, 0.0) }
 pub fn get_monitor_rects() -> Vec<RECT> {
     use windows_sys::Win32::Graphics::Gdi::EnumDisplayMonitors;
     use windows_sys::Win32::Foundation::{BOOL, LPARAM};
-    use windows_sys::Win32::Graphics::Gdi::HDC;
+// use windows_sys::Win32::Graphics::Gdi::HDC;
 
     unsafe extern "system" fn monitor_enum(
-        _hmonitor: *mut std::ffi::c_void,
-        _hdc: HDC,
+        _hmonitor: windows_sys::Win32::Graphics::Gdi::HMONITOR,
+        _hdc: windows_sys::Win32::Graphics::Gdi::HDC,
         lprect: *mut RECT,
         lparam: LPARAM,
     ) -> BOOL {
@@ -135,8 +135,74 @@ pub fn get_primary_monitor_scale() -> f32 {
     }
 }
 
+#[cfg(windows)]
+pub fn get_monitor_height_at_point(x: i32, y: i32) -> f32 {
+    use windows_sys::Win32::Graphics::Gdi::{MonitorFromPoint, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    unsafe {
+        let pt = POINT { x, y };
+        let h_monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(h_monitor, &mut info as *mut _ as *mut _) != 0 {
+            (info.rcMonitor.bottom - info.rcMonitor.top) as f32
+        } else {
+            1080.0
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn get_max_monitor_height() -> f32 {
+    use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, MONITORINFO, HMONITOR, HDC};
+    use windows_sys::Win32::Foundation::{RECT, LPARAM, BOOL};
+
+    unsafe extern "system" fn enum_proc(h_mon: HMONITOR, _: HDC, _: *mut RECT, l_param: LPARAM) -> BOOL {
+        let max_h = &mut *(l_param as *mut f32);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(h_mon, &mut info as *mut _ as *mut _) != 0 {
+            let h = (info.rcMonitor.bottom - info.rcMonitor.top) as f32;
+            if h > *max_h { *max_h = h; }
+        }
+        1
+    }
+    let mut max_h = 1080.0f32;
+    unsafe { EnumDisplayMonitors(std::ptr::null_mut(), std::ptr::null(), Some(enum_proc), &mut max_h as *mut _ as LPARAM); }
+    max_h
+}
+
 #[cfg(not(windows))]
 pub fn get_primary_monitor_scale() -> f32 { 1.0 }
+
+#[cfg(windows)]
+pub fn get_monitor_size_pos(index: usize) -> (f32, f32, f32, f32) {
+    use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, MONITORINFO, HMONITOR, HDC};
+    use windows_sys::Win32::Foundation::{RECT, LPARAM, BOOL};
+
+    struct MonData { target: usize, current: usize, found: Option<(f32, f32, f32, f32)> }
+    unsafe extern "system" fn enum_proc(h_mon: HMONITOR, _: HDC, _: *mut RECT, l_param: LPARAM) -> BOOL {
+        let data = &mut *(l_param as *mut MonData);
+        if data.current == data.target {
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            GetMonitorInfoW(h_mon, &mut info as *mut _ as *mut _);
+            data.found = Some((
+                (info.rcMonitor.right - info.rcMonitor.left) as f32,
+                (info.rcMonitor.bottom - info.rcMonitor.top) as f32,
+                info.rcMonitor.left as f32,
+                info.rcMonitor.top as f32
+            ));
+            0 // stop
+        } else {
+            data.current += 1;
+            1 // continue
+        }
+    }
+
+    let mut data = MonData { target: index, current: 0, found: None };
+    unsafe { EnumDisplayMonitors(std::ptr::null_mut(), std::ptr::null(), Some(enum_proc), &mut data as *mut _ as LPARAM); }
+    data.found.unwrap_or((1920.0, 1080.0, 0.0, 0.0))
+}
 
 #[allow(dead_code)]
 pub fn get_window_rect(hwnd: isize) -> RECT {
@@ -183,32 +249,54 @@ pub fn get_clipboard_text() -> Option<String> { None }
 
 #[cfg(windows)]
 pub fn setup_overlay_window() {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, BOOL};
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
-
     unsafe {
-        let title: Vec<u16> = "Owerlayer\0".encode_utf16().collect();
-        let hwnd = FindWindowW(ptr::null(), title.as_ptr());
-        if hwnd.is_null() { return; }
+        let mut hwnd: HWND = ptr::null_mut();
+        let pid = windows_sys::Win32::System::Threading::GetCurrentProcessId();
+        
+        unsafe extern "system" fn enum_proc(h: HWND, lp: LPARAM) -> BOOL {
+            let data = &mut *(lp as *mut (u32, HWND));
+            let mut window_pid = 0;
+            GetWindowThreadProcessId(h, &mut window_pid);
+            if window_pid == data.0 {
+                let mut title = [0u16; 128];
+                let len = GetWindowTextW(h, title.as_mut_ptr(), 128);
+                let title_str = String::from_utf16_lossy(&title[..len as usize]);
+                if title_str == "Owerlayer" {
+                    data.1 = h;
+                    return 0; // stop
+                }
+            }
+            1 // continue
+        }
 
+        let mut data: (u32, HWND) = (pid, ptr::null_mut());
+        EnumWindows(Some(enum_proc), &mut data as *mut _ as LPARAM);
+        hwnd = data.1;
+
+        if hwnd.is_null() { return; }
         OVERLAY_HWND.store(hwnd, Ordering::Relaxed);
+
+        // Set styles to encourage Windows to treat this as a transparent overlay, not a fullscreen app
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        
+        // Remove caption, frame, etc. and WS_CLIPCHILDREN/WS_CLIPSIBLINGS to allow transparency to show through
+        let new_style = style & !(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+        // Add ToolWindow (hides from taskbar)
+        let new_ex_style = ex_style | WS_EX_TOOLWINDOW;
+        
+        SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
+        SetWindowLongW(hwnd, GWL_EXSTYLE, (new_ex_style | WS_EX_LAYERED) as i32);
+        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
         // Ensure always-on-top
         SetWindowPos(
             hwnd, HWND_TOPMOST,
             0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         );
-
-        // Force styles to ensure DWM transparency and bypass fullscreen optimizations
-        let style = GetWindowLongW(hwnd, GWL_STYLE);
-        SetWindowLongW(hwnd, GWL_STYLE, (style as u32 | WS_POPUP | WS_VISIBLE) as i32);
-        
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED as i32 | WS_EX_TRANSPARENT as i32);
-        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-        
-        // Exclude from capture to prevent feedback loop (Disabled for now)
-        // SetWindowDisplayAffinity(hwnd, 0x00000011);
     }
 }
 

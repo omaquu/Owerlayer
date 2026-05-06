@@ -2,16 +2,24 @@
 
 mod hotkey;
 mod overlay;
+mod types;
+mod ui;
 mod winapi_utils;
+mod tools;
 mod project;
+mod utils;
+mod capture_thread;
+mod gl_renderer;
 #[cfg(feature = "webengine")]
 mod web_engine;
 
 use eframe::egui;
-use overlay::{
-    MouseState, PendingText, Settings, Stroke, TextAnnotation, Tool,
-    render_mode_indicator, render_settings_window, render_toolbar, render_filter_menu,
-};
+use std::sync::Arc;
+use types::*;
+use ui::toolbar::{render_toolbar, photoshop_frame};
+use ui::settings_menu::render_settings_window;
+use ui::layer_menu::render_layers_window;
+use ui::filter_menu::render_filter_menu;
 
 struct OwerlayerApp {
     pub edit_mode: bool,
@@ -49,10 +57,12 @@ struct OwerlayerApp {
     last_action_time: std::time::Instant,
     filters_open: Option<usize>,
     owl_icon: Option<egui::TextureHandle>,
+    capture_thread: capture_thread::CaptureThread,
     #[cfg(feature = "webengine")]
     web_widgets: Vec<web_engine::WebWidget>,
     #[cfg(feature = "webengine")]
     web_engine_initialized: bool,
+    gl_renderer: Option<Arc<gl_renderer::GLRenderer>>,
 }
 
 impl OwerlayerApp {
@@ -61,7 +71,8 @@ impl OwerlayerApp {
         v.window_shadow = egui::Shadow::NONE;
         v.popup_shadow = egui::Shadow::NONE;
         v.panel_fill = egui::Color32::TRANSPARENT;
-        v.window_fill = egui::Color32::TRANSPARENT;
+        // Use a semi-transparent dark fill for tooltips and popups
+        v.window_fill = egui::Color32::from_rgba_unmultiplied(30, 30, 30, 220);
         cc.egui_ctx.set_visuals(v);
         cc.egui_ctx.set_pixels_per_point(1.0);
 
@@ -104,10 +115,12 @@ impl OwerlayerApp {
                     None
                 }
             },
+            capture_thread: capture_thread::CaptureThread::new(15.0),
             #[cfg(feature = "webengine")]
             web_widgets: Vec::new(),
             #[cfg(feature = "webengine")]
             web_engine_initialized: false,
+            gl_renderer: cc.gl.as_ref().map(|gl| Arc::new(gl_renderer::GLRenderer::new(gl))),
         }
     }
 
@@ -302,17 +315,27 @@ impl eframe::App for OwerlayerApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.settings.multi_monitor {
+        if self.settings.multi_monitor || self.settings.virtual_matrix {
             ctx.set_pixels_per_point(1.0);
         }
         #[cfg(windows)]
         {
             if self.frame_count == 2 {
                 crate::winapi_utils::setup_overlay_window();
-                if self.settings.multi_monitor {
-                    let (sw, sh) = crate::winapi_utils::get_screen_size(true);
-                    let (ox, oy) = crate::winapi_utils::get_virtual_origin();
-                    crate::winapi_utils::reposition_overlay_window(ox as i32, oy as i32, sw as i32, sh as i32);
+                if self.settings.multi_monitor || self.settings.virtual_matrix {
+                    let (sw, sh, ox, oy) = if let Some(idx) = self.settings.monitor_lock {
+                        crate::winapi_utils::get_monitor_size_pos(idx)
+                    } else {
+                        let (sw, sh) = crate::winapi_utils::get_screen_size(true);
+                        let (ox, oy) = crate::winapi_utils::get_virtual_origin();
+                        (sw, sh, ox, oy)
+                    };
+                    if self.settings.fso_fix {
+                        // Offset by -2, -2 and size +4, +4 for FSO fix consistency
+                        crate::winapi_utils::reposition_overlay_window(ox as i32 - 2, oy as i32 - 2, sw as i32 + 4, sh as i32 + 4);
+                    } else {
+                        crate::winapi_utils::reposition_overlay_window(ox as i32, oy as i32, sw as i32, sh as i32);
+                    }
                 }
             }
         }
@@ -377,8 +400,6 @@ impl eframe::App for OwerlayerApp {
 
         // ---- 3. Interaction logic (Passthrough) ----
         let is_over_ui = ctx.memory(|mem| {
-            // Check if mouse is over any active egui area (windows, panels)
-            // We use the area_rects from the previous frame
             mem.layer_ids().any(|layer| {
                 if layer.order == egui::Order::Background { return false; }
                 if let Some(rect) = mem.area_rect(layer.id) {
@@ -389,7 +410,8 @@ impl eframe::App for OwerlayerApp {
             })
         });
 
-        let should_be_interactive = self.edit_mode || (self.settings.keep_ui_visible && is_over_ui);
+        // Force interactive for the first few frames to ensure focus and layout calculation
+        let should_be_interactive = self.frame_count < 10 || self.edit_mode || (self.settings.keep_ui_visible && is_over_ui);
         let passthrough = !should_be_interactive;
 
         if passthrough != self.prev_passthrough {
@@ -397,11 +419,11 @@ impl eframe::App for OwerlayerApp {
             self.prev_passthrough = passthrough;
         }
 
-        // ---- 4. On mode change ----
-        if self.edit_mode != was_edit {
+        // ---- 4. On mode change & Initial Focus ----
+        if self.edit_mode != was_edit || self.frame_count < 5 {
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
 
-            if self.edit_mode {
+            if self.edit_mode || self.frame_count < 5 {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             } else {
                 // Leaving edit → finalize pending work
@@ -424,6 +446,7 @@ impl eframe::App for OwerlayerApp {
                             self.settings.brush_shadow,
                             self.settings.brush_shape,
                             self.settings.brush_outline,
+                            self.settings.brush_arrow,
                         );
                         layer.strokes.push(s);
                     }
@@ -495,9 +518,10 @@ impl eframe::App for OwerlayerApp {
 
         // ---- 5. Render UI ----
         let show_ui = self.edit_mode || self.settings.keep_ui_visible;
+        self.capture_thread.set_fps(self.settings.capture_fps);
+
         if show_ui {
-            render_mode_indicator(ctx, self.edit_mode, self.settings.hotkey.display_name(), self.settings.toggle_mode, &self.settings, &self.owl_icon);
-            
+            overlay::render_mode_indicator(ctx, self.edit_mode, self.settings.hotkey.display_name(), self.settings.toggle_mode, &self.settings, &self.owl_icon);
             let mut embed_trigger = false;
             render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger);
             if embed_trigger { self.handle_embed_trigger(); }
@@ -506,10 +530,11 @@ impl eframe::App for OwerlayerApp {
             
             if self.show_exit_dialog {
                 let mut close = false;
-                egui::Window::new("Exit Owerlayer?")
+                egui::Window::new(egui::RichText::new("Exit Owerlayer?").color(egui::Color32::from_rgb(255, 100, 100)))
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .frame(photoshop_frame(&self.settings))
                     .show(ctx, |ui| {
                         ui.label("Are you sure you want to close Owerlayer?");
                         ui.add_space(8.0);
@@ -538,7 +563,7 @@ impl eframe::App for OwerlayerApp {
                 }
             }
             if self.show_layers_panel && self.edit_mode {
-                overlay::render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.show_layers_panel, &mut self.filters_open);
+                render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.active_tool, &mut self.show_layers_panel, &mut self.filters_open);
             }
         }
 
@@ -591,7 +616,7 @@ impl eframe::App for OwerlayerApp {
                                 widget.update_view();
                                 if widget.dirty {
                                     img.pixels = widget.pixels.clone();
-                                    img.texture = None; // Force reload
+                                    img.texture = None; img.thumbnail_dirty = true; // Force reload
                                     widget.dirty = false;
                                 }
                             }
@@ -619,6 +644,8 @@ impl eframe::App for OwerlayerApp {
                     can_draw,
                     &mut self.embed_trigger,
                     self.frame_count,
+                    &self.capture_thread,
+                    self.gl_renderer.clone(),
                 );
             });
         // ---- 6b. Update web widgets (Ultralight) ----
@@ -635,7 +662,7 @@ impl eframe::App for OwerlayerApp {
                             if idx < self.web_widgets.len() && self.web_widgets[idx].dirty {
                                 img.pixels = self.web_widgets[idx].pixels.clone();
                                 img.size = [self.web_widgets[idx].width as usize, self.web_widgets[idx].height as usize];
-                                img.texture = None; // force texture rebuild
+                                img.texture = None; img.thumbnail_dirty = true; // force texture rebuild
                                 self.web_widgets[idx].dirty = false;
                             }
                         }
@@ -643,6 +670,7 @@ impl eframe::App for OwerlayerApp {
                 }
             }
         }
+
 
         // ---- 7. Repaint strategy ----
         let has_live = self.project.layers.iter().any(|l| l.placed_images.iter().any(|img| img.is_live));
@@ -657,13 +685,8 @@ impl eframe::App for OwerlayerApp {
 }
 
 fn main() -> eframe::Result<()> {
-    #[cfg(windows)]
-    crate::winapi_utils::force_dpi_aware();
+    let (sw, sh) = winapi_utils::get_screen_size(false);
     
-    let settings = Settings::load();
-    let (sw, sh) = winapi_utils::get_screen_size(settings.multi_monitor);
-    let (ox, oy) = if settings.multi_monitor { winapi_utils::get_virtual_origin() } else { (0.0, 0.0) };
-
     let icon_data = if let Ok(img) = image::load_from_memory(include_bytes!("../icon.png")) {
             let rgba = img.to_rgba8();
             let (width, height) = rgba.dimensions();
@@ -672,6 +695,7 @@ fn main() -> eframe::Result<()> {
             None
         };
 
+    let settings = Settings::load();
     let hw_accel = if settings.software_rendering { 
         eframe::HardwareAcceleration::Off 
     } else { 
@@ -682,22 +706,20 @@ fn main() -> eframe::Result<()> {
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top()
-        .with_inner_size([sw, sh])
-        .with_position([ox, oy])
-        .with_title("Owerlayer");
-        
-    let options = if let Some(icon) = icon_data {
-        eframe::NativeOptions {
-            viewport: viewport.with_icon(icon),
-            hardware_acceleration: hw_accel,
-            ..Default::default()
-        }
+        .with_inner_size(egui::vec2(sw + 2.0, sh + 2.0))
+        .with_position(egui::pos2(-1.0, -1.0))
+        .with_active(true);
+
+    let viewport = if let Some(icon) = icon_data {
+        viewport.with_icon(icon)
     } else {
-        eframe::NativeOptions {
-            viewport: viewport,
-            hardware_acceleration: hw_accel,
-            ..Default::default()
-        }
+        viewport
+    };
+
+    let options = eframe::NativeOptions {
+        viewport,
+        hardware_acceleration: hw_accel,
+        ..Default::default()
     };
     eframe::run_native("Owerlayer", options,
         Box::new(|cc| Ok(Box::new(OwerlayerApp::new(cc)))))

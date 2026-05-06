@@ -71,6 +71,8 @@ pub struct Project {
     pub active_layer: usize,
     #[serde(skip)]
     pub selected_object: Option<SelectedObject>,
+    #[serde(skip)]
+    pub last_left_down: bool,
 }
 
 impl Project {
@@ -80,6 +82,7 @@ impl Project {
             layers: vec![Layer::new("Layer 1")],
             active_layer: 0,
             selected_object: None,
+            last_left_down: false,
         }
     }
 
