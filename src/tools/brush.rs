@@ -222,7 +222,7 @@ pub fn update(ctx: &mut ToolContext) {
                         // Solid or Highlighter: Custom continuous non-overlapping mesh
                         let mut mesh = egui::Mesh::default();
                         
-                        let mut smoothed = Vec::new();
+                        let mut smoothed: Vec<egui::Pos2> = Vec::new();
                         for &pt in &pts {
                             if smoothed.is_empty() || smoothed.last().unwrap().distance(pt) > 1.5 {
                                 smoothed.push(pt);
