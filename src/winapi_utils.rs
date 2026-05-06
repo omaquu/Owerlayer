@@ -282,10 +282,11 @@ pub fn setup_overlay_window() {
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
         
-        // Remove caption, frame, etc. and WS_CLIPCHILDREN/WS_CLIPSIBLINGS to allow transparency to show through
+        // Remove caption, frame, etc.
         let new_style = style & !(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
-        // Add ToolWindow (hides from taskbar)
-        let new_ex_style = ex_style | WS_EX_TOOLWINDOW;
+        // Do NOT add WS_EX_TOOLWINDOW — it hides the window from OBS's window capture list.
+        // Keep WS_EX_APPWINDOW to ensure OBS can enumerate and capture this window.
+        let new_ex_style = (ex_style & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
         
         SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
         SetWindowLongW(hwnd, GWL_EXSTYLE, (new_ex_style | WS_EX_LAYERED) as i32);

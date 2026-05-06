@@ -68,6 +68,16 @@ pub fn render_layers_window(
                     row_frame.show(ui, |ui: &mut egui::Ui| {
                         // Main layer row
                         ui.horizontal(|ui: &mut egui::Ui| {
+                            let obj_count = layer.placed_images.len() + layer.text_annotations.len() + layer.strokes.len();
+                            if obj_count > 0 {
+                                let icon = if layer.expanded { "▼" } else { "▶" };
+                                if ui.button(egui::RichText::new(icon).size(10.0)).clicked() {
+                                    layer.expanded = !layer.expanded;
+                                }
+                            } else {
+                                ui.add_space(18.0);
+                            }
+
                             // Drag handle for reordering
                             let drag_handle = ui.add(egui::Label::new("\u{2261}").sense(egui::Sense::drag()));
                             if drag_handle.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::Grab); }
@@ -132,13 +142,14 @@ pub fn render_layers_window(
                             });
                         });
 
-                        // Child objects — auto-shown when this is the active layer
-                        if is_active {
+                        // Child objects — auto-shown when expanded
+                        if layer.expanded {
                             let obj_count = layer.placed_images.len() + layer.text_annotations.len() + layer.strokes.len();
                             if obj_count > 0 {
                                 ui.indent(format!("layer_obj_{}", i), |ui: &mut egui::Ui| {
-                                    for (img_idx, img) in layer.placed_images.iter().enumerate() {
+                                    for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
                                         ui.horizontal(|ui: &mut egui::Ui| {
+                                            ui.checkbox(&mut img.visible, "");
                                             let is_sel = project.selected_object == Some(crate::project::SelectedObject { layer_idx: i, object_type: crate::project::ObjectType::Image, object_idx: img_idx });
                                             let label = if img.blur > 0.0 {
                                                 format!("🔲 Blur {}", img_idx)
@@ -162,12 +173,20 @@ pub fn render_layers_window(
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Image, img_idx)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Image, img_idx)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
+                                                    object_to_select = Some((i, crate::project::ObjectType::Image, img_idx));
+                                                    project.active_layer = i;
+                                                    *active_tool = crate::overlay::Tool::Move;
+                                                }
+                                                let mut op_val = (img.opacity * 100.0) as i32;
+                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { img.opacity = op_val as f32 / 100.0; }
                                             });
                                         });
                                     }
-                                    for (t_idx, ann) in layer.text_annotations.iter().enumerate() {
+                                    for (t_idx, ann) in layer.text_annotations.iter_mut().enumerate() {
                                         ui.horizontal(|ui: &mut egui::Ui| {
+                                            ui.checkbox(&mut ann.visible, "");
                                             let is_sel = project.selected_object == Some(crate::project::SelectedObject { layer_idx: i, object_type: crate::project::ObjectType::Text, object_idx: t_idx });
                                             let name = format!("T \"{}\"", if ann.text.len() > 12 { &ann.text[..10] } else { &ann.text });
                                             let item_resp = ui.selectable_label(is_sel, name);
@@ -180,17 +199,25 @@ pub fn render_layers_window(
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Text, t_idx)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Text, t_idx)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
+                                                    object_to_select = Some((i, crate::project::ObjectType::Text, t_idx));
+                                                    project.active_layer = i;
+                                                    *active_tool = crate::overlay::Tool::Move;
+                                                }
+                                                let mut op_val = (ann.opacity * 100.0) as i32;
+                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { ann.opacity = op_val as f32 / 100.0; }
                                             });
                                         });
                                     }
                                     let mut freehand_indices = Vec::new();
-                                    for (s_idx, s) in layer.strokes.iter().enumerate() {
+                                    for (s_idx, s) in layer.strokes.iter_mut().enumerate() {
                                         if s.kind == crate::overlay::StrokeKind::Freehand {
                                             freehand_indices.push(s_idx);
                                             continue;
                                         }
                                         ui.horizontal(|ui: &mut egui::Ui| {
+                                            ui.checkbox(&mut s.visible, "");
                                             let is_sel = project.selected_object == Some(crate::project::SelectedObject { layer_idx: i, object_type: crate::project::ObjectType::Stroke, object_idx: s_idx });
                                             let s_name = match s.kind {
                                                 crate::overlay::StrokeKind::Rect => "✏ Rect",
@@ -208,7 +235,14 @@ pub fn render_layers_window(
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Stroke, s_idx)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Stroke, s_idx)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
+                                                    object_to_select = Some((i, crate::project::ObjectType::Stroke, s_idx));
+                                                    project.active_layer = i;
+                                                    *active_tool = crate::overlay::Tool::Move;
+                                                }
+                                                let mut op_val = (s.opacity * 100.0) as i32;
+                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { s.opacity = op_val as f32 / 100.0; }
                                             });
                                         });
                                     }

@@ -116,6 +116,8 @@ pub struct Stroke {
     pub outline: bool,
     #[serde(default)]
     pub arrow: bool,
+    #[serde(default = "default_visible")]
+    pub visible: bool,
     #[serde(default = "default_opacity")]
     pub opacity: f32,
     pub outline_color: [u8; 4],
@@ -161,6 +163,7 @@ impl Stroke {
             brush_shape,
             outline,
             arrow,
+            visible: true,
             opacity: 1.0,
             rotation: 0.0,
             flipped_h: false,
@@ -204,6 +207,8 @@ pub struct TextAnnotation {
     pub font: TextFont,
     #[serde(default)]
     pub skew: egui::Vec2,
+    #[serde(default = "default_visible")]
+    pub visible: bool,
     #[serde(default = "default_opacity")]
     pub opacity: f32,
 }
@@ -219,6 +224,7 @@ impl TextAnnotation {
             perspective: [egui::Vec2::ZERO; 4],
             font: TextFont::Sans,
             skew: egui::Vec2::ZERO,
+            visible: true,
             opacity: 1.0,
         }
     }
@@ -248,6 +254,8 @@ pub struct PlacedImage {
     pub perspective: [egui::Vec2; 4],
     #[serde(default)]
     pub skew: egui::Vec2,
+    #[serde(default = "default_visible")]
+    pub visible: bool,
     #[serde(default = "default_opacity")]
     pub opacity: f32,
     pub is_live: bool,
@@ -298,6 +306,7 @@ impl Clone for PlacedImage {
             flipped_v: self.flipped_v,
             perspective: self.perspective,
             skew: self.skew,
+            visible: self.visible,
             opacity: self.opacity,
             is_live: self.is_live,
             source_rect: self.source_rect,
@@ -331,6 +340,7 @@ impl PlacedImage {
             flipped_h: false, flipped_v: false,
             perspective: [egui::Vec2::ZERO; 4],
             skew: egui::Vec2::ZERO,
+            visible: true,
             opacity: 1.0,
             is_live: false,
             source_rect: None,
@@ -372,6 +382,7 @@ pub struct PendingText {
 fn default_menu_hue() -> f32 { 90.0 }
 fn default_menu_opacity() -> f32 { 0.75 }
 fn default_opacity() -> f32 { 1.0 }
+fn default_visible() -> bool { true }
 
 fn default_stroke_name() -> String { "Stroke".to_string() }
 fn default_text_name() -> String { "Text".to_string() }

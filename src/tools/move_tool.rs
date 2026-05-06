@@ -402,18 +402,8 @@ pub fn update(ctx: &mut ToolContext) {
                                 }
                                 skew_layer(layer, initial_center.unwrap(), skew_delta);
                             } else {
-                                // Translate with clamping
-                                let mut delta = pos - start;
-                                
-                                // Check current bounds and clamp delta to keep within canvas
-                                if let Some(cur_bounds) = object_bounds(layer, sel.object_type, sel.object_idx) {
-                                    let new_bounds = cur_bounds.translate(delta);
-                                    if new_bounds.min.x < canvas_rect.min.x { delta.x += canvas_rect.min.x - new_bounds.min.x; }
-                                    if new_bounds.max.x > canvas_rect.max.x { delta.x -= new_bounds.max.x - canvas_rect.max.x; }
-                                    if new_bounds.min.y < canvas_rect.min.y { delta.y += canvas_rect.min.y - new_bounds.min.y; }
-                                    if new_bounds.max.y > canvas_rect.max.y { delta.y -= new_bounds.max.y - canvas_rect.max.y; }
-                                }
-
+                                // Translate without bounds clamping
+                                let delta = pos - start;
                                 match sel.object_type {
                                     crate::project::ObjectType::Stroke => {
                                         if let Some(s) = layer.strokes.get_mut(sel.object_idx) {
@@ -431,13 +421,25 @@ pub fn update(ctx: &mut ToolContext) {
                                         }
                                     }
                                 }
-                                *line_start = Some(start + delta); // Keep relative pos
                             }
                         }
                     }
                 }
+                
+                // Track if we clicked in the HUD to prevent deselection
+                let mut clicked_in_hud = false;
+                if let Some(sel) = project.selected_object {
+                    let layer = &mut project.layers[sel.layer_idx];
+                    if let Some(raw_bounds) = object_bounds(layer, sel.object_type, sel.object_idx) {
+                        let bounds = raw_bounds.translate(-render_offset);
+                        let sel_is_embed = sel.object_type == crate::project::ObjectType::Image && sel.object_idx < layer.placed_images.len() && layer.placed_images[sel.object_idx].url.is_some();
+                        let bar_height = if sel_is_embed { 52.0 } else { 32.0 };
+                        let top_btns_rect = egui::Rect::from_min_size(bounds.left_top() - egui::vec2(0.0, bar_height), egui::vec2(bounds.width().max(320.0), bar_height));
+                        if top_btns_rect.contains(pos) { clicked_in_hud = true; }
+                    }
+                }
 
-                if left_just_pressed && !found_handle && !ui.ctx().is_pointer_over_area() {
+                if left_just_pressed && !found_handle && !clicked_in_hud && !ui.ctx().is_pointer_over_area() {
                     let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
                     let mut found_objects = Vec::new();
                     
@@ -496,6 +498,11 @@ pub fn update(ctx: &mut ToolContext) {
 
                     if found_objects.is_empty() {
                         project.selected_object = None;
+                        if let Some(layer) = project.get_active_layer() {
+                            *line_start = Some(pos);
+                            *drag_state = 0;
+                            *initial_layer = Some(layer.clone());
+                        }
                     } else {
                         // Sort by layer index (highest first) to match visual order
                         found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
@@ -525,10 +532,29 @@ pub fn update(ctx: &mut ToolContext) {
                             project.active_layer = next.layer_idx;
                             project.selected_object = Some(next);
                         } else {
-                            // Single click: select topmost
-                            let top = found_objects[0];
-                            project.active_layer = top.layer_idx;
-                            project.selected_object = Some(top);
+                            // Single click: Deselect and start layer drag
+                            project.selected_object = None;
+                            if let Some(layer) = project.get_active_layer() {
+                                *line_start = Some(pos);
+                                *drag_state = 0;
+                                *initial_layer = Some(layer.clone());
+                            }
+                        }
+                    }
+                }
+
+                // --- LAYER DRAG LOGIC ---
+                // If we are dragging but have no object selected, translate the active layer
+                if project.selected_object.is_none() && left_down {
+                    if let Some(start) = *line_start {
+                        if let Some(base_layer) = initial_layer.as_ref() {
+                            if let Some(layer) = project.get_active_layer_mut() {
+                                *layer = base_layer.clone();
+                                let delta = pos - start;
+                                for img in &mut layer.placed_images { img.position += delta; }
+                                for t in &mut layer.text_annotations { t.position += delta; }
+                                for s in &mut layer.strokes { for p in &mut s.points { *p += delta; } }
+                            }
                         }
                     }
                 }
