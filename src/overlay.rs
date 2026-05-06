@@ -472,7 +472,7 @@ pub fn render_canvas(
 
 
 
-    if edit_mode && can_draw && !ctx.ui.ctx().is_pointer_over_area() && active_layer_idx < ctx.project.layers.len() {
+    if edit_mode && can_draw && active_layer_idx < ctx.project.layers.len() {
         match *ctx.active_tool {
             Tool::Brush => {
                 crate::tools::brush::update(&mut ctx);

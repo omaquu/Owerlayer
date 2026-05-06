@@ -173,18 +173,17 @@ pub fn render_layers_window(
                                                 project.active_layer = i;
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Image, img_idx)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
-                                                    object_to_select = Some((i, crate::project::ObjectType::Image, img_idx));
-                                                    project.active_layer = i;
-                                                    *active_tool = crate::overlay::Tool::Move;
-                                                }
-                                                let mut op_val = (img.opacity * 100.0) as i32;
-                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { img.opacity = op_val as f32 / 100.0; }
-                                                if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Image, img_idx, -1)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Image, img_idx, 1)); }
-                                            });
+                                            ui.add_space(5.0);
+                                            if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Image, img_idx)); }
+                                            if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
+                                                object_to_select = Some((i, crate::project::ObjectType::Image, img_idx));
+                                                project.active_layer = i;
+                                                *active_tool = crate::overlay::Tool::Move;
+                                            }
+                                            let mut op_val = (img.opacity * 100.0) as i32;
+                                            if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { img.opacity = op_val as f32 / 100.0; }
+                                            if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Image, img_idx, -1)); }
+                                            if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Image, img_idx, 1)); }
                                         });
                                     }
                                     for (t_idx, ann) in layer.text_annotations.iter_mut().enumerate() {
@@ -201,18 +200,17 @@ pub fn render_layers_window(
                                                 project.active_layer = i;
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Text, t_idx)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
-                                                    object_to_select = Some((i, crate::project::ObjectType::Text, t_idx));
-                                                    project.active_layer = i;
-                                                    *active_tool = crate::overlay::Tool::Move;
-                                                }
-                                                let mut op_val = (ann.opacity * 100.0) as i32;
-                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { ann.opacity = op_val as f32 / 100.0; }
-                                                if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Text, t_idx, -1)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Text, t_idx, 1)); }
-                                            });
+                                            ui.add_space(5.0);
+                                            if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Text, t_idx)); }
+                                            if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
+                                                object_to_select = Some((i, crate::project::ObjectType::Text, t_idx));
+                                                project.active_layer = i;
+                                                *active_tool = crate::overlay::Tool::Move;
+                                            }
+                                            let mut op_val = (ann.opacity * 100.0) as i32;
+                                            if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { ann.opacity = op_val as f32 / 100.0; }
+                                            if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Text, t_idx, -1)); }
+                                            if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Text, t_idx, 1)); }
                                         });
                                     }
                                     let mut freehand_indices = Vec::new();
@@ -239,18 +237,17 @@ pub fn render_layers_window(
                                                 project.active_layer = i;
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Stroke, s_idx)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
-                                                    object_to_select = Some((i, crate::project::ObjectType::Stroke, s_idx));
-                                                    project.active_layer = i;
-                                                    *active_tool = crate::overlay::Tool::Move;
-                                                }
-                                                let mut op_val = (s.opacity * 100.0) as i32;
-                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { s.opacity = op_val as f32 / 100.0; }
-                                                if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Stroke, s_idx, -1)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Stroke, s_idx, 1)); }
-                                            });
+                                            ui.add_space(5.0);
+                                            if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Stroke, s_idx)); }
+                                            if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
+                                                object_to_select = Some((i, crate::project::ObjectType::Stroke, s_idx));
+                                                project.active_layer = i;
+                                                *active_tool = crate::overlay::Tool::Move;
+                                            }
+                                            let mut op_val = (s.opacity * 100.0) as i32;
+                                            if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { s.opacity = op_val as f32 / 100.0; }
+                                            if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Stroke, s_idx, -1)); }
+                                            if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Stroke, s_idx, 1)); }
                                         });
                                     }
                                     if !freehand_indices.is_empty() {

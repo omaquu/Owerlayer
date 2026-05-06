@@ -434,7 +434,7 @@ pub fn update(ctx: &mut ToolContext) {
                 
 
 
-                if left_just_pressed && !click_consumed && !ui.ctx().is_pointer_over_area() {
+                if left_just_pressed && !click_consumed {
                     let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
                     let mut found_objects = Vec::new();
                     
@@ -559,7 +559,7 @@ pub fn render(ctx: &mut ToolContext) {
     if let Some(sel) = project.selected_object {
         if sel.layer_idx < project.layers.len() {
             let layer = &project.layers[sel.layer_idx];
-            if let Some(bounds) = layer_bounds(layer) {
+            if let Some(bounds) = crate::utils::object_bounds(layer, sel.object_type, sel.object_idx) {
                 let bounds = bounds.translate(-render_offset);
                 painter.rect_stroke(bounds.expand(4.0), 0.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 180, 255)), egui::StrokeKind::Middle);
                 let handle_rect = egui::Rect::from_center_size(bounds.max + egui::vec2(4.0, 4.0), egui::vec2(8.0, 8.0));
