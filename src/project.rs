@@ -138,6 +138,20 @@ impl Project {
         None
     }
 
+    pub fn list_projects() -> Vec<String> {
+        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "omaquu", "owerlayer") {
+            let projects_dir = proj_dirs.config_dir().join("projects");
+            if let Ok(entries) = std::fs::read_dir(&projects_dir) {
+                return entries.flatten()
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .filter(|e| e.path().join("project.json").exists())
+                    .filter_map(|e| e.file_name().into_string().ok())
+                    .collect();
+            }
+        }
+        vec![]
+    }
+
     pub fn load(name: &str) -> Option<Self> {
         let dir = Self::project_dir(name);
         let json_path = dir.join("project.json");
@@ -160,21 +174,4 @@ impl Project {
         None
     }
 
-    #[allow(dead_code)]
-    pub fn list_projects() -> Vec<String> {
-        let mut projects = Vec::new();
-        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "omaquu", "owerlayer") {
-            let dir = proj_dirs.config_dir().join("projects");
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                        if let Ok(name) = entry.file_name().into_string() {
-                            projects.push(name);
-                        }
-                    }
-                }
-            }
-        }
-        projects
-    }
 }

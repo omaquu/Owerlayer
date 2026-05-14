@@ -9,6 +9,7 @@ pub fn render_layers_window(
     active_tool: &mut crate::overlay::Tool,
     open: &mut bool,
     filters_open: &mut Option<usize>,
+    load_picker_open: &mut bool,
 ) {
     let frame = photoshop_frame(settings);
 
@@ -28,11 +29,11 @@ pub fn render_layers_window(
                 }
                 if ui.button("💾").on_hover_text("Save Project").clicked() { project.save(); }
                 if ui.button("📂").on_hover_text("Load Project").clicked() {
-                    if let Some(p) = crate::project::Project::load(&project.name) {
-                        *project = p;
-                    }
+                    *load_picker_open = !*load_picker_open;
                 }
-                ui.add(egui::TextEdit::singleline(&mut project.name).desired_width(80.0));
+                if ui.add(egui::TextEdit::singleline(&mut project.name).desired_width(80.0)).changed() {
+                    project.save();
+                }
                 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("➕").on_hover_text("New Layer").clicked() {
@@ -314,12 +315,14 @@ pub fn render_layers_window(
                     project.selected_object = None;
                     if project.layers.is_empty() { project.layers.push(crate::project::Layer::new("Layer 1")); }
                     project.active_layer = project.active_layer.min(project.layers.len() - 1);
+                    project.save();
                 }
                 if let Some(idx) = layer_to_move_up {
                     if idx < total_layers - 1 {
                         project.layers.swap(idx, idx + 1);
                         if project.active_layer == idx { project.active_layer = idx + 1; }
                         else if project.active_layer == idx + 1 { project.active_layer = idx; }
+                        project.save();
                     }
                 }
                 if let Some(idx) = layer_to_move_down {
@@ -327,6 +330,7 @@ pub fn render_layers_window(
                         project.layers.swap(idx, idx - 1);
                         if project.active_layer == idx { project.active_layer = idx - 1; }
                         else if project.active_layer == idx - 1 { project.active_layer = idx; }
+                        project.save();
                     }
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_delete {
@@ -342,6 +346,7 @@ pub fn render_layers_window(
                         ObjectType::Image => { project.layers[l_idx].placed_images.remove(o_idx); }
                     }
                     project.selected_object = None;
+                    project.save();
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_clone {
                     match obj_type {
@@ -416,4 +421,33 @@ pub fn render_layers_window(
     }
     
     crate::ui::object_fx::render_fx_window(ctx, project, settings);
+
+    if *load_picker_open {
+        egui::Window::new("Load Project")
+            .collapsible(false)
+            .resizable(true)
+            .default_width(200.0)
+            .frame(photoshop_frame(settings))
+            .show(ctx, |ui| {
+                let projects = crate::project::Project::list_projects();
+                if projects.is_empty() {
+                    ui.label("No projects found.");
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for name in projects {
+                            if ui.selectable_label(project.name == name, &name).clicked() {
+                                if let Some(p) = crate::project::Project::load(&name) {
+                                    *project = p;
+                                    *load_picker_open = false;
+                                }
+                            }
+                        }
+                    });
+                }
+                ui.separator();
+                if ui.button("Close").clicked() {
+                    *load_picker_open = false;
+                }
+            });
+    }
 }

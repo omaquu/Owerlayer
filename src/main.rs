@@ -68,6 +68,7 @@ struct OwerlayerApp {
     show_history_panel: bool,
     request_history_push: Option<String>,
     layer_prompt_open: bool,
+    load_picker_open: bool,
 }
 
 impl OwerlayerApp {
@@ -99,6 +100,8 @@ impl OwerlayerApp {
             show_settings_panel: false,
             show_layers_panel: false,
             show_exit_dialog: false,
+            load_picker_open: false,
+            layer_prompt_open: false,
             listening_for_hotkey: false,
             prev_mouse_down: false,
             prev_mouse_pos: egui::pos2(0.0, 0.0),
@@ -124,7 +127,6 @@ impl OwerlayerApp {
             history: history::History::new(),
             show_history_panel: false,
             request_history_push: None,
-            layer_prompt_open: false,
             #[cfg(feature = "webengine")]
             web_widgets: Vec::new(),
             #[cfg(feature = "webengine")]
@@ -243,17 +245,17 @@ impl OwerlayerApp {
 
             // Fallback to static image
             if !loaded_as_image {
-            if let Ok(img) = image::load_from_memory(&bytes) {
-                let rgba = img.to_rgba8();
-                let (w, h) = rgba.dimensions();
-                if let Some(layer) = self.project.get_active_layer_mut() {
-                    let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                    let mut p_img = overlay::PlacedImage::new(id, egui::pos2(100.0, 100.0), [w as usize, h as usize], rgba.into_raw());
-                    p_img.url = Some(url.clone());
-                    layer.placed_images.push(p_img);
-                    loaded_as_image = true;
+                if let Ok(img) = image::load_from_memory(&bytes) {
+                    let rgba = img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    if let Some(layer) = self.project.get_active_layer_mut() {
+                        let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                        let mut p_img = overlay::PlacedImage::new(id, egui::pos2(100.0, 100.0), [w as usize, h as usize], rgba.into_raw());
+                        p_img.url = Some(url.clone());
+                        layer.placed_images.push(p_img);
+                        loaded_as_image = true;
+                    }
                 }
-            }
             }
         }
 
@@ -470,6 +472,7 @@ impl eframe::App for OwerlayerApp {
                     }
                     self.history.push(&self.project, "Brush Stroke");
                     self.current_stroke.clear();
+                    self.project.save();
                 }
                 self.line_start = None;
                 self.initial_bounds = None;
@@ -517,6 +520,7 @@ impl eframe::App for OwerlayerApp {
                                 layer.text_annotations.push(ann);
                             }
                             self.history.push(&self.project, format!("Text: {}", text_str));
+                            self.project.save();
                         }
                     }
                 } else if cancel { self.pending_text = None; }
@@ -591,7 +595,7 @@ impl eframe::App for OwerlayerApp {
                 }
             }
             if self.show_layers_panel && self.edit_mode {
-                render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.active_tool, &mut self.show_layers_panel, &mut self.filters_open);
+                render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.active_tool, &mut self.show_layers_panel, &mut self.filters_open, &mut self.load_picker_open);
             }
             if self.show_history_panel && self.edit_mode {
                 if let Some(snap) = ui::history_menu::render_history_window(ctx, &mut self.history, &mut self.show_history_panel, &self.settings) {
