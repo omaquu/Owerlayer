@@ -228,6 +228,8 @@ pub struct TextAnnotation {
     pub opacity: f32,
     #[serde(default)]
     pub wave_warp: bool,
+    #[serde(default)]
+    pub exact_size: [f32; 2],
 }
 
 impl TextAnnotation {
@@ -245,6 +247,7 @@ impl TextAnnotation {
             visible: true,
             opacity: 1.0,
             wave_warp: false,
+            exact_size: [0.0, 0.0],
         }
     }
 }

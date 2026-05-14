@@ -348,6 +348,9 @@ impl eframe::App for OwerlayerApp {
                 }
             }
         }
+        if self.history.entries.is_empty() {
+            self.history.push(&self.project, "Initial State");
+        }
         self.frame_count += 1;
         
         // ---- 0. First-frame init ----
@@ -438,10 +441,15 @@ impl eframe::App for OwerlayerApp {
                 // Leaving edit → finalize pending work
                 if let Some(pending) = self.pending_text.take() {
                     if !pending.buffer.is_empty() {
+                        let text_str = pending.buffer.clone();
                         if let Some(layer) = self.project.get_active_layer_mut() {
-                            layer.text_annotations.push(TextAnnotation::new(pending.position, pending.buffer, self.settings.pen_color, self.settings.font_size));
+                            let mut ann = overlay::TextAnnotation::new(pending.position, text_str.clone(), self.settings.pen_color, self.settings.font_size);
+                            let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
+                            let galley = ctx.fonts(|f| f.layout_no_wrap(text_str.clone(), font, egui::Color32::WHITE));
+                            ann.exact_size = [galley.size().x, galley.size().y];
+                            layer.text_annotations.push(ann);
                         }
-                        self.history.push(&self.project, "Text");
+                        self.history.push(&self.project, format!("Text: {}", text_str));
                     }
                 }
                 if !self.current_stroke.is_empty() {
@@ -494,17 +502,21 @@ impl eframe::App for OwerlayerApp {
                 if finalize {
                     if let Some(p) = self.pending_text.take() {
                         if !p.buffer.is_empty() {
+                            let text_str = p.buffer.clone();
                             if let Some(layer) = self.project.get_active_layer_mut() {
-                                let mut ann = overlay::TextAnnotation::new(p.position, p.buffer, self.settings.pen_color, self.settings.font_size);
+                                let mut ann = overlay::TextAnnotation::new(p.position, text_str.clone(), self.settings.pen_color, self.settings.font_size);
                                 ann.monospace = self.settings.text_monospace;
                                 ann.shadow = self.settings.text_shadow;
                                 ann.outline = self.settings.text_outline;
                                 ann.stroke_width = self.settings.text_stroke_width;
                                 ann.font = self.settings.text_font;
                                 ann.wave_warp = self.settings.text_wave_warp;
+                                let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
+                                let galley = ctx.fonts(|f| f.layout_no_wrap(text_str.clone(), font, egui::Color32::WHITE));
+                                ann.exact_size = [galley.size().x, galley.size().y];
                                 layer.text_annotations.push(ann);
                             }
-                            self.history.push(&self.project, "Text");
+                            self.history.push(&self.project, format!("Text: {}", text_str));
                         }
                     }
                 } else if cancel { self.pending_text = None; }

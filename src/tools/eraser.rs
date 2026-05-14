@@ -13,6 +13,7 @@ pub fn update(ctx: &mut ToolContext) {
     let pos = mouse.pos;
     let left_down = mouse.left_down;
     let active_layer_idx = project.active_layer;
+    if active_layer_idx >= project.layers.len() { return; }
 
                 let layer = &mut project.layers[active_layer_idx];
                 if left_down {
@@ -47,7 +48,20 @@ pub fn update(ctx: &mut ToolContext) {
                             }
                         });
                         // In Stroke mode: touching the anchor point of a text annotation deletes it
-                        layer.text_annotations.retain(|ann| ann.position.distance(pos) > r);
+                        let mut to_remove = Vec::new();
+                        for i in 0..layer.text_annotations.len() {
+                            if let Some(hit_rect) = crate::utils::object_bounds(layer, crate::types::ObjectType::Text, i) {
+                                let hit = if settings.brush_shape == BrushShape::Square {
+                                    hit_rect.intersects(egui::Rect::from_center_size(pos, egui::vec2(r*2.0, r*2.0)))
+                                } else {
+                                    hit_rect.distance_to_pos(pos) <= r
+                                };
+                                if hit { to_remove.push(i); }
+                            }
+                        }
+                        for i in to_remove.into_iter().rev() {
+                            layer.text_annotations.remove(i);
+                        }
                     } else {
                         // Split mode
                         let mut new_strokes = Vec::new();

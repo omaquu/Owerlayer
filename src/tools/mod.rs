@@ -48,6 +48,14 @@ impl<'a, 'b> ToolContext<'a, 'b> {
             return;
         }
         let active_layer_idx = self.project.active_layer;
+
+        // If no layers exist yet, create the first one and return
+        if self.project.layers.is_empty() {
+            self.project.layers.push(crate::project::Layer::new(self.active_tool.name()));
+            self.project.active_layer = 0;
+            *self.last_tool_used = Some(*self.active_tool);
+            return;
+        }
         
         // If we have a valid active layer and we're just drawing more brush strokes, 
         // don't force a new layer if the last tool was also Brush.

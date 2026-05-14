@@ -531,8 +531,11 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     
                     if ui.button("⟳").on_hover_text("Rotate 90").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
-                        let b = crate::utils::object_bounds(layer, sel.object_type, sel.object_idx).unwrap_or(egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(1.0, 1.0)));
-                        crate::utils::rotate_layer(layer, b.center(), std::f32::consts::PI / 2.0);
+                        match sel.object_type {
+                            ObjectType::Image => { layer.placed_images[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
+                            ObjectType::Stroke => { layer.strokes[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
+                            ObjectType::Text => { layer.text_annotations[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
+                        }
                         *request_history_push = Some("Rotate".into());
                     }
                     if ui.button("↔").on_hover_text("Flip H").clicked() {

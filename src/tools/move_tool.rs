@@ -253,40 +253,24 @@ pub fn update(ctx: &mut ToolContext) {
                     });
                 });
 
-                // Skew handles (mid-points of sides) — draw at bounds, hit-test at raw_bounds
-                let draw_mids = [bounds.left_center(), bounds.right_center(), bounds.center_top(), bounds.center_bottom()];
+                // Skew handles (hit-test only, visuals drawn in render())
+                let _draw_mids = [bounds.left_center(), bounds.right_center(), bounds.center_top(), bounds.center_bottom()];
                 let hit_mids = [raw_bounds.left_center(), raw_bounds.right_center(), raw_bounds.center_top(), raw_bounds.center_bottom()];
-                for m in draw_mids { painter.circle_filled(m, 3.0, egui::Color32::from_rgb(200, 200, 200)); }
 
-                // Perspective handles (dots outside corners)
+                // Perspective handles (hit-test only, visuals drawn in render())
                 let p_dist = 25.0;
-                let draw_p_corners = [
-                    bounds.left_top() + egui::vec2(-p_dist, -p_dist),
-                    bounds.right_top() + egui::vec2(p_dist, -p_dist),
-                    bounds.left_bottom() + egui::vec2(-p_dist, p_dist),
-                    bounds.right_bottom() + egui::vec2(p_dist, p_dist),
-                ];
                 let hit_p_corners = [
                     raw_bounds.left_top() + egui::vec2(-p_dist, -p_dist),
                     raw_bounds.right_top() + egui::vec2(p_dist, -p_dist),
                     raw_bounds.left_bottom() + egui::vec2(-p_dist, p_dist),
                     raw_bounds.right_bottom() + egui::vec2(p_dist, p_dist),
                 ];
-                for pc in draw_p_corners {
-                    painter.circle_filled(pc, 4.0, egui::Color32::from_rgb(100, 200, 255));
-                    painter.circle_stroke(pc, 4.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
-                }
-
-                // Transformation Handles (Resize)
-                for corner in hit_corners {
-                    painter.rect_filled(egui::Rect::from_center_size(corner - render_offset, egui::vec2(8.0, 8.0)), 0.0, egui::Color32::WHITE);
-                }
                 
                 // Rotation handle
                 let hit_rot = raw_bounds.center_top() - egui::vec2(0.0, 25.0);
                 
                 // Delete button
-                let del_rect = egui::Rect::from_center_size(raw_bounds.right_top() + egui::vec2(15.0, -15.0), egui::vec2(18.0, 18.0));
+                let del_rect = egui::Rect::from_center_size(raw_bounds.right_top() + egui::vec2(25.0, -25.0), egui::vec2(18.0, 18.0));
                 if left_just_pressed && del_rect.contains(pos) {
                     if let Some(sel) = project.selected_object {
                         match sel.object_type {
@@ -626,7 +610,15 @@ pub fn update(ctx: &mut ToolContext) {
                 if left_just_released {
                     if let Some(start) = *line_start {
                         if (pos - start).length_sq() > 1.0 || *drag_state > 0 {
-                            *ctx.request_history_push = Some("Transform".into());
+                            let name = match *drag_state {
+                                0 => "Move",
+                                1 => "Rotate",
+                                2..=5 => "Skew",
+                                10..=13 => "Resize",
+                                20..=23 => "Perspective",
+                                _ => "Transform",
+                            };
+                            *ctx.request_history_push = Some(name.into());
                         }
                     }
                     *line_start = None;
@@ -634,9 +626,7 @@ pub fn update(ctx: &mut ToolContext) {
                     *dragging_source_rect = false;
                     if active_layer_idx < project.layers.len() {
                         let layer = &project.layers[active_layer_idx];
-                        if layer.strokes.is_empty() && layer.text_annotations.is_empty() && layer.placed_images.is_empty() {
-                            if project.layers.len() > 1 { *remove_active_layer = true; }
-                        }
+                        // Layer is empty, but we shouldn't automatically delete it here.
                     }
                 }
             }
@@ -707,13 +697,12 @@ pub fn render(ctx: &mut ToolContext) {
                 painter.circle_stroke(mid, 3.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
             }
 
-            // 5. Delete button (X) at top right
-            let del_rect_draw = egui::Rect::from_center_size(b.right_top() + egui::vec2(15.0, -15.0), egui::vec2(18.0, 18.0));
+            // 5. Delete button (🗑) at top right, offset to avoid resize handle overlap
+            let del_rect_draw = egui::Rect::from_center_size(b.right_top() + egui::vec2(25.0, -25.0), egui::vec2(18.0, 18.0));
             let mouse_pos = ctx.mouse.pos;
             let del_hover = del_rect_draw.contains(mouse_pos);
-            painter.circle_filled(del_rect_draw.center(), 9.0, if del_hover { egui::Color32::from_rgb(255, 50, 50) } else { egui::Color32::from_rgb(200, 0, 0) });
-            painter.line_segment([del_rect_draw.left_top() + egui::vec2(5.0, 5.0), del_rect_draw.right_bottom() - egui::vec2(5.0, 5.0)], egui::Stroke::new(2.0, egui::Color32::WHITE));
-            painter.line_segment([del_rect_draw.right_top() + egui::vec2(-5.0, 5.0), del_rect_draw.left_bottom() + egui::vec2(5.0, -5.0)], egui::Stroke::new(2.0, egui::Color32::WHITE));
+            painter.circle_filled(del_rect_draw.center(), 11.0, if del_hover { egui::Color32::from_rgb(255, 50, 50) } else { egui::Color32::from_rgb(200, 0, 0) });
+            painter.text(del_rect_draw.center(), egui::Align2::CENTER_CENTER, "🗑", egui::FontId::proportional(12.0), egui::Color32::WHITE);
         }
     }
 }

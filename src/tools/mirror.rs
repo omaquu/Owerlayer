@@ -24,6 +24,7 @@ pub fn update(ctx: &mut ToolContext) {
     let left_just_released = mouse.left_just_released;
     let active_layer_idx = project.active_layer;
     let _render_offset = ctx.render_offset;
+    if active_layer_idx >= project.layers.len() { return; }
 
     let layer = &mut project.layers[active_layer_idx];
                 match settings.mirror_mode {

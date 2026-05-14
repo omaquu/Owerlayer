@@ -25,6 +25,7 @@ pub fn update(ctx: &mut ToolContext) {
     let _ppp = ui.ctx().pixels_per_point();
     let render_offset = ctx.render_offset;
     let _frame_count = ctx.frame_count;
+    if active_layer_idx >= project.layers.len() { return; }
 
                 let layer = &mut project.layers[active_layer_idx];
                 let mode = settings.snip_mode;

@@ -221,7 +221,7 @@ pub fn object_bounds(layer: &crate::project::Layer, obj_type: ObjectType, obj_id
         }
         ObjectType::Text => {
             if let Some(ann) = layer.text_annotations.get(obj_idx) {
-                let size = egui::vec2(ann.text.len() as f32 * ann.font_size * 0.6, ann.font_size * 1.2);
+                let size = egui::vec2(ann.exact_size[0], ann.exact_size[1]);
                 let initial_rect = egui::Rect::from_min_size(ann.position, size);
                 let center = initial_rect.center();
                 for c in [initial_rect.left_top(), initial_rect.right_top(), initial_rect.left_bottom(), initial_rect.right_bottom()] {

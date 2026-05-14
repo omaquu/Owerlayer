@@ -46,11 +46,9 @@ pub fn update(ctx: &mut ToolContext) {
     // ── Double-click to re-edit an existing annotation ──
     if canvas_response.double_clicked() {
         for (idx, ann) in layer.text_annotations.iter().enumerate() {
-            // Estimate bounding box — use font_size * ~0.6 per char width
-            let approx_width = ann.text.chars().count() as f32 * ann.font_size * 0.55 + 10.0;
             let rect = egui::Rect::from_min_size(
                 ann.position,
-                egui::vec2(approx_width, ann.font_size * 1.4),
+                egui::vec2(ann.exact_size[0], ann.exact_size[1]),
             );
             if rect.contains(pos) {
                 // Restore the annotation's settings into the toolbar
@@ -71,10 +69,9 @@ pub fn update(ctx: &mut ToolContext) {
     let mut painted_over = false;
     if mouse.left_down && pending_text.is_none() {
         for ann in layer.text_annotations.iter_mut() {
-            let approx_width = ann.text.chars().count() as f32 * ann.font_size * 0.55 + 10.0;
             let rect = egui::Rect::from_min_size(
                 ann.position,
-                egui::vec2(approx_width, ann.font_size * 1.4),
+                egui::vec2(ann.exact_size[0], ann.exact_size[1]),
             );
             if rect.contains(pos) {
                 ann.font = settings.text_font;
@@ -150,7 +147,7 @@ pub fn draw_layer_text(
 
             let primitives = p.ctx().tessellate(shapes, p.ctx().pixels_per_point());
             
-            let rect = egui::Rect::from_min_size(ann.position, egui::vec2(ann.text.len() as f32 * ann.font_size * 0.6, ann.font_size * 1.2));
+            let rect = egui::Rect::from_min_size(ann.position, egui::vec2(ann.exact_size[0], ann.exact_size[1]));
             let center = rect.center();
 
             for primitive in primitives {
@@ -196,7 +193,7 @@ fn draw_wave_text(
     let char_w = ann.font_size * 0.55;
     let sw = if ann.stroke_width > 0.0 { ann.stroke_width } else { 1.0 };
 
-    let rect = egui::Rect::from_min_size(ann.position, egui::vec2(ann.text.len() as f32 * char_w, ann.font_size * 1.2));
+    let rect = egui::Rect::from_min_size(ann.position, egui::vec2(ann.exact_size[0], ann.exact_size[1]));
     let center = rect.center();
 
     for (i, ch) in ann.text.chars().enumerate() {

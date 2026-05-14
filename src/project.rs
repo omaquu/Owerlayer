@@ -69,7 +69,7 @@ impl Project {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            layers: vec![Layer::new("Layer 1")],
+            layers: vec![],
             active_layer: 0,
             selected_object: None,
             last_left_down: false,
@@ -129,8 +129,34 @@ impl Project {
     pub fn load_last() -> Option<Self> {
         if let Some(proj_dirs) = directories::ProjectDirs::from("com", "omaquu", "owerlayer") {
             let last_file = proj_dirs.config_dir().join("last_project.txt");
-            if let Ok(name) = std::fs::read_to_string(last_file) {
-                return Self::load(&name.trim());
+            if let Ok(name) = std::fs::read_to_string(&last_file) {
+                if let Some(p) = Self::load(&name.trim()) {
+                    return Some(p);
+                }
+            }
+            // Fallback: find the most recently modified project
+            let projects_dir = proj_dirs.config_dir().join("projects");
+            if let Ok(entries) = std::fs::read_dir(&projects_dir) {
+                let mut best: Option<(std::time::SystemTime, String)> = None;
+                for entry in entries.flatten() {
+                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        let json = entry.path().join("project.json");
+                        if json.exists() {
+                            if let Ok(meta) = std::fs::metadata(&json) {
+                                if let Ok(modified) = meta.modified() {
+                                    if best.as_ref().map_or(true, |(t, _)| modified > *t) {
+                                        if let Ok(n) = entry.file_name().into_string() {
+                                            best = Some((modified, n));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some((_, name)) = best {
+                    return Self::load(&name);
+                }
             }
         }
         None
