@@ -1,5 +1,4 @@
 use eframe::egui;
-use crate::types::*;
 use crate::utils::*;
 use crate::overlay::*;
 
@@ -24,7 +23,7 @@ pub fn update(ctx: &mut ToolContext) {
     let left_just_pressed = mouse.left_just_pressed;
     let left_just_released = mouse.left_just_released;
     let active_layer_idx = project.active_layer;
-    let render_offset = ctx.render_offset;
+    let _render_offset = ctx.render_offset;
 
     let layer = &mut project.layers[active_layer_idx];
                 match settings.mirror_mode {
@@ -62,6 +61,12 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.source_rect = Some([rect.min.x, rect.min.y, rect.width(), rect.height()]);
                                 img.mask = mask;
                                 layer.placed_images.push(img);
+                                *new_selection = Some(SelectedObject {
+                                    layer_idx: active_layer_idx,
+                                    object_type: ObjectType::Image,
+                                    object_idx: layer.placed_images.len() - 1,
+                                });
+                                *switch_to_move = true;
                             }
                         }
                     }
@@ -96,6 +101,12 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                 img.mask = Some(mask);
                                 layer.placed_images.push(img);
+                                *new_selection = Some(SelectedObject {
+                                    layer_idx: active_layer_idx,
+                                    object_type: ObjectType::Image,
+                                    object_idx: layer.placed_images.len() - 1,
+                                });
+                                *switch_to_move = true;
                             }
                         }
                     }
@@ -130,6 +141,12 @@ pub fn update(ctx: &mut ToolContext) {
                                         img.source_rect = Some([rect.min.x, rect.min.y, rect.width(), rect.height()]);
                                         img.mask = Some(mask);
                                         layer.placed_images.push(img);
+                                        *new_selection = Some(SelectedObject {
+                                            layer_idx: active_layer_idx,
+                                            object_type: ObjectType::Image,
+                                            object_idx: layer.placed_images.len() - 1,
+                                        });
+                                        *switch_to_move = true;
                                     }
                                     current_stroke.clear();
                                 } else {
@@ -171,6 +188,12 @@ pub fn update(ctx: &mut ToolContext) {
                             img.source_rect = Some([rect.min.x, rect.min.y, rect.width(), rect.height()]);
                             img.mask = Some(mask);
                             layer.placed_images.push(img);
+                            *new_selection = Some(SelectedObject {
+                                layer_idx: active_layer_idx,
+                                object_type: ObjectType::Image,
+                                object_idx: layer.placed_images.len() - 1,
+                            });
+                            *switch_to_move = true;
                         }
                         current_stroke.clear();
                     }
@@ -198,9 +221,9 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                 layer.placed_images.push(img);
                                 // Request auto-selection and tool switch after borrow ends
-                                *new_selection = Some(crate::project::SelectedObject {
+                                *new_selection = Some(SelectedObject {
                                     layer_idx: active_layer_idx,
-                                    object_type: crate::project::ObjectType::Image,
+                                    object_type: ObjectType::Image,
                                     object_idx: layer.placed_images.len() - 1,
                                 });
                                 *switch_to_move = true;

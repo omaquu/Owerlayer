@@ -1,5 +1,4 @@
 use eframe::egui;
-use crate::types::*;
 use crate::utils::*;
 use crate::overlay::*;
 
@@ -7,11 +6,12 @@ use crate::tools::ToolContext;
 
 pub fn update(ctx: &mut ToolContext) {
     let project = &mut *ctx.project;
+    let settings = &mut *ctx.settings;
     let mouse = ctx.mouse;
     let active_tool = &mut *ctx.active_tool;
     let remove_active_layer = &mut *ctx.remove_active_layer;
-    let new_selection = &mut *ctx.new_selection;
-    let switch_to_move = &mut *ctx.switch_to_move;
+    let _new_selection = &mut *ctx.new_selection;
+    let _switch_to_move = &mut *ctx.switch_to_move;
     let line_start = &mut *ctx.line_start;
     let dragging_source_rect = &mut *ctx.dragging_source_rect;
     let initial_layer = &mut *ctx.initial_layer;
@@ -31,9 +31,18 @@ pub fn update(ctx: &mut ToolContext) {
 
                 let mut click_consumed = false;
 
-                if let Some(sel) = project.selected_object {
-                    let layer = &mut project.layers[sel.layer_idx];
-                    if let Some(raw_bounds) = object_bounds(layer, sel.object_type, sel.object_idx) {
+                let is_layer_mode = project.selected_object.is_none();
+                let layer_idx = project.selected_object.map(|s| s.layer_idx).unwrap_or(project.active_layer);
+                
+                if layer_idx < project.layers.len() {
+                    let layer = &mut project.layers[layer_idx];
+                    let raw_bounds_opt = if let Some(sel) = project.selected_object {
+                        crate::utils::object_bounds(layer, sel.object_type, sel.object_idx)
+                    } else {
+                        crate::utils::layer_bounds(layer)
+                    };
+                    
+                    if let Some(raw_bounds) = raw_bounds_opt {
                         // bounds = translated for drawing; raw_bounds = for hit-testing with pos
                         let bounds = raw_bounds.translate(-render_offset);
                         let draw_corners = [
@@ -46,7 +55,8 @@ pub fn update(ctx: &mut ToolContext) {
                         ];
 
                         #[cfg(feature = "webengine")]
-                        if sel.object_type == crate::project::ObjectType::Image {
+                        if let Some(sel) = project.selected_object {
+                            if sel.object_type == ObjectType::Image {
                             if sel.object_idx < layer.placed_images.len() {
                                 let img = &mut layer.placed_images[sel.object_idx];
                                 if let Some(widget) = &mut img.web_widget {
@@ -74,43 +84,35 @@ pub fn update(ctx: &mut ToolContext) {
                                 }
                             }
                         }
+                        }
                 
                 // --- Highlight Mirror Source Rect ---
-                if ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) && raw_bounds.contains(pos) {
-                    for img in &mut layer.placed_images {
-                        if img.is_live && img.source_rect.is_some() {
-                            let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                            let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                            let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
-                            if img_rect.contains(pos) {
-                                img.show_source_rect = !img.show_source_rect;
-                            }
-                        }
-                    }
-                }
-
-                for img in &layer.placed_images {
-                    if img.is_live && img.source_rect.is_some() && img.show_source_rect {
-                        let src = img.source_rect.unwrap();
-                        let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
-                        painter.rect_stroke(src_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
-                        painter.text(src_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
+                for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
+                    if img.is_live && img.source_rect.is_some() {
+                        let is_selected = project.selected_object == Some(SelectedObject { layer_idx, object_type: ObjectType::Image, object_idx: img_idx });
                         
-                        // Handles for source rect
-                        let s_corners = [src_rect.left_top(), src_rect.right_top(), src_rect.left_bottom(), src_rect.right_bottom()];
-                        for (idx, &sc) in s_corners.iter().enumerate() {
-                            let handle_rect = egui::Rect::from_center_size(sc, egui::vec2(8.0, 8.0));
-                            painter.rect_filled(handle_rect, 0.0, egui::Color32::from_rgb(255, 150, 50));
-                            if left_just_pressed && handle_rect.contains(pos) {
-                                *line_start = Some(egui::pos2(-4.0, idx as f32)); // Move source rect handle
+                        if is_selected && img.show_source_rect {
+                            let src = img.source_rect.unwrap();
+                            let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                            painter.rect_stroke(src_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
+                            painter.text(src_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
+                            
+                            // Handles for source rect
+                            let s_corners = [src_rect.left_top(), src_rect.right_top(), src_rect.left_bottom(), src_rect.right_bottom()];
+                            for (idx, &sc) in s_corners.iter().enumerate() {
+                                let handle_rect = egui::Rect::from_center_size(sc, egui::vec2(12.0, 12.0));
+                                painter.rect_filled(handle_rect, 0.0, egui::Color32::from_rgb(255, 150, 50));
+                                if left_just_pressed && handle_rect.contains(pos) {
+                                    *line_start = Some(egui::pos2(-4.0, idx as f32)); // Move source rect handle
+                                    *initial_bounds = Some(src_rect);
+                                    *dragging_source_rect = true;
+                                }
+                            }
+                            if left_just_pressed && src_rect.contains(pos) && !*dragging_source_rect {
+                                *line_start = Some(pos);
                                 *initial_bounds = Some(src_rect);
                                 *dragging_source_rect = true;
                             }
-                        }
-                        if left_just_pressed && src_rect.contains(pos) && !*dragging_source_rect {
-                            *line_start = Some(pos);
-                            *initial_bounds = Some(src_rect);
-                            *dragging_source_rect = true;
                         }
                     }
                 }
@@ -119,13 +121,16 @@ pub fn update(ctx: &mut ToolContext) {
                 painter.rect_stroke(bounds, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Middle);
                 
                 // --- Transformation Buttons ---
-                // Determine what kind of object is selected
-                let sel_is_blur = sel.object_type == crate::project::ObjectType::Image
-                    && sel.object_idx < layer.placed_images.len()
-                    && (layer.placed_images[sel.object_idx].name == "Blur" || layer.placed_images[sel.object_idx].blur > 0.0);
-                let sel_is_embed = sel.object_type == crate::project::ObjectType::Image
-                    && sel.object_idx < layer.placed_images.len()
-                    && layer.placed_images[sel.object_idx].url.is_some();
+                let mut sel_is_blur = false;
+                let mut sel_is_embed = false;
+                if let Some(sel) = project.selected_object {
+                    sel_is_blur = sel.object_type == ObjectType::Image
+                        && sel.object_idx < layer.placed_images.len()
+                        && (layer.placed_images[sel.object_idx].name == "Blur" || layer.placed_images[sel.object_idx].blur > 0.0);
+                    sel_is_embed = sel.object_type == ObjectType::Image
+                        && sel.object_idx < layer.placed_images.len()
+                        && layer.placed_images[sel.object_idx].url.is_some();
+                }
 
                 // Use two rows: row 1 = URL bar (for embeds), row 2 = buttons
                 let bar_height = if sel_is_embed { 52.0 } else { 32.0 };
@@ -135,19 +140,21 @@ pub fn update(ctx: &mut ToolContext) {
 
                     // Row 1: URL input bar (embed widgets only)
                     if sel_is_embed {
-                        if sel.object_idx < layer.placed_images.len() {
-                            let img = &mut layer.placed_images[sel.object_idx];
-                            if let Some(ref mut url) = img.url {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("🌐").size(12.0));
-                                    let edit_resp = ui.add(egui::TextEdit::singleline(url).desired_width(ui.available_width() - 10.0).hint_text("Enter URL..."));
-                                    if edit_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                        #[cfg(feature = "webengine")]
-                                        if let Some(widget) = &mut img.web_widget {
-                                            crate::web_engine::navigate_widget(widget, url);
+                        if let Some(sel) = project.selected_object {
+                            if sel.object_idx < layer.placed_images.len() {
+                                let img = &mut layer.placed_images[sel.object_idx];
+                                if let Some(ref mut url) = img.url {
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new("🌐").size(12.0));
+                                        let edit_resp = ui.add(egui::TextEdit::singleline(url).desired_width(ui.available_width() - 10.0).hint_text("Enter URL..."));
+                                        if edit_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                            #[cfg(feature = "webengine")]
+                                            if let Some(widget) = &mut img.web_widget {
+                                                crate::web_engine::navigate_widget(widget, url);
+                                            }
                                         }
-                                    }
-                                });
+                                    });
+                                }
                             }
                         }
                     }
@@ -192,59 +199,54 @@ pub fn update(ctx: &mut ToolContext) {
                             layer.opacity = op_val / 100.0;
                         }
 
-                        // Blur controls — ONLY for blur objects
-                        if sel_is_blur {
-                            ui.separator();
-                            let img = &mut layer.placed_images[sel.object_idx];
-                            let mut blur_val = img.blur;
-                            if ui.add(egui::DragValue::new(&mut blur_val).range(0.0..=100.0).prefix("B: ")).changed() {
-                                img.blur = blur_val;
-                            }
-                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Gaussian, "Blur");
-                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Pixelate, "Pixel");
-                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Glitch, "VHS");
-                        }
-
+                        ui.separator();
+                        
                         // Embed widget buttons — ONLY for embed objects with URLs
                         if sel_is_embed {
-                            ui.separator();
-                            let img = &mut layer.placed_images[sel.object_idx];
-                            if ui.button("📋 Paste").on_hover_text("Paste URL from clipboard").clicked() {
-                                if let Some(text) = crate::winapi_utils::get_clipboard_text() {
-                                    img.url = Some(text.clone());
-                                    #[cfg(feature = "webengine")]
-                                    if let Some(widget) = &mut img.web_widget {
-                                        crate::web_engine::navigate_widget(widget, &text);
+                            if let Some(sel) = project.selected_object {
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    let img = &mut layer.placed_images[sel.object_idx];
+                                    if ui.button("📋 Paste").on_hover_text("Paste URL from clipboard").clicked() {
+                                        if let Some(text) = crate::winapi_utils::get_clipboard_text() {
+                                            img.url = Some(text.clone());
+                                            #[cfg(feature = "webengine")]
+                                            if let Some(widget) = &mut img.web_widget {
+                                                crate::web_engine::navigate_widget(widget, &text);
+                                            }
+                                        }
                                     }
-                                }
-                            }
-                            if ui.button("🌐 Web").on_hover_text("Open browser search").clicked() {
-                                let text = "https://www.google.com".to_string();
-                                img.url = Some(text.clone());
-                                #[cfg(feature = "webengine")]
-                                if let Some(widget) = &mut img.web_widget {
-                                    crate::web_engine::navigate_widget(widget, &text);
-                                }
-                            }
-                            if ui.button("📺 YT").on_hover_text("Open YouTube").clicked() {
-                                let text = "https://www.youtube.com".to_string();
-                                img.url = Some(text.clone());
-                                #[cfg(feature = "webengine")]
-                                if let Some(widget) = &mut img.web_widget {
-                                    crate::web_engine::navigate_widget(widget, &text);
-                                }
+                                    if ui.button("🌐 Web").on_hover_text("Open browser search").clicked() {
+                                        let text = "https://www.google.com".to_string();
+                                        img.url = Some(text.clone());
+                                        #[cfg(feature = "webengine")]
+                                        if let Some(widget) = &mut img.web_widget {
+                                            crate::web_engine::navigate_widget(widget, &text);
+                                        }
+                                    }
+                                    if ui.button("📺 YT").on_hover_text("Open YouTube").clicked() {
+                                        let text = "https://www.youtube.com".to_string();
+                                        img.url = Some(text.clone());
+                                        #[cfg(feature = "webengine")]
+                                        if let Some(widget) = &mut img.web_widget {
+                                            crate::web_engine::navigate_widget(widget, &text);
+                                        }
+                                    }
+                                });
                             }
                         }
-                        
+
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED))).on_hover_text("Delete Selected").clicked() {
-                                if let Some(sel) = project.selected_object {
-                                    match sel.object_type {
-                                        crate::project::ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
-                                        crate::project::ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
-                                        crate::project::ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
+                            if !is_layer_mode {
+                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED)).min_size(egui::vec2(24.0, 24.0))).on_hover_text("Delete Selected").clicked() {
+                                    if let Some(sel) = project.selected_object {
+                                        match sel.object_type {
+                                            ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
+                                            ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
+                                            ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
+                                        }
+                                        project.selected_object = None;
                                     }
-                                    project.selected_object = None;
                                 }
                             }
                         });
@@ -276,21 +278,32 @@ pub fn update(ctx: &mut ToolContext) {
                 }
 
                 // Transformation Handles (Resize)
-                for corner in draw_corners {
-                    painter.rect_filled(egui::Rect::from_center_size(corner, egui::vec2(8.0, 8.0)), 0.0, egui::Color32::WHITE);
-                    painter.rect_stroke(egui::Rect::from_center_size(corner, egui::vec2(8.0, 8.0)), 0.0, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Middle);
+                for corner in hit_corners {
+                    painter.rect_filled(egui::Rect::from_center_size(corner - render_offset, egui::vec2(8.0, 8.0)), 0.0, egui::Color32::WHITE);
                 }
                 
-                // Rotation handle: draw at bounds, hit-test at raw_bounds
-                let draw_rot = bounds.center_top() - egui::vec2(0.0, 20.0);
-                let hit_rot = raw_bounds.center_top() - egui::vec2(0.0, 20.0);
-                painter.line_segment([bounds.center_top(), draw_rot], egui::Stroke::new(1.0, egui::Color32::WHITE));
-                painter.circle_filled(draw_rot, 4.0, egui::Color32::WHITE);
-                painter.circle_stroke(draw_rot, 4.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+                // Rotation handle
+                let hit_rot = raw_bounds.center_top() - egui::vec2(0.0, 25.0);
+                
+                // Delete button
+                let del_rect = egui::Rect::from_center_size(raw_bounds.right_top() + egui::vec2(15.0, -15.0), egui::vec2(18.0, 18.0));
+                if left_just_pressed && del_rect.contains(pos) {
+                    if let Some(sel) = project.selected_object {
+                        match sel.object_type {
+                            ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
+                            ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
+                            ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
+                        }
+                        project.selected_object = None;
+                    }
+                    return;
+                }
+
+                if top_btns_rect.contains(pos) { return; }
 
                 if left_just_pressed && !*dragging_source_rect {
                     let mut hit = false;
-                    if hit_rot.distance(pos) < 10.0 {
+                    if hit_rot.distance(pos) < 16.0 {
                         *line_start = Some(pos);
                         *drag_state = 1;
                         *initial_center = Some(raw_bounds.center());
@@ -299,7 +312,7 @@ pub fn update(ctx: &mut ToolContext) {
                     }
                     if !hit {
                         for (idx, pc) in hit_p_corners.iter().enumerate() {
-                            if pc.distance(pos) < 10.0 {
+                            if pc.distance(pos) < 16.0 {
                                 *line_start = Some(pos);
                                 *drag_state = 20 + idx;
                                 *initial_center = Some(raw_bounds.center());
@@ -310,7 +323,7 @@ pub fn update(ctx: &mut ToolContext) {
                     }
                     if !hit {
                         for (idx, corner) in hit_corners.iter().enumerate() {
-                            if egui::Rect::from_center_size(*corner, egui::vec2(12.0, 12.0)).contains(pos) {
+                            if egui::Rect::from_center_size(*corner, egui::vec2(20.0, 20.0)).contains(pos) {
                                 *line_start = Some(pos);
                                 *drag_state = 10 + idx;
                                 *initial_bounds = Some(raw_bounds);
@@ -322,7 +335,7 @@ pub fn update(ctx: &mut ToolContext) {
                     }
                     if !hit {
                         for (idx, &mp) in hit_mids.iter().enumerate() {
-                            if egui::Rect::from_center_size(mp, egui::vec2(12.0, 12.0)).contains(pos) {
+                            if egui::Rect::from_center_size(mp, egui::vec2(20.0, 20.0)).contains(pos) {
                                 *line_start = Some(pos);
                                 *drag_state = 2 + idx;
                                 *initial_center = Some(raw_bounds.center());
@@ -339,9 +352,8 @@ pub fn update(ctx: &mut ToolContext) {
                         *initial_layer = Some(layer.clone());
                         click_consumed = true;
                     } else if !hit {
-                        // Click OUTSIDE selected object → deselect it
-                        project.selected_object = None;
-                        // Do NOT set click_consumed — outer block will handle layer drag
+                        // Click OUTSIDE selected object → only deselect if we are NOT clicking another object (handled below)
+                        // project.selected_object = None; // Move this to the bottom block
                     }
                     if hit { click_consumed = true; }
                 }
@@ -350,28 +362,31 @@ pub fn update(ctx: &mut ToolContext) {
                     if left_down {
                         if *dragging_source_rect {
                             // Dragging Mirror Source Rect
-                            for img in &mut layer.placed_images {
-                                if img.is_live && img.source_rect.is_some() {
-                                    if start.x == -4.0 {
-                                        // Resize handle
-                                        let idx = start.y as usize;
-                                        let ib = initial_bounds.unwrap();
-                                        let ic = [ib.left_top(), ib.right_top(), ib.left_bottom(), ib.right_bottom()];
-                                        let anchor = ic[3 - idx];
-                                        let new_rect = egui::Rect::from_two_pos(anchor, pos);
-                                        img.source_rect = Some([new_rect.min.x, new_rect.min.y, new_rect.width(), new_rect.height()]);
-                                    } else {
-                                        // Move whole rect
-                                        let delta = pos - start;
-                                        let ib = initial_bounds.unwrap();
-                                        img.source_rect = Some([ib.min.x + delta.x, ib.min.y + delta.y, ib.width(), ib.height()]);
+                            if let Some(sel) = project.selected_object {
+                                if let ObjectType::Image = sel.object_type {
+                                    let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                    if img.is_live && img.source_rect.is_some() {
+                                        if start.x == -4.0 {
+                                            // Resize handle
+                                            let idx = start.y as usize;
+                                            let ib = initial_bounds.unwrap();
+                                            let ic = [ib.left_top(), ib.right_top(), ib.left_bottom(), ib.right_bottom()];
+                                            let anchor = ic[3 - idx];
+                                            let new_rect = egui::Rect::from_two_pos(anchor, pos);
+                                            img.source_rect = Some([new_rect.min.x, new_rect.min.y, new_rect.width(), new_rect.height()]);
+                                        } else {
+                                            // Move whole rect
+                                            let delta = pos - start;
+                                            let ib = initial_bounds.unwrap();
+                                            img.source_rect = Some([ib.min.x + delta.x, ib.min.y + delta.y, ib.width(), ib.height()]);
+                                        }
                                     }
                                 }
                             }
                         } else if let Some(base_layer) = initial_layer.as_ref() {
                             // Stable Transformations using initial snapshot
                             *layer = base_layer.clone();
-                            let canvas_rect = canvas_response.rect;
+                            let _canvas_rect = canvas_response.rect;
 
                             if *drag_state == 1 {
                                 // Rotation
@@ -410,22 +425,27 @@ pub fn update(ctx: &mut ToolContext) {
                             } else {
                                 // Translate without bounds clamping
                                 let delta = pos - start;
-                                match sel.object_type {
-                                    crate::project::ObjectType::Stroke => {
-                                        if let Some(s) = layer.strokes.get_mut(sel.object_idx) {
-                                            for p in &mut s.points { *p += delta; }
+                                if let Some(sel) = project.selected_object {
+                                    match sel.object_type {
+                                        ObjectType::Stroke => {
+                                            if let Some(s) = layer.strokes.get_mut(sel.object_idx) {
+                                                for p in &mut s.points { *p += delta; }
+                                            }
+                                        }
+                                        ObjectType::Text => {
+                                            if let Some(t) = layer.text_annotations.get_mut(sel.object_idx) {
+                                                t.position += delta;
+                                            }
+                                        }
+                                        ObjectType::Image => {
+                                            if let Some(img) = layer.placed_images.get_mut(sel.object_idx) {
+                                                img.position += delta;
+                                        img.thumbnail_dirty = true;
+                                            }
                                         }
                                     }
-                                    crate::project::ObjectType::Text => {
-                                        if let Some(t) = layer.text_annotations.get_mut(sel.object_idx) {
-                                            t.position += delta;
-                                        }
-                                    }
-                                    crate::project::ObjectType::Image => {
-                                        if let Some(img) = layer.placed_images.get_mut(sel.object_idx) {
-                                            img.position += delta;
-                                        }
-                                    }
+                                } else {
+                                    crate::utils::translate_layer(layer, delta);
                                 }
                             }
                         }
@@ -435,6 +455,7 @@ pub fn update(ctx: &mut ToolContext) {
 
 
                 if left_just_pressed && !click_consumed {
+                    if ui.ctx().wants_pointer_input() { return; } 
                     let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
                     let mut found_objects = Vec::new();
                     
@@ -447,8 +468,8 @@ pub fn update(ctx: &mut ToolContext) {
                             let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
                             let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
                             if img_rect.contains(pos) {
-                                found_objects.push(crate::project::SelectedObject {
-                                    layer_idx: l_idx, object_type: crate::project::ObjectType::Image, object_idx: img_idx
+                                found_objects.push(SelectedObject {
+                                    layer_idx: l_idx, object_type: ObjectType::Image, object_idx: img_idx
                                 });
                             }
                         }
@@ -457,8 +478,8 @@ pub fn update(ctx: &mut ToolContext) {
                         for (txt_idx, txt) in l.text_annotations.iter().enumerate() {
                             let txt_rect = egui::Rect::from_min_size(txt.position, egui::vec2(txt.text.len() as f32 * txt.font_size * 0.6, txt.font_size));
                             if txt_rect.contains(pos) {
-                                found_objects.push(crate::project::SelectedObject {
-                                    layer_idx: l_idx, object_type: crate::project::ObjectType::Text, object_idx: txt_idx
+                                found_objects.push(SelectedObject {
+                                    layer_idx: l_idx, object_type: ObjectType::Text, object_idx: txt_idx
                                 });
                             }
                         }
@@ -484,56 +505,70 @@ pub fn update(ctx: &mut ToolContext) {
                                 hit_line
                             };
                             if hit {
-                                found_objects.push(crate::project::SelectedObject {
-                                    layer_idx: l_idx, object_type: crate::project::ObjectType::Stroke, object_idx: s_idx
+                                found_objects.push(SelectedObject {
+                                    layer_idx: l_idx, object_type: ObjectType::Stroke, object_idx: s_idx
                                 });
                             }
                         }
                     }
 
-                    // Always start layer drag on single click (objects need double-click to select)
-                    // Start layer drag from active layer
-                    if let Some(layer) = project.get_active_layer() {
-                        *line_start = Some(pos);
-                        *drag_state = 0;
-                        *initial_layer = Some(layer.clone());
-                    }
-                    // On double-click, also select the topmost object under cursor
-                    if is_double_click && !found_objects.is_empty() {
-                        found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
-                        let current = project.selected_object;
-                        let top = found_objects[0];
-                        // If double-clicking already-selected text, enter edit mode
-                        if let Some(curr) = current {
-                            if curr.object_type == crate::project::ObjectType::Text && curr == top {
-                                let layer = &mut project.layers[curr.layer_idx];
-                                let txt = layer.text_annotations.remove(curr.object_idx);
-                                *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
-                                *active_tool = crate::overlay::Tool::Text;
-                                project.selected_object = None;
-                                return;
-                            }
+                    if found_objects.is_empty() {
+                        // Click empty space: ALWAYS deselect
+                        project.selected_object = None;
+                        if let Some(layer) = project.get_active_layer() {
+                            *line_start = Some(pos);
+                            *drag_state = 0;
+                            *initial_layer = Some(layer.clone());
                         }
+                    } else if is_double_click {
+                        // Double click: Select object
+                        found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
+                        let top = found_objects[0];
+
+                        // If double-clicking text, enter edit mode
+                        if top.object_type == ObjectType::Text {
+                            let layer = &mut project.layers[top.layer_idx];
+                            let txt = layer.text_annotations.remove(top.object_idx);
+                            // Restore annotation settings into toolbar
+                            settings.pen_color      = txt.color;
+                            settings.text_font      = txt.font;
+                            settings.font_size      = txt.font_size;
+                            settings.text_shadow    = txt.shadow;
+                            settings.text_outline   = txt.outline;
+                            settings.text_wave_warp = txt.wave_warp;
+                            *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
+                            *active_tool = crate::overlay::Tool::Text;
+                            project.selected_object = None;
+                            return;
+                        }
+
                         project.active_layer = top.layer_idx;
                         project.selected_object = Some(top);
+
+                        // Also start dragging this object
+                        *line_start = Some(pos);
+                        *drag_state = 0;
+                        if let Some(layer) = project.get_active_layer() {
+                            *initial_bounds = crate::utils::object_bounds(layer, top.object_type, top.object_idx);
+                            *initial_layer = Some(layer.clone());
+                        }
+                    } else {
+                        // Single click on object: Select it!
+                        found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
+                        let top = found_objects[0];
+                        project.active_layer = top.layer_idx;
+                        project.selected_object = Some(top);
+                        
+                        *line_start = Some(pos);
+                        *drag_state = 0;
+                        if let Some(layer) = project.get_active_layer() {
+                            *initial_bounds = crate::utils::object_bounds(layer, top.object_type, top.object_idx);
+                            *initial_layer = Some(layer.clone());
+                        }
                     }
                 }
 
-                // --- LAYER DRAG LOGIC ---
-                // If we are dragging but have no object selected, translate the active layer
-                if project.selected_object.is_none() && left_down {
-                    if let Some(start) = *line_start {
-                        if let Some(base_layer) = initial_layer.as_ref() {
-                            if let Some(layer) = project.get_active_layer_mut() {
-                                *layer = base_layer.clone();
-                                let delta = pos - start;
-                                for img in &mut layer.placed_images { img.position += delta; }
-                                for t in &mut layer.text_annotations { t.position += delta; }
-                                for s in &mut layer.strokes { for p in &mut s.points { *p += delta; } }
-                            }
-                        }
-                    }
-                }
+
 
                 if left_just_released {
                     *line_start = None;
@@ -551,21 +586,76 @@ pub fn update(ctx: &mut ToolContext) {
 }
 
 pub fn render(ctx: &mut ToolContext) {
+    if !ctx.edit_mode { return; }
+    
+    let is_dragging = ctx.line_start.is_some();
+    let has_selection = ctx.project.selected_object.is_some();
+    if !ctx.canvas_response.hovered() && !is_dragging && !has_selection { return; }
+
     let project = &ctx.project;
     let ui = &ctx.ui;
     let painter = ui.painter_at(ctx.canvas_response.rect);
     let render_offset = ctx.render_offset;
     
-    if let Some(sel) = project.selected_object {
-        if sel.layer_idx < project.layers.len() {
-            let layer = &project.layers[sel.layer_idx];
-            if let Some(bounds) = crate::utils::object_bounds(layer, sel.object_type, sel.object_idx) {
-                let bounds = bounds.translate(-render_offset);
-                painter.rect_stroke(bounds.expand(4.0), 0.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 180, 255)), egui::StrokeKind::Middle);
-                let handle_rect = egui::Rect::from_center_size(bounds.max + egui::vec2(4.0, 4.0), egui::vec2(8.0, 8.0));
-                painter.rect_filled(handle_rect, 0.0, egui::Color32::WHITE);
-                painter.rect_stroke(handle_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Middle);
+    let is_layer_mode = project.selected_object.is_none();
+    let active_layer_idx = project.active_layer;
+    
+    if active_layer_idx < project.layers.len() {
+        let layer = &project.layers[active_layer_idx];
+        
+        // Determine bounds to draw handles for
+        let active_bounds = if let Some(sel) = project.selected_object {
+            crate::utils::object_bounds(layer, sel.object_type, sel.object_idx)
+        } else {
+            crate::utils::layer_bounds(layer)
+        };
+
+        if let Some(raw_b) = active_bounds {
+            let b = raw_b.translate(-render_offset).expand(if is_layer_mode { 2.0 } else { 4.0 });
+            let color = if is_layer_mode { egui::Color32::from_rgb(80, 180, 255) } else { egui::Color32::from_rgb(255, 200, 0) };
+            
+            // Draw main selection rect
+            painter.rect_stroke(b, 0.0, egui::Stroke::new(1.5, color), egui::StrokeKind::Middle);
+
+            // 1. Rotation handle (top)
+            let rot_p = b.center_top() - egui::vec2(0.0, 25.0);
+            painter.line_segment([b.center_top(), rot_p], egui::Stroke::new(1.0, egui::Color32::GRAY));
+            painter.circle_filled(rot_p, 5.0, egui::Color32::from_rgb(255, 200, 50));
+            painter.circle_stroke(rot_p, 5.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+
+            // 2. Perspective handles (corners, slightly offset)
+            let p_dist = 20.0;
+            let p_corners = [
+                b.left_top() + egui::vec2(-p_dist, -p_dist),
+                b.right_top() + egui::vec2(p_dist, -p_dist),
+                b.left_bottom() + egui::vec2(-p_dist, p_dist),
+                b.right_bottom() + egui::vec2(p_dist, p_dist),
+            ];
+            for pc in p_corners {
+                painter.circle_filled(pc, 4.0, egui::Color32::from_rgb(50, 150, 255));
+                painter.circle_stroke(pc, 4.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
             }
+
+            // 3. Resize handles (corners)
+            for corner in [b.left_top(), b.right_top(), b.left_bottom(), b.right_bottom()] {
+                let r = egui::Rect::from_center_size(corner, egui::vec2(8.0, 8.0));
+                painter.rect_filled(r, 0.0, egui::Color32::WHITE);
+                painter.rect_stroke(r, 0.0, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Middle);
+            }
+
+            // 4. Skew handles (mids)
+            for mid in [b.left_center(), b.right_center(), b.center_top(), b.center_bottom()] {
+                painter.circle_filled(mid, 3.0, egui::Color32::from_rgb(100, 255, 100));
+                painter.circle_stroke(mid, 3.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+            }
+
+            // 5. Delete button (X) at top right
+            let del_rect = egui::Rect::from_center_size(b.right_top() + egui::vec2(15.0, -15.0), egui::vec2(18.0, 18.0));
+            let mouse_pos = ctx.mouse.pos;
+            let del_hover = del_rect.contains(mouse_pos);
+            painter.circle_filled(del_rect.center(), 9.0, if del_hover { egui::Color32::from_rgb(255, 50, 50) } else { egui::Color32::from_rgb(200, 0, 0) });
+            painter.line_segment([del_rect.left_top() + egui::vec2(5.0, 5.0), del_rect.right_bottom() - egui::vec2(5.0, 5.0)], egui::Stroke::new(2.0, egui::Color32::WHITE));
+            painter.line_segment([del_rect.right_top() + egui::vec2(-5.0, 5.0), del_rect.left_bottom() - egui::vec2(-5.0, -5.0)], egui::Stroke::new(2.0, egui::Color32::WHITE));
         }
     }
 }

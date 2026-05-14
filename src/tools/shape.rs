@@ -1,5 +1,4 @@
 use eframe::egui;
-use crate::types::*;
 use crate::utils::*;
 use crate::overlay::*;
 
@@ -16,12 +15,12 @@ pub fn update(ctx: &mut ToolContext) {
     let current_stroke = &mut *ctx.current_stroke;
     let line_start = &mut *ctx.line_start;
     let ui = &mut *ctx.ui;
-    let canvas_response = ctx.canvas_response;
+    let _canvas_response = ctx.canvas_response;
     let pos = mouse.pos;
     let left_just_pressed = mouse.left_just_pressed;
     let left_just_released = mouse.left_just_released;
     let active_layer_idx = project.active_layer;
-    let render_offset = ctx.render_offset;
+    let _render_offset = ctx.render_offset;
     let layer = &mut project.layers[active_layer_idx];
 
                 if settings.shape_type == ShapeType::Poly {

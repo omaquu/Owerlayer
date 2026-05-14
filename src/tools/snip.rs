@@ -1,10 +1,8 @@
 use eframe::egui;
-use crate::types::*;
 use crate::utils::*;
 use crate::overlay::*;
 
 use crate::tools::ToolContext;
-use crate::ui::toolbar::{apply_box_blur, apply_pixelate, apply_vhs_glitch};
 
 pub fn update(ctx: &mut ToolContext) {
     if ctx.mouse.left_just_pressed {
@@ -24,9 +22,9 @@ pub fn update(ctx: &mut ToolContext) {
     let left_just_pressed = mouse.left_just_pressed;
     let left_just_released = mouse.left_just_released;
     let active_layer_idx = project.active_layer;
-    let ppp = ui.ctx().pixels_per_point();
+    let _ppp = ui.ctx().pixels_per_point();
     let render_offset = ctx.render_offset;
-    let frame_count = ctx.frame_count;
+    let _frame_count = ctx.frame_count;
 
                 let layer = &mut project.layers[active_layer_idx];
                 let mode = settings.snip_mode;
@@ -225,7 +223,68 @@ pub fn update(ctx: &mut ToolContext) {
                     pts.push(pos);
                     painter.add(egui::Shape::line(pts, egui::Stroke::new(1.0, egui::Color32::WHITE)));
                 }
+            } else if mode == SnipMode::RegularPolygon {
+                if left_just_pressed { *line_start = Some(pos); }
+                if let Some(start) = *line_start {
+                    let radius = start.distance(pos);
+                    let n = settings.polygon_sides.max(3) as usize;
+                    let pts: Vec<egui::Pos2> = (0..=n).map(|i| {
+                        let angle = i as f32 * std::f32::consts::PI * 2.0 / n as f32 - std::f32::consts::PI / 2.0;
+                        start + egui::vec2(angle.cos() * radius, angle.sin() * radius)
+                    }).collect();
+                    painter.add(egui::Shape::line(pts, egui::Stroke::new(1.0, egui::Color32::WHITE)));
+                }
+                if left_just_released {
+                    if let Some(start) = line_start.take() {
+                        let radius = start.distance(pos);
+                        if radius > 5.0 {
+                            let n = settings.polygon_sides.max(3) as usize;
+                            let pts: Vec<egui::Pos2> = (0..n).map(|i| {
+                                let angle = i as f32 * std::f32::consts::PI * 2.0 / n as f32 - std::f32::consts::PI / 2.0;
+                                start + egui::vec2(angle.cos() * radius, angle.sin() * radius)
+                            }).collect();
+                            let bounds = egui::Rect::from_points(&pts);
+                            let ppp = ui.ctx().pixels_per_point();
+                            let sw = (bounds.width() * ppp) as i32;
+                            let sh = (bounds.height() * ppp) as i32;
+                            if sw > 5 && sh > 5 {
+                                let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                                let poly: Vec<egui::Pos2> = pts.iter().map(|p| egui::pos2(p.x - bounds.min.x, p.y - bounds.min.y)).collect();
+                                let mut mask = vec![255u8; sw as usize * sh as usize];
+                                for py in 0..sh as usize {
+                                    for px in 0..sw as usize {
+                                        let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
+                                        if !is_inside_poly(&poly, lp) { mask[py * sw as usize + px] = 0; }
+                                    }
+                                }
+                                if settings.snip_live {
+                                    *snip_created = true;
+                                    let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], Vec::new());
+                                    img.is_live = true;
+                                    img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                    img.mask = Some(mask);
+                                    img.blur = settings.blur_strength;
+                                    img.blur_effect = settings.blur_effect;
+                                    img.show_source_rect = true;
+                                    layer.placed_images.push(img);
+                                } else {
+                                    let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                                    let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                                    let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                                    if let Some(mut pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh) {
+                                        *snip_created = true;
+                                        for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
+                                        let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], pixels);
+                                        img.shadow = settings.snip_shadow;
+                                        layer.placed_images.push(img);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             } else if mode == SnipMode::Star || mode == SnipMode::Heart {
+
                 if left_just_pressed { 
                     *line_start = Some(pos); 
                 }
@@ -277,6 +336,30 @@ pub fn update(ctx: &mut ToolContext) {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            } else if mode == SnipMode::Window {
+                if left_just_pressed { 
+                    *line_start = Some(pos); 
+                }
+                if let Some(start) = *line_start {
+                    let rect = egui::Rect::from_two_pos(start, pos).translate(-render_offset);
+                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Middle);
+                }
+                if left_just_released {
+                    if let Some(start) = line_start.take() {
+                        let rect = egui::Rect::from_two_pos(start, pos);
+                        let w = rect.width();
+                        let h = rect.height();
+                        if w > 5.0 && h > 5.0 {
+                            let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                            *snip_created = true;
+                            let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], Vec::new());
+                            img.is_live = true;
+                            img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                            img.show_source_rect = true;
+                            layer.placed_images.push(img);
                         }
                     }
                 }

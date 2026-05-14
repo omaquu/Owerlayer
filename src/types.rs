@@ -2,6 +2,16 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use crate::hotkey::HotkeyBinding;
 
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub enum ObjectType { Image, Stroke, Text }
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct SelectedObject {
+    pub layer_idx: usize,
+    pub object_type: ObjectType,
+    pub object_idx: usize,
+}
+
 pub struct MouseState {
     pub pos: egui::Pos2,
     #[allow(dead_code)]
@@ -110,6 +120,8 @@ pub struct Stroke {
     pub perspective: [egui::Vec2; 4],
     #[serde(default)]
     pub brush_shape: BrushShape,
+    #[serde(default = "default_scale")]
+    pub scale: egui::Vec2,
     #[serde(default)]
     pub skew: egui::Vec2,
     #[serde(default)]
@@ -169,6 +181,7 @@ impl Stroke {
             flipped_h: false,
             flipped_v: false,
             perspective: [egui::Vec2::ZERO; 4],
+            scale: egui::vec2(1.0, 1.0),
             skew: egui::Vec2::ZERO,
             outline_color: [0, 0, 0, 0],
             outline_width: 0.0,
@@ -205,12 +218,16 @@ pub struct TextAnnotation {
     pub perspective: [egui::Vec2; 4],
     #[serde(default)]
     pub font: TextFont,
+    #[serde(default = "default_scale")]
+    pub scale: egui::Vec2,
     #[serde(default)]
     pub skew: egui::Vec2,
     #[serde(default = "default_visible")]
     pub visible: bool,
     #[serde(default = "default_opacity")]
     pub opacity: f32,
+    #[serde(default)]
+    pub wave_warp: bool,
 }
 
 impl TextAnnotation {
@@ -223,9 +240,11 @@ impl TextAnnotation {
             rotation: 0.0, flipped_h: false, flipped_v: false,
             perspective: [egui::Vec2::ZERO; 4],
             font: TextFont::Sans,
+            scale: egui::vec2(1.0, 1.0),
             skew: egui::Vec2::ZERO,
             visible: true,
             opacity: 1.0,
+            wave_warp: false,
         }
     }
 }
@@ -252,6 +271,8 @@ pub struct PlacedImage {
     pub flipped_v: bool,
     #[serde(default)]
     pub perspective: [egui::Vec2; 4],
+    #[serde(default = "default_scale")]
+    pub scale: egui::Vec2,
     #[serde(default)]
     pub skew: egui::Vec2,
     #[serde(default = "default_visible")]
@@ -259,6 +280,8 @@ pub struct PlacedImage {
     #[serde(default = "default_opacity")]
     pub opacity: f32,
     pub is_live: bool,
+    #[serde(default)]
+    pub outline: bool,
     pub source_rect: Option<[f32; 4]>,
     pub url: Option<String>,
     #[serde(default)]
@@ -269,6 +292,8 @@ pub struct PlacedImage {
     pub mask: Option<Vec<u8>>,
     #[serde(skip)]
     pub mask_texture: Option<egui::TextureHandle>,
+    #[serde(skip)]
+    pub mask_dirty: bool,
     pub show_source_rect: bool,
     #[serde(skip)]
     pub frames: Vec<Vec<u8>>,
@@ -286,6 +311,8 @@ pub struct PlacedImage {
     pub tight_bounds: Option<egui::Rect>,
     #[serde(skip)]
     pub tight_bounds_dirty: bool,
+    #[serde(skip)]
+    pub thumbnail_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     pub thumbnail_dirty: bool,
 }
@@ -305,10 +332,12 @@ impl Clone for PlacedImage {
             flipped_h: self.flipped_h,
             flipped_v: self.flipped_v,
             perspective: self.perspective,
+            scale: self.scale,
             skew: self.skew,
             visible: self.visible,
             opacity: self.opacity,
             is_live: self.is_live,
+            outline: self.outline,
             source_rect: self.source_rect,
             url: self.url.clone(),
             blur: self.blur,
@@ -325,7 +354,9 @@ impl Clone for PlacedImage {
             web_widget: None,
             tight_bounds: self.tight_bounds,
             tight_bounds_dirty: self.tight_bounds_dirty,
+            thumbnail_texture: None,
             thumbnail_dirty: self.thumbnail_dirty,
+            mask_dirty: self.mask_dirty,
         }
     }
 }
@@ -339,10 +370,12 @@ impl PlacedImage {
             texture: None, shadow: false, rotation: 0.0,
             flipped_h: false, flipped_v: false,
             perspective: [egui::Vec2::ZERO; 4],
+            scale: egui::vec2(1.0, 1.0),
             skew: egui::Vec2::ZERO,
             visible: true,
             opacity: 1.0,
             is_live: false,
+            outline: false,
             source_rect: None,
             url: None,
             blur: 0.0,
@@ -359,13 +392,15 @@ impl PlacedImage {
             web_widget: None,
             tight_bounds: None,
             tight_bounds_dirty: true,
+            thumbnail_texture: None,
             thumbnail_dirty: true,
+            mask_dirty: false,
         }
     }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SnipMode { Rect, Circle, Lasso, Polygon, Star, Heart }
+pub enum SnipMode { Rect, Circle, Lasso, Polygon, RegularPolygon, Star, Heart, Window }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BrushShape { Round, Square }
@@ -383,6 +418,7 @@ fn default_menu_hue() -> f32 { 90.0 }
 fn default_menu_opacity() -> f32 { 0.75 }
 fn default_opacity() -> f32 { 1.0 }
 fn default_visible() -> bool { true }
+fn default_scale() -> egui::Vec2 { egui::vec2(1.0, 1.0) }
 
 fn default_stroke_name() -> String { "Stroke".to_string() }
 fn default_text_name() -> String { "Text".to_string() }
@@ -392,7 +428,7 @@ fn default_image_name() -> String { "Image".to_string() }
 pub enum EraserMode { Stroke, Pixel }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum CutMode { Rect, Circle, Lasso, Polygon, MagicWand, Star, Heart }
+pub enum CutMode { Rect, Circle, Lasso, RegularPolygon, MagicWand }
 
 impl Default for CutMode { fn default() -> Self { Self::Rect } }
 
@@ -439,6 +475,8 @@ pub struct Settings {
     pub snip_mode: SnipMode,
     #[serde(default)]
     pub snip_live: bool,
+    #[serde(default = "default_polygon_sides")]
+    pub polygon_sides: u32,
     #[serde(default = "default_blur_strength")]
     pub blur_strength: f32,
     #[serde(default)]
@@ -467,6 +505,8 @@ pub struct Settings {
     pub toolbar_bg_color: [u8; 4],
     #[serde(default)]
     pub text_font: TextFont,
+    #[serde(default)]
+    pub text_wave_warp: bool,
     #[serde(default)]
     pub brush_outline: bool,
     #[serde(default)]
@@ -505,6 +545,8 @@ pub struct Settings {
     pub fso_fix: bool,
     #[serde(default)]
     pub is_vertical: bool,
+    #[serde(skip)]
+    pub fx_open: Option<SelectedObject>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -517,6 +559,7 @@ fn default_toolbar_bg() -> [u8; 4] { [30, 30, 30, 220] }
 fn default_blur_strength() -> f32 { 10.0 }
 fn default_capture_fps() -> f32 { 15.0 }
 fn default_fso_fix() -> bool { true }
+fn default_polygon_sides() -> u32 { 5 }
 
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
@@ -558,6 +601,7 @@ impl Default for Settings {
             snip_shadow: false,
             snip_mode: SnipMode::Rect,
             snip_live: false,
+            polygon_sides: 5,
             blur_strength: default_blur_strength(),
             magic_wand_threshold: 10.0,
             ui_scale: 1.0,
@@ -571,6 +615,7 @@ impl Default for Settings {
             software_rendering: false,
             toolbar_bg_color: default_toolbar_bg(),
             text_font: TextFont::Sans,
+            text_wave_warp: false,
             brush_outline: false,
             multi_monitor: true,
             experimental_features: false,
@@ -591,6 +636,7 @@ impl Default for Settings {
             fso_fix: true,
             is_vertical: false,
             brush_arrow: false,
+            fx_open: None,
         }
     }
 }

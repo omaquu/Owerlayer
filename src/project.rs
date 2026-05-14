@@ -1,16 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::overlay::{Stroke, TextAnnotation, PlacedImage};
-
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ObjectType { Image, Stroke, Text }
-
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SelectedObject {
-    pub layer_idx: usize,
-    pub object_type: ObjectType,
-    pub object_idx: usize,
-}
+use crate::types::{Stroke, TextAnnotation, PlacedImage, SelectedObject};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Layer {

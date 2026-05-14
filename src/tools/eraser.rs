@@ -1,6 +1,4 @@
 use eframe::egui;
-use crate::types::*;
-use crate::utils::*;
 use crate::overlay::*;
 
 use crate::tools::ToolContext;
@@ -48,6 +46,8 @@ pub fn update(ctx: &mut ToolContext) {
                                 img_rect.distance_to_pos(pos) > r
                             }
                         });
+                        // In Stroke mode: touching the anchor point of a text annotation deletes it
+                        layer.text_annotations.retain(|ann| ann.position.distance(pos) > r);
                     } else {
                         // Split mode
                         let mut new_strokes = Vec::new();
@@ -56,7 +56,8 @@ pub fn update(ctx: &mut ToolContext) {
                         let old_strokes = std::mem::take(&mut layer.strokes);
                         for s in old_strokes {
                             if s.kind != crate::overlay::StrokeKind::Freehand {
-                                if !hit_test(&s) { keep_strokes.push(s); }
+                                // In pixel mode, preserve non-freehand strokes (shapes/lines)
+                                keep_strokes.push(s);
                                 continue;
                             }
                             
@@ -114,7 +115,11 @@ pub fn update(ctx: &mut ToolContext) {
                                             let idx = py * img.size[0] + px;
                                             if img.is_live {
                                                 let mask = img.mask.as_mut().unwrap();
-                                                if mask[idx] != 0 { mask[idx] = 0; modified = true; }
+                                                if mask[idx] != 0 { 
+                                                    mask[idx] = 0; 
+                                                    modified = true; 
+                                                    img.mask_dirty = true;
+                                                }
                                             } else {
                                                 let b_idx = idx * 4;
                                                 if img.pixels[b_idx + 3] != 0 {
@@ -131,7 +136,6 @@ pub fn update(ctx: &mut ToolContext) {
                             }
                         }
                     }
-                    layer.text_annotations.retain(|ann| ann.position.distance(pos) > r);
                 }
 
                 // Visual cursor

@@ -18,6 +18,8 @@ pub fn render_layers_window(
         .title_bar(false)
         .resizable(true)
         .default_width(320.0)
+        .default_pos(egui::pos2(ctx.screen_rect().max.x - 40.0, 60.0))
+        .pivot(egui::Align2::RIGHT_TOP)
         .frame(frame)
         .show(ctx, |ui| {
             ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::from_rgba_premultiplied(255, 255, 255, 8);
@@ -40,6 +42,9 @@ pub fn render_layers_window(
                         project.active_layer = project.layers.len() - 1;
                     }
                 });
+                
+                // --- FX Panel ---
+                crate::ui::object_fx::render_fx_panel(ui, project, settings);
             });
 
             ui.add_space(8.0);
@@ -48,10 +53,11 @@ pub fn render_layers_window(
                 let mut layer_to_remove = None;
                 let mut layer_to_move_up = None;
                 let mut layer_to_move_down = None;
+                let mut layer_to_merge_down = None;
                 let mut object_to_delete = None;
                 let mut object_to_select = None;
-                let mut object_to_move: Option<(usize, crate::project::ObjectType, usize, i32)> = None; // (layer, type, idx, +1/-1)
-                let object_to_clone: Option<(usize, crate::project::ObjectType, usize)> = None;
+                let mut object_to_move: Option<(usize, ObjectType, usize, i32)> = None; // (layer, type, idx, +1/-1)
+                let mut object_to_clone: Option<(usize, ObjectType, usize)> = None;
                 let total_layers = project.layers.len();
 
                 for i in (0..total_layers).rev() {
@@ -115,10 +121,8 @@ pub fn render_layers_window(
                             ui.painter().rect_filled(thumb_rect, 2.0, egui::Color32::from_gray(40));
                             ui.painter().rect_stroke(thumb_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::from_gray(60)), egui::StrokeKind::Middle);
                             
-                            if let Some(img) = layer.placed_images.first() {
-                                if let Some(tex) = &img.texture {
-                                    ui.painter().image(tex.id(), thumb_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
-                                }
+                            if let Some(tex) = layer.placed_images.first().and_then(|img| img.thumbnail_texture.as_ref().or(img.texture.as_ref())) {
+                                ui.painter().image(tex.id(), thumb_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
                             } else if !layer.strokes.is_empty() {
                                 // Draw a tiny squiggly line as a stroke preview
                                 let c = thumb_rect.center();
@@ -126,20 +130,30 @@ pub fn render_layers_window(
                             }
                             
                             // Layer name — clicking it selects the layer
-                            if ui.selectable_label(is_active, &layer.name).clicked() {
+                            let name_resp = ui.add(egui::TextEdit::singleline(&mut layer.name).frame(is_active).desired_width(100.0));
+                            if name_resp.gained_focus() || name_resp.clicked() {
                                 project.active_layer = i;
                             }
                             
-                            let mut opacity_percent = (layer.opacity * 100.0) as i32;
-                            if ui.add(egui::DragValue::new(&mut opacity_percent).range(0..=100).suffix("%")).changed() {
-                                layer.opacity = opacity_percent as f32 / 100.0;
-                            }
-
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                if ui.add(egui::Button::new(egui::RichText::new("🗑").color(egui::Color32::from_rgb(255, 50, 50))).frame(false)).on_hover_text("Delete Layer").clicked() { 
+                                if ui.add(egui::Button::new(egui::RichText::new("🗑").color(egui::Color32::from_rgb(255, 60, 60))).fill(egui::Color32::from_black_alpha(40))).on_hover_text("Delete Layer").clicked() { 
                                     layer_to_remove = Some(i); 
                                 }
                                 if ui.button("fx").clicked() { *filters_open = Some(i); }
+                                if ui.add(egui::Button::new(egui::RichText::new("➕").color(egui::Color32::from_rgb(100, 255, 100))).fill(egui::Color32::from_black_alpha(40))).on_hover_text("Add New Object").clicked() {
+                                    let obj_idx = layer.text_annotations.len();
+                                    layer.text_annotations.push(crate::types::TextAnnotation::new(egui::pos2(500.0, 500.0), "New Object".to_string(), [255, 255, 255, 255], 32.0));
+                                    layer.expanded = true;
+                                    object_to_select = Some((i, ObjectType::Text, obj_idx));
+                                    project.active_layer = i;
+                                    *active_tool = crate::overlay::Tool::Move;
+                                }
+                                if i > 0 && ui.button("⭳").on_hover_text("Merge Down").clicked() { layer_to_merge_down = Some(i); }
+                                
+                                let mut opacity_percent = (layer.opacity * 100.0) as i32;
+                                if ui.add(egui::DragValue::new(&mut opacity_percent).range(0..=100).suffix("%")).changed() {
+                                    layer.opacity = opacity_percent as f32 / 100.0;
+                                }
                             });
                         });
 
@@ -151,66 +165,90 @@ pub fn render_layers_window(
                                     for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
                                         ui.horizontal(|ui: &mut egui::Ui| {
                                             ui.checkbox(&mut img.visible, "");
-                                            let is_sel = project.selected_object == Some(crate::project::SelectedObject { layer_idx: i, object_type: crate::project::ObjectType::Image, object_idx: img_idx });
-                                            let label = if img.blur > 0.0 {
-                                                format!("🔲 Blur {}", img_idx)
+                                            let is_sel = project.selected_object == Some(SelectedObject { layer_idx: i, object_type: ObjectType::Image, object_idx: img_idx });
+                                            let mut name = if img.blur > 0.0 {
+                                                img.name.clone()
                                             } else if img.url.is_some() {
-                                                let url = img.url.as_ref().unwrap();
-                                                format!("🌐 {}", if url.len() > 15 { &url[..12] } else { url })
+                                                img.name.clone()
                                             } else if img.is_live && img.source_rect.is_some() {
-                                                format!("🪞 Mirror {}", img_idx)
+                                                img.name.clone()
                                             } else if img.is_live {
-                                                "🖼 Live".to_string()
+                                                img.name.clone()
                                             } else {
-                                                format!("🖼 Image {}", img_idx)
+                                                img.name.clone()
                                             };
-                                            let item_resp = ui.selectable_label(is_sel, label);
-                                            if item_resp.clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Image, img_idx));
+                                            
+                                            let name_resp = ui.add(egui::TextEdit::singleline(&mut name).frame(is_sel).desired_width(100.0));
+                                            if name_resp.changed() { img.name = name; }
+                                            if name_resp.gained_focus() || name_resp.clicked() {
+                                                object_to_select = Some((i, ObjectType::Image, img_idx));
                                             }
-                                            if item_resp.double_clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Image, img_idx));
+                                            if name_resp.double_clicked() {
+                                                object_to_select = Some((i, ObjectType::Image, img_idx));
                                                 project.active_layer = i;
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
                                             ui.add_space(5.0);
-                                            if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Image, img_idx)); }
-                                            if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Image, img_idx));
-                                                project.active_layer = i;
-                                                *active_tool = crate::overlay::Tool::Move;
-                                            }
-                                            let mut op_val = (img.opacity * 100.0) as i32;
-                                            if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { img.opacity = op_val as f32 / 100.0; }
-                                            if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Image, img_idx, -1)); }
-                                            if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Image, img_idx, 1)); }
+                                            
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
+                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, ObjectType::Image, img_idx)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Image, img_idx, -1)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Image, img_idx, 1)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone").clicked() { object_to_clone = Some((i, ObjectType::Image, img_idx)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Image, object_idx: img_idx }))).clicked() {
+                                                    let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Image, object_idx: img_idx };
+                                                    if settings.fx_open == Some(target) { settings.fx_open = None; }
+                                                    else { settings.fx_open = Some(target); }
+                                                    object_to_select = Some((i, ObjectType::Image, img_idx));
+                                                    project.active_layer = i;
+                                                    *active_tool = crate::overlay::Tool::Move;
+                                                }
+                                                
+                                                let mut op_val = (img.opacity * 100.0) as i32;
+                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { img.opacity = op_val as f32 / 100.0; }
+                                            });
                                         });
                                     }
                                     for (t_idx, ann) in layer.text_annotations.iter_mut().enumerate() {
                                         ui.horizontal(|ui: &mut egui::Ui| {
                                             ui.checkbox(&mut ann.visible, "");
-                                            let is_sel = project.selected_object == Some(crate::project::SelectedObject { layer_idx: i, object_type: crate::project::ObjectType::Text, object_idx: t_idx });
-                                            let name = format!("T \"{}\"", if ann.text.len() > 12 { &ann.text[..10] } else { &ann.text });
-                                            let item_resp = ui.selectable_label(is_sel, name);
-                                            if item_resp.clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Text, t_idx));
+                                            let is_sel = project.selected_object == Some(SelectedObject { layer_idx: i, object_type: ObjectType::Text, object_idx: t_idx });
+                                            let mut name = ann.text.clone();
+                                            let name_resp = ui.add(egui::TextEdit::singleline(&mut name).frame(is_sel).desired_width(100.0));
+                                            if name_resp.changed() { ann.text = name; }
+                                            if name_resp.gained_focus() || name_resp.clicked() {
+                                                object_to_select = Some((i, ObjectType::Text, t_idx));
                                             }
-                                            if item_resp.double_clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Text, t_idx));
+                                            if name_resp.double_clicked() {
+                                                object_to_select = Some((i, ObjectType::Text, t_idx));
                                                 project.active_layer = i;
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
                                             ui.add_space(5.0);
-                                            if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Text, t_idx)); }
-                                            if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Text, t_idx));
-                                                project.active_layer = i;
-                                                *active_tool = crate::overlay::Tool::Move;
-                                            }
-                                            let mut op_val = (ann.opacity * 100.0) as i32;
-                                            if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { ann.opacity = op_val as f32 / 100.0; }
-                                            if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Text, t_idx, -1)); }
-                                            if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Text, t_idx, 1)); }
+                                            
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
+                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, ObjectType::Text, t_idx)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone").clicked() { object_to_clone = Some((i, ObjectType::Text, t_idx)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Text, t_idx, -1)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Text, t_idx, 1)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Text, object_idx: t_idx }))).clicked() {
+                                                    let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Text, object_idx: t_idx };
+                                                    if settings.fx_open == Some(target) { settings.fx_open = None; }
+                                                    else { settings.fx_open = Some(target); }
+                                                    object_to_select = Some((i, ObjectType::Text, t_idx));
+                                                    project.active_layer = i;
+                                                    *active_tool = crate::overlay::Tool::Move;
+                                                }
+                                                
+                                                let mut op_val = (ann.opacity * 100.0) as i32;
+                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { ann.opacity = op_val as f32 / 100.0; }
+                                            });
                                         });
                                     }
                                     let mut freehand_indices = Vec::new();
@@ -221,45 +259,61 @@ pub fn render_layers_window(
                                         }
                                         ui.horizontal(|ui: &mut egui::Ui| {
                                             ui.checkbox(&mut s.visible, "");
-                                            let is_sel = project.selected_object == Some(crate::project::SelectedObject { layer_idx: i, object_type: crate::project::ObjectType::Stroke, object_idx: s_idx });
-                                            let s_name = match s.kind {
-                                                crate::overlay::StrokeKind::Rect => "✏ Rect",
-                                                crate::overlay::StrokeKind::Circle => "✏ Circle",
-                                                crate::overlay::StrokeKind::Blur => "✏ Blur",
-                                                _ => "✏ Stroke",
-                                            };
-                                            let item_resp = ui.selectable_label(is_sel, format!("{} {}", s_name, s_idx));
-                                            if item_resp.clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Stroke, s_idx));
+                                            let is_sel = project.selected_object == Some(SelectedObject { layer_idx: i, object_type: ObjectType::Stroke, object_idx: s_idx });
+                                            let mut name = s.name.clone();
+                                            let name_resp = ui.add(egui::TextEdit::singleline(&mut name).frame(is_sel).desired_width(100.0));
+                                            if name_resp.changed() { s.name = name; }
+                                            
+                                            if name_resp.gained_focus() || name_resp.clicked() {
+                                                object_to_select = Some((i, ObjectType::Stroke, s_idx));
                                             }
-                                            if item_resp.double_clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Stroke, s_idx));
+                                            if name_resp.double_clicked() {
+                                                object_to_select = Some((i, ObjectType::Stroke, s_idx));
                                                 project.active_layer = i;
                                                 *active_tool = crate::overlay::Tool::Move;
                                             }
                                             ui.add_space(5.0);
-                                            if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, crate::project::ObjectType::Stroke, s_idx)); }
-                                            if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Stroke, s_idx));
-                                                project.active_layer = i;
-                                                *active_tool = crate::overlay::Tool::Move;
-                                            }
-                                            let mut op_val = (s.opacity * 100.0) as i32;
-                                            if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { s.opacity = op_val as f32 / 100.0; }
-                                            if ui.add(egui::Button::new(egui::RichText::new("▼").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Stroke, s_idx, -1)); }
-                                            if ui.add(egui::Button::new(egui::RichText::new("▲").size(9.0)).frame(false)).clicked() { object_to_move = Some((i, crate::project::ObjectType::Stroke, s_idx, 1)); }
+                                            
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
+                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).clicked() { object_to_delete = Some((i, ObjectType::Stroke, s_idx)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone").clicked() { object_to_clone = Some((i, ObjectType::Stroke, s_idx)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, s_idx, -1)); }
+                                                if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, s_idx, 1)); }
+                                                
+                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
+                                                    object_to_select = Some((i, ObjectType::Stroke, s_idx));
+                                                    project.active_layer = i;
+                                                    *active_tool = crate::overlay::Tool::Move;
+                                                }
+                                                
+                                                let mut op_val = (s.opacity * 100.0) as i32;
+                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() { s.opacity = op_val as f32 / 100.0; }
+                                            });
                                         });
                                     }
                                     if !freehand_indices.is_empty() {
                                         ui.horizontal(|ui: &mut egui::Ui| {
-                                            let is_sel = project.selected_object.map_or(false, |sel| sel.layer_idx == i && sel.object_type == crate::project::ObjectType::Stroke && freehand_indices.contains(&sel.object_idx));
+                                            let is_sel = project.selected_object.map_or(false, |sel| sel.layer_idx == i && sel.object_type == ObjectType::Stroke && freehand_indices.contains(&sel.object_idx));
                                             if ui.selectable_label(is_sel, "🖌 Brush Strokes").clicked() {
-                                                object_to_select = Some((i, crate::project::ObjectType::Stroke, freehand_indices[0]));
+                                                object_to_select = Some((i, ObjectType::Stroke, freehand_indices[0]));
                                             }
                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED)).frame(false)).clicked() {
+                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).on_hover_text("Delete All Strokes").clicked() {
                                                     // We use a special marker index to indicate deleting all freehand strokes
-                                                    object_to_delete = Some((i, crate::project::ObjectType::Stroke, usize::MAX));
+                                                    object_to_delete = Some((i, ObjectType::Stroke, usize::MAX));
+                                                }
+                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(false)).clicked() {
+                                                    object_to_select = Some((i, ObjectType::Stroke, freehand_indices[0]));
+                                                    project.active_layer = i;
+                                                    *active_tool = crate::overlay::Tool::Move;
+                                                }
+                                                
+                                                let mut op_val = (layer.strokes[freehand_indices[0]].opacity * 100.0) as i32;
+                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() {
+                                                    let new_op = op_val as f32 / 100.0;
+                                                    for &idx in &freehand_indices { layer.strokes[idx].opacity = new_op; }
                                                 }
                                             });
                                         });
@@ -270,6 +324,17 @@ pub fn render_layers_window(
                     });
                 }
 
+                if let Some(idx) = layer_to_merge_down {
+                    if idx > 0 {
+                        let mut top = project.layers.remove(idx);
+                        let bottom = &mut project.layers[idx - 1];
+                        bottom.placed_images.append(&mut top.placed_images);
+                        bottom.text_annotations.append(&mut top.text_annotations);
+                        bottom.strokes.append(&mut top.strokes);
+                        project.active_layer = idx - 1;
+                    }
+                }
+                
                 if let Some(idx) = layer_to_remove {
                     project.layers.remove(idx);
                     project.selected_object = None;
@@ -292,33 +357,33 @@ pub fn render_layers_window(
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_delete {
                     match obj_type {
-                        crate::project::ObjectType::Stroke => {
+                        ObjectType::Stroke => {
                             if o_idx == usize::MAX {
                                 project.layers[l_idx].strokes.retain(|s| s.kind != crate::overlay::StrokeKind::Freehand);
                             } else {
                                 project.layers[l_idx].strokes.remove(o_idx);
                             }
                         }
-                        crate::project::ObjectType::Text => { project.layers[l_idx].text_annotations.remove(o_idx); }
-                        crate::project::ObjectType::Image => { project.layers[l_idx].placed_images.remove(o_idx); }
+                        ObjectType::Text => { project.layers[l_idx].text_annotations.remove(o_idx); }
+                        ObjectType::Image => { project.layers[l_idx].placed_images.remove(o_idx); }
                     }
                     project.selected_object = None;
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_clone {
                     match obj_type {
-                        crate::project::ObjectType::Stroke => {
+                        ObjectType::Stroke => {
                             let mut cloned = project.layers[l_idx].strokes[o_idx].clone();
                             cloned.points.iter_mut().for_each(|p| { p.x += 10.0; p.y += 10.0; });
                             project.layers[l_idx].strokes.push(cloned);
                         }
-                        crate::project::ObjectType::Image => {
+                        ObjectType::Image => {
                             let mut cloned = project.layers[l_idx].placed_images[o_idx].clone();
                             cloned.position.x += 10.0; cloned.position.y += 10.0;
                             cloned.id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                             cloned.texture = None;
                             project.layers[l_idx].placed_images.push(cloned);
                         }
-                        crate::project::ObjectType::Text => {
+                        ObjectType::Text => {
                             let mut cloned = project.layers[l_idx].text_annotations[o_idx].clone();
                             cloned.position.x += 10.0; cloned.position.y += 10.0;
                             project.layers[l_idx].text_annotations.push(cloned);
@@ -327,25 +392,33 @@ pub fn render_layers_window(
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_select {
                     project.active_layer = l_idx;
-                    project.selected_object = Some(crate::project::SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: o_idx });
+                    project.selected_object = Some(SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: o_idx });
                 }
                 if let Some((l_idx, obj_type, o_idx, dir)) = object_to_move {
                     let layer = &mut project.layers[l_idx];
                     match obj_type {
-                        crate::project::ObjectType::Image => {
+                        ObjectType::Image => {
                             let new_idx = (o_idx as i32 + dir).clamp(0, layer.placed_images.len() as i32 - 1) as usize;
-                            if new_idx != o_idx { layer.placed_images.swap(o_idx, new_idx); }
+                            if new_idx != o_idx { 
+                                layer.placed_images.swap(o_idx, new_idx); 
+                                project.selected_object = Some(SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: new_idx });
+                            }
                         }
-                        crate::project::ObjectType::Text => {
+                        ObjectType::Text => {
                             let new_idx = (o_idx as i32 + dir).clamp(0, layer.text_annotations.len() as i32 - 1) as usize;
-                            if new_idx != o_idx { layer.text_annotations.swap(o_idx, new_idx); }
+                            if new_idx != o_idx { 
+                                layer.text_annotations.swap(o_idx, new_idx); 
+                                project.selected_object = Some(SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: new_idx });
+                            }
                         }
-                        crate::project::ObjectType::Stroke => {
+                        ObjectType::Stroke => {
                             let new_idx = (o_idx as i32 + dir).clamp(0, layer.strokes.len() as i32 - 1) as usize;
-                            if new_idx != o_idx { layer.strokes.swap(o_idx, new_idx); }
+                            if new_idx != o_idx { 
+                                layer.strokes.swap(o_idx, new_idx); 
+                                project.selected_object = Some(SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: new_idx });
+                            }
                         }
                     }
-                    project.selected_object = None;
                 }
             });
         });

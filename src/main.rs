@@ -489,6 +489,7 @@ impl eframe::App for OwerlayerApp {
                                 ann.outline = self.settings.text_outline;
                                 ann.stroke_width = self.settings.text_stroke_width;
                                 ann.font = self.settings.text_font;
+                                ann.wave_warp = self.settings.text_wave_warp;
                                 layer.text_annotations.push(ann);
                             }
                         }

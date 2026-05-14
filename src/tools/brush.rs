@@ -1,5 +1,4 @@
 use eframe::egui;
-use crate::types::*;
 use crate::utils::*;
 use crate::overlay::*;
 
@@ -14,32 +13,32 @@ pub fn update(ctx: &mut ToolContext) {
     let settings = &mut *ctx.settings;
     let mouse = ctx.mouse;
     let current_stroke = &mut *ctx.current_stroke;
-    let line_start = &mut *ctx.line_start;
-    let active_tool = &mut *ctx.active_tool;
-    let last_tool_used = &mut *ctx.last_tool_used;
-    let remove_active_layer = &mut *ctx.remove_active_layer;
-    let snip_created = &mut *ctx.snip_created;
-    let new_selection = &mut *ctx.new_selection;
-    let switch_to_move = &mut *ctx.switch_to_move;
-    let embed_trigger = &mut *ctx.embed_trigger;
-    let pending_text = &mut *ctx.pending_text;
-    let initial_bounds = &mut *ctx.initial_bounds;
-    let initial_center = &mut *ctx.initial_center;
-    let initial_layer = &mut *ctx.initial_layer;
-    let drag_state = &mut *ctx.drag_state;
-    let dragging_source_rect = &mut *ctx.dragging_source_rect;
+    let _line_start = &mut *ctx.line_start;
+    let _active_tool = &mut *ctx.active_tool;
+    let _last_tool_used = &mut *ctx.last_tool_used;
+    let _remove_active_layer = &mut *ctx.remove_active_layer;
+    let _snip_created = &mut *ctx.snip_created;
+    let _new_selection = &mut *ctx.new_selection;
+    let _switch_to_move = &mut *ctx.switch_to_move;
+    let _embed_trigger = &mut *ctx.embed_trigger;
+    let _pending_text = &mut *ctx.pending_text;
+    let _initial_bounds = &mut *ctx.initial_bounds;
+    let _initial_center = &mut *ctx.initial_center;
+    let _initial_layer = &mut *ctx.initial_layer;
+    let _drag_state = &mut *ctx.drag_state;
+    let _dragging_source_rect = &mut *ctx.dragging_source_rect;
     let ui = &mut *ctx.ui;
     let canvas_response = ctx.canvas_response;
     let painter = ui.painter_at(canvas_response.rect);
     let pos = mouse.pos;
     let left_down = mouse.left_down;
-    let left_just_pressed = mouse.left_just_pressed;
+    let _left_just_pressed = mouse.left_just_pressed;
     let left_just_released = mouse.left_just_released;
-    let right_just_pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
+    let _right_just_pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
     let active_layer_idx = project.active_layer;
-    let ppp = ui.ctx().pixels_per_point();
-    let render_offset = ctx.render_offset;
-    let frame_count = ctx.frame_count;
+    let _ppp = ui.ctx().pixels_per_point();
+    let _render_offset = ctx.render_offset;
+    let _frame_count = ctx.frame_count;
 
     let layer = &mut project.layers[active_layer_idx];
             if left_down {
@@ -86,7 +85,23 @@ pub fn update(ctx: &mut ToolContext) {
 
     pub fn draw_stroke(p: &egui::Painter, s: &Stroke, _col: egui::Color32, offset: egui::Vec2, _w: f32, l_op: f32) {
         if s.points.is_empty() { return; }
-        let pts: Vec<egui::Pos2> = s.points.iter().map(|&pt| pt + offset).collect();
+        
+        // Calculate initial bounds for perspective calculation
+        let mut min = egui::pos2(f32::MAX, f32::MAX);
+        let mut max = egui::pos2(f32::MIN, f32::MIN);
+        for &pt in &s.points {
+            min.x = min.x.min(pt.x); min.y = min.y.min(pt.y);
+            max.x = max.x.max(pt.x); max.y = max.y.max(pt.y);
+        }
+        let initial_rect = egui::Rect::from_min_max(min, max);
+        let center = initial_rect.center();
+
+        let pts: Vec<egui::Pos2> = s.points.iter().map(|&pt| {
+            let mut transformed = transform_point_complex(pt, center, s.rotation, s.skew, s.perspective, initial_rect, s.scale);
+            if s.flipped_h { transformed.x = center.x - (transformed.x - center.x); }
+            if s.flipped_v { transformed.y = center.y - (transformed.y - center.y); }
+            transformed + offset
+        }).collect();
         
         let mut base_c = color32(&s.color);
         let total_alpha = (base_c.a() as f32 * l_op * s.opacity) as u8;
@@ -202,9 +217,9 @@ pub fn update(ctx: &mut ToolContext) {
                         
                         for _ in 0..num_bristles {
                             rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-                            let rx = ((rng % 1000) as f32 / 500.0 - 1.0);
+                            let rx = (rng % 1000) as f32 / 500.0 - 1.0 ;
                             rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-                            let ry = ((rng % 1000) as f32 / 500.0 - 1.0);
+                            let ry = (rng % 1000) as f32 / 500.0 - 1.0 ;
                             
                             let (off_x, off_y) = if s.brush_shape == BrushShape::Round {
                                 let len = (rx*rx + ry*ry).sqrt().max(0.001);

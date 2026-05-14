@@ -1,6 +1,6 @@
 use eframe::egui;
 use crate::types::*;
-use crate::project::{Project, SelectedObject};
+use crate::project::Project;
 
 pub mod brush;
 pub mod shape;
@@ -36,14 +36,38 @@ pub struct ToolContext<'a, 'b> {
     pub initial_layer: &'a mut Option<crate::project::Layer>,
     pub drag_state: &'a mut usize,
     pub dragging_source_rect: &'a mut bool,
+    pub edit_mode: bool,
 }
 
 impl<'a, 'b> ToolContext<'a, 'b> {
     pub fn auto_create_layer(&mut self) {
+        if self.project.selected_object.is_some() {
+            *self.last_tool_used = Some(*self.active_tool);
+            return;
+        }
+        let active_layer_idx = self.project.active_layer;
+        
+        // If we have a valid active layer and we're just drawing more brush strokes, 
+        // don't force a new layer if the last tool was also Brush.
+        if *self.active_tool == Tool::Brush && active_layer_idx < self.project.layers.len() {
+            if let Some(t) = self.last_tool_used {
+                if *t == Tool::Brush {
+                    return; // Already in Brush mode on this layer
+                }
+            }
+            // If we switched from Move tool back to Brush, and the active layer is visible, 
+            // let's just use it instead of creating a new one.
+            if self.project.layers[active_layer_idx].visible {
+                *self.last_tool_used = Some(Tool::Brush);
+                return;
+            }
+        }
+
         let needs_new_layer = match self.last_tool_used {
             Some(t) => *t != *self.active_tool,
             None => true,
         };
+        
         if needs_new_layer {
             // Check if current layer is completely empty and named "Layer 1"
             let is_empty_start = self.project.layers.len() == 1 

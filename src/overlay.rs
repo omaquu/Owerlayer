@@ -104,9 +104,9 @@ pub fn render_canvas(
         pos += win_offset;
     }
     
-    let left_down = ui.input(|i| i.pointer.primary_down());
-    let left_just_pressed = ui.input(|i| i.pointer.primary_pressed());
-    let left_just_released = ui.input(|i| i.pointer.primary_released());
+    let _left_down = ui.input(|i| i.pointer.primary_down());
+    let _left_just_pressed = ui.input(|i| i.pointer.primary_pressed());
+    let _left_just_released = ui.input(|i| i.pointer.primary_released());
 
     // Use click_and_drag to consume events and prevent eframe from initiating a modal window drag (which causes freezing)
     let (canvas_response, painter) = ui.allocate_painter(rect.size(), egui::Sense::click_and_drag());
@@ -121,7 +121,7 @@ pub fn render_canvas(
             let sy = (mouse.pos.y * ppp) as i32 + wy;
             if let Some((hwnd, _title, _rect)) = crate::winapi_utils::get_window_at_point(sx, sy) {
                 if let Some(sel) = project.selected_object {
-                    if sel.object_type == crate::project::ObjectType::Image {
+                    if sel.object_type == ObjectType::Image {
                         project.layers[sel.layer_idx].placed_images[sel.object_idx].hwnd = hwnd;
                         project.layers[sel.layer_idx].placed_images[sel.object_idx].is_live = true;
                     }
@@ -164,7 +164,7 @@ pub fn render_canvas(
     // ── Layers Rendering ──
     for (i, layer) in project.layers.iter_mut().enumerate().filter(|(_, l)| l.visible) {
         if settings.hide_all { continue; }
-        let is_active = project.active_layer == i;
+        let _is_active = project.active_layer == i;
         let l_op = layer.opacity;
         
         // Placed Images
@@ -213,7 +213,7 @@ pub fn render_canvas(
                 } else {
                     let mut dummy_mesh = egui::Mesh::default();
                     dummy_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(-disp_w*0.5, -disp_h*0.5), egui::vec2(disp_w, disp_h)), egui::Rect::from_min_max(egui::pos2(0.0,0.0), egui::pos2(1.0,1.0)), egui::Color32::WHITE);
-                    transform_mesh(&mut dummy_mesh, center, img.rotation, img.skew, img.perspective);
+                    transform_mesh(&mut dummy_mesh, center, img.rotation, img.skew, img.perspective, img.scale);
                     let mut min = egui::pos2(f32::MAX, f32::MAX);
                     let mut max = egui::pos2(f32::MIN, f32::MIN);
                     for v in &dummy_mesh.vertices {
@@ -241,10 +241,11 @@ pub fn render_canvas(
                             
                             img.size = [sw as usize, sh as usize]; // Update physical size
                             
+                            if img.pixels.is_empty() { img.thumbnail_dirty = true; }
+
                             if img.blur > 0.1 && gl_renderer.is_some() {
                                 // We'll handle this on GPU during rendering
                                 img.pixels = p;
-                                img.thumbnail_dirty = true;
                             } else if img.blur > 0.1 {
                                 match img.blur_effect {
                                     BlurEffect::Gaussian => apply_box_blur(&mut p, sw as usize, sh as usize, img.blur as usize),
@@ -252,21 +253,34 @@ pub fn render_canvas(
                                     BlurEffect::Glitch => apply_vhs_glitch(&mut p, sw as usize, sh as usize, img.blur as f32 / 100.0),
                                 }
                                 img.pixels = p;
-                                img.thumbnail_dirty = true;
                             } else {
                                 img.pixels = p;
-                                img.thumbnail_dirty = true;
                             }
-                        } else if !settings.exclude_from_capture {
-                            crate::winapi_utils::set_capture_exclusion(false);
                         }
+                    } else if !settings.exclude_from_capture {
+                        crate::winapi_utils::set_capture_exclusion(false);
                     }
                 }
+            }
+        }
 
-                } // end screen-region branch
+            // --- Thumbnail Update (Static Snip) ---
+            if img.is_live && img.thumbnail_dirty && !img.pixels.is_empty() {
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.pixels);
+                if let Some(tex) = &mut img.thumbnail_texture {
+                    tex.set(color_image, egui::TextureOptions::LINEAR);
+                } else {
+                    img.thumbnail_texture = Some(ui.ctx().load_texture(
+                        format!("thumb_{}_{}", layer.name, img.id),
+                        color_image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
             }
 
+            // --- Main Texture Update ---
             if !img.frames.is_empty() {
+                // GIF/Animated handling
                 let time = ui.input(|i| i.time) as f32;
                 if img.last_frame_time == 0.0 { img.last_frame_time = time; }
                 let dt = time - img.last_frame_time;
@@ -275,7 +289,6 @@ pub fn render_canvas(
                 if dt >= current_duration {
                     img.current_frame = (img.current_frame + 1) % img.frames.len();
                     img.last_frame_time = time;
-                    // Update texture with new frame
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.frames[img.current_frame]);
                     if let Some(tex) = &mut img.texture {
                         tex.set(color_image, Default::default());
@@ -284,21 +297,32 @@ pub fn render_canvas(
                     }
                 }
                 ui.ctx().request_repaint();
-            } else if (img.texture.is_none() || img.thumbnail_dirty) && !img.pixels.is_empty() {
-                let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.pixels);
-                if let Some(tex) = &mut img.texture {
-                    tex.set(color_image, egui::TextureOptions::LINEAR);
-                } else {
-                    img.texture = Some(ui.ctx().load_texture(
-                        format!("snip_{}_{}", layer.name, img.id),
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    ));
+            } else if !img.pixels.is_empty() {
+                // Static or Live Snip
+                let should_update_texture = img.texture.is_none() // First load
+                    || (img.is_live && frame_count % 3 == 0)      // Live feed update
+                    || (!img.is_live && img.thumbnail_dirty);     // Static update (filters, etc.)
+
+                if should_update_texture {
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.pixels);
+                    if let Some(tex) = &mut img.texture {
+                        tex.set(color_image, egui::TextureOptions::LINEAR);
+                    } else {
+                        img.texture = Some(ui.ctx().load_texture(
+                            format!("snip_{}_{}", layer.name, img.id),
+                            color_image,
+                            egui::TextureOptions::LINEAR,
+                        ));
+                    }
                 }
+            }
+            
+            // Clear dirty flags AFTER both updates
+            if img.thumbnail_dirty && !img.pixels.is_empty() {
                 img.thumbnail_dirty = false;
             }
 
-            if img.mask.is_some() && img.mask_texture.is_none() {
+            if img.mask.is_some() && (img.mask_texture.is_none() || img.mask_dirty) {
                 if let Some(mask) = &img.mask {
                     let size = img.size;
                     let mut mask_rgba = vec![255u8; size[0] * size[1] * 4];
@@ -312,6 +336,7 @@ pub fn render_canvas(
                     }
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &mask_rgba);
                     img.mask_texture = Some(ui.ctx().load_texture(format!("mask_{}", img.id), color_image, egui::TextureOptions::LINEAR));
+                    img.mask_dirty = false;
                 }
             }
             
@@ -327,21 +352,21 @@ pub fn render_canvas(
                 if layer.shadow || img.shadow {
                     let mut s_mesh = egui::Mesh::with_texture(tex.id());
                     s_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(-disp_w*0.5, -disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, egui::Color32::from_black_alpha((100.0 * l_op) as u8));
-                    transform_mesh(&mut s_mesh, center + egui::vec2(3.0, 3.0), img.rotation, img.skew, img.perspective);
+                    transform_mesh(&mut s_mesh, center + egui::vec2(3.0, 3.0), img.rotation, img.skew, img.perspective, img.scale);
                     painter.add(egui::Shape::mesh(s_mesh));
                 }
 
-                if layer.outline {
+                if layer.outline || img.outline {
                     let mut o_mesh = egui::Mesh::with_texture(tex.id());
                     o_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(-disp_w*0.5-1.5, -disp_h*0.5-1.5), egui::vec2(disp_w+3.0, disp_h+3.0)), uv, egui::Color32::from_white_alpha((200.0 * l_op) as u8));
-                    transform_mesh(&mut o_mesh, center, img.rotation, img.skew, img.perspective);
+                    transform_mesh(&mut o_mesh, center, img.rotation, img.skew, img.perspective, img.scale);
                     painter.add(egui::Shape::mesh(o_mesh));
                 }
 
                 let mut mesh = egui::Mesh::with_texture(tex.id());
                 let color = egui::Color32::from_white_alpha((255.0 * l_op * img.opacity) as u8);
                 mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(-disp_w*0.5, -disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, color);
-                transform_mesh(&mut mesh, center, img.rotation, img.skew, img.perspective);
+                transform_mesh(&mut mesh, center, img.rotation, img.skew, img.perspective, img.scale);
 
                 // Fix: sample whole texture UVs correctly for live images
                 if img.is_live && img.source_rect.is_none() {
@@ -418,8 +443,53 @@ pub fn render_canvas(
         crate::tools::brush::draw_layer_strokes(&painter, layer, -render_offset, l_op);
 
         // Text annotations
-        crate::tools::text::draw_layer_text(&painter, layer, -render_offset, l_op, settings);
+        crate::tools::text::draw_layer_text(&painter, layer, -render_offset, l_op, settings, ui.input(|i| i.time) as f32);
 
+    }
+
+    // ── Pending text cursor ──
+    if let Some(pending) = pending_text.as_ref() {
+        let time  = ui.input(|i| i.time);
+        let blink = (time * 3.0).sin() > 0.0;
+        let font  = crate::tools::text::resolve_font(settings.text_font, settings.font_size);
+
+        let mut display_text = pending.buffer.clone();
+        if blink { display_text.push('|'); }
+
+        let pen_c = color32(&settings.pen_color);
+        let draw_pos = pending.position - render_offset;
+
+        if settings.text_wave_warp {
+            let wave_amplitude = settings.font_size * 0.25;
+            let wave_frequency = std::f32::consts::TAU / (settings.font_size * 3.5);
+            let char_w = settings.font_size * 0.6;
+            
+            for (i, ch) in display_text.chars().enumerate() {
+                let x = draw_pos.x + i as f32 * char_w;
+                let wave_y = draw_pos.y + wave_amplitude * (wave_frequency * x - time as f32 * 5.0).sin();
+                let char_str: String = std::iter::once(ch).collect();
+                painter.text(egui::pos2(x, wave_y), egui::Align2::LEFT_TOP, &char_str, font.clone(), pen_c);
+            }
+        } else {
+            if settings.text_outline {
+                let c = pen_c;
+                let outline_col = if c.r() as u32 + c.g() as u32 + c.b() as u32 > 382 {
+                    egui::Color32::BLACK
+                } else {
+                    egui::Color32::WHITE
+                };
+                for off in [
+                    egui::vec2(1.0, 1.0), egui::vec2(-1.0, -1.0),
+                    egui::vec2(1.0, -1.0), egui::vec2(-1.0, 1.0),
+                ] {
+                    painter.text(draw_pos + off, egui::Align2::LEFT_TOP, &display_text, font.clone(), outline_col);
+                }
+            } else if settings.text_shadow {
+                painter.text(draw_pos + egui::vec2(2.0, 2.0), egui::Align2::LEFT_TOP, &display_text, font.clone(), egui::Color32::from_black_alpha(150));
+            }
+            painter.text(draw_pos, egui::Align2::LEFT_TOP, &display_text, font, pen_c);
+        }
+        ui.ctx().request_repaint();
     }
 
     let mut remove_active_layer = false;
@@ -451,6 +521,7 @@ pub fn render_canvas(
         initial_layer,
         drag_state,
         dragging_source_rect,
+        edit_mode,
     };
 
     // ── Live preview ──
@@ -467,7 +538,7 @@ pub fn render_canvas(
         crate::tools::move_tool::render(&mut ctx);
     }
 
-    // ── Pending text cursor ──
+
 
 
 

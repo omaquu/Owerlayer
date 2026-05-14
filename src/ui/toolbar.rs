@@ -303,7 +303,7 @@ pub fn render_photoshop_panel(
     embed_trigger: &mut bool,
 ) {
     let main_tools = vec![
-        Tool::Move, Tool::Brush, Tool::Eraser, Tool::Text, Tool::Shape, Tool::Snip, Tool::Mirror, Tool::Cut, Tool::Blur, Tool::Embed,
+        Tool::Move, Tool::Brush, Tool::Eraser, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur, Tool::Embed,
     ];
     
     let hide_icon = if settings.hide_all { "👁" } else { "👓" };
@@ -315,7 +315,8 @@ pub fn render_photoshop_panel(
         .resizable(false)
         .collapsible(false)
         .movable(true)
-        .default_pos(egui::pos2(20.0, 50.0))
+        .default_pos(egui::pos2(40.0, 60.0))
+        .pivot(egui::Align2::LEFT_TOP)
         .frame(frame);
     
     if is_vertical { win = win.min_width(160.0); }
@@ -366,7 +367,7 @@ pub fn render_photoshop_panel(
     });
 }
 
-pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool) {
+pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, _is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool) {
     ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
     
     if !matches!(active_tool, Tool::Move | Tool::Mirror | Tool::Embed) {
@@ -421,10 +422,11 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             }
         }
         Tool::Text => {
-            ui.add(egui::DragValue::new(&mut settings.font_size).range(10.0..=200.0));
-            ui.horizontal(|ui| {
-                ui.toggle_value(&mut settings.text_shadow, " S ");
-                ui.toggle_value(&mut settings.text_outline, " O ");
+            ui.add(egui::DragValue::new(&mut settings.font_size).range(10.0..=200.0)).on_hover_text("Font Size");
+            ui.horizontal_wrapped(|ui| {
+                ui.toggle_value(&mut settings.text_shadow, " S ").on_hover_text("Shadow");
+                ui.toggle_value(&mut settings.text_outline, " O ").on_hover_text("Outline");
+                ui.toggle_value(&mut settings.text_wave_warp, "〜").on_hover_text("Wave Warp");
             });
             ui.add(egui::Separator::default().vertical());
             ui.horizontal(|ui| {
@@ -459,24 +461,37 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Circle, "Circ");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Lasso, "Lasso");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::RegularPolygon, "RegPoly");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Window, "Win").on_hover_text("Capture a specific window");
+                if settings.snip_mode == SnipMode::RegularPolygon {
+                    ui.add(egui::Slider::new(&mut settings.polygon_sides, 3..=20).text("Sides").clamping(egui::SliderClamping::Always));
+                }
+                ui.add(egui::Separator::default().vertical());
+                let static_sel = !settings.snip_live;
+                let live_sel = settings.snip_live;
+                let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
+                if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
             });
-            ui.checkbox(&mut settings.snip_live, "Live");
         }
         Tool::Cut => {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Rect, "Rect");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Circle, "Circ");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Lasso, "Lasso");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Polygon, "Poly");
+                ui.selectable_value(&mut settings.cut_mode, CutMode::RegularPolygon, "Poly");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::MagicWand, "Wand");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Star, "Star");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Heart, "Heart");
-            });
-            ui.horizontal(|ui| {
+                if settings.cut_mode == CutMode::RegularPolygon {
+                    ui.add(egui::Slider::new(&mut settings.polygon_sides, 3..=20).text("Sides").clamping(egui::SliderClamping::Always));
+                }
+                ui.add(egui::Separator::default().vertical());
                 ui.checkbox(&mut settings.inverted_cut, "Invert");
-                ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: "));
+                if settings.cut_mode == CutMode::MagicWand {
+                    ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: "));
+                }
             });
         }
         Tool::Blur => {
@@ -488,85 +503,96 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Move => {
-            if let Some(sel) = project.selected_object {
-                ui.horizontal(|ui| {
-                    if ui.button(egui::RichText::new("✖").color(egui::Color32::RED)).on_hover_text("Delete Selected").clicked() {
+            ui.horizontal(|ui| {
+                if let Some(sel) = project.selected_object {
+                    if ui.button(egui::RichText::new("✖").color(egui::Color32::RED)).on_hover_text("Delete Selected (X)").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
                         match sel.object_type {
-                            crate::project::ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
-                            crate::project::ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
-                            crate::project::ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
+                            ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
+                            ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
+                            ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
                         }
                         project.selected_object = None;
                     }
+                    ui.separator();
                     
-                    ui.add(egui::Separator::default().vertical());
-                    
-                    // Transformation buttons
                     if ui.button("⟳").on_hover_text("Rotate 90").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
-                        match sel.object_type {
-                            crate::project::ObjectType::Image => { layer.placed_images[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
-                            crate::project::ObjectType::Stroke => { layer.strokes[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
-                            crate::project::ObjectType::Text => { layer.text_annotations[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
-                        }
+                        let b = crate::utils::object_bounds(layer, sel.object_type, sel.object_idx).unwrap_or(egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(1.0, 1.0)));
+                        crate::utils::rotate_layer(layer, b.center(), std::f32::consts::PI / 2.0);
                     }
-                    if ui.button("↔").on_hover_text("Flip Horizontal").clicked() {
+                    if ui.button("↔").on_hover_text("Flip H").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
                         match sel.object_type {
-                            crate::project::ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_h = !layer.placed_images[sel.object_idx].flipped_h; }
-                            crate::project::ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_h = !layer.strokes[sel.object_idx].flipped_h; }
-                            crate::project::ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_h = !layer.text_annotations[sel.object_idx].flipped_h; }
+                            ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_h = !layer.placed_images[sel.object_idx].flipped_h; }
+                            ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_h = !layer.strokes[sel.object_idx].flipped_h; }
+                            ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_h = !layer.text_annotations[sel.object_idx].flipped_h; }
                         }
                     }
-                    if ui.button("↕").on_hover_text("Flip Vertical").clicked() {
+                    if ui.button("↕").on_hover_text("Flip V").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
                         match sel.object_type {
-                            crate::project::ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_v = !layer.placed_images[sel.object_idx].flipped_v; }
-                            crate::project::ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_v = !layer.strokes[sel.object_idx].flipped_v; }
-                            crate::project::ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_v = !layer.text_annotations[sel.object_idx].flipped_v; }
+                            ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_v = !layer.placed_images[sel.object_idx].flipped_v; }
+                            ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_v = !layer.strokes[sel.object_idx].flipped_v; }
+                            ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_v = !layer.text_annotations[sel.object_idx].flipped_v; }
                         }
                     }
-                    
-                    ui.add(egui::Separator::default().vertical());
-                    
+                    ui.separator();
+
                     // Opacity
-                    ui.label("Opacity:");
+                    ui.label("Op:");
                     let mut op = match sel.object_type {
-                        crate::project::ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity,
-                        crate::project::ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity,
-                        crate::project::ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity,
-                    };
-                    if ui.add(egui::Slider::new(&mut op, 0.0..=1.0).show_value(false)).changed() {
+                        ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity,
+                        ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity,
+                        ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity,
+                    } * 100.0;
+                    if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).suffix("%")).changed() {
+                        let final_op = op / 100.0;
                         match sel.object_type {
-                            crate::project::ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity = op,
-                            crate::project::ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity = op,
-                            crate::project::ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity = op,
+                            ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity = final_op,
+                            ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity = final_op,
+                            ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity = final_op,
                         }
                     }
+                    ui.separator();
                     
-                    ui.add(egui::Separator::default().vertical());
-                    
-                    if ui.button("⤒").on_hover_text("Move Up").clicked() {
+                    if let ObjectType::Image = sel.object_type {
+                        let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(!img.is_live, "Static").clicked() { img.is_live = false; }
+                            if ui.selectable_label(img.is_live, "Live").clicked() {
+                                img.is_live = true;
+                                if img.source_rect.is_none() {
+                                    img.source_rect = Some([img.position.x, img.position.y, img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0], img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1]]);
+                                    img.show_source_rect = true;
+                                }
+                            }
+                            if img.is_live {
+                                ui.checkbox(&mut img.show_source_rect, "Show Source");
+                            }
+                        });
+                        ui.separator();
+                    }
+                    if ui.button("⎌").on_hover_text("Reset Transforms").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
                         match sel.object_type {
-                            crate::project::ObjectType::Image => { if sel.object_idx < layer.placed_images.len() - 1 { layer.placed_images.swap(sel.object_idx, sel.object_idx + 1); project.selected_object = Some(crate::project::SelectedObject { object_idx: sel.object_idx + 1, ..sel }); } }
-                            crate::project::ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() - 1 { layer.strokes.swap(sel.object_idx, sel.object_idx + 1); project.selected_object = Some(crate::project::SelectedObject { object_idx: sel.object_idx + 1, ..sel }); } }
-                            crate::project::ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() - 1 { layer.text_annotations.swap(sel.object_idx, sel.object_idx + 1); project.selected_object = Some(crate::project::SelectedObject { object_idx: sel.object_idx + 1, ..sel }); } }
+                            ObjectType::Image => { let img = &mut layer.placed_images[sel.object_idx]; img.rotation = 0.0; img.skew = egui::Vec2::ZERO; img.perspective = [egui::Vec2::ZERO; 4]; }
+                            ObjectType::Stroke => { let s = &mut layer.strokes[sel.object_idx]; s.rotation = 0.0; s.skew = egui::Vec2::ZERO; s.perspective = [egui::Vec2::ZERO; 4]; }
+                            ObjectType::Text => { let t = &mut layer.text_annotations[sel.object_idx]; t.rotation = 0.0; t.skew = egui::Vec2::ZERO; t.perspective = [egui::Vec2::ZERO; 4]; }
                         }
                     }
-                    if ui.button("⤓").on_hover_text("Move Down").clicked() {
-                        let layer = &mut project.layers[sel.layer_idx];
-                        match sel.object_type {
-                            crate::project::ObjectType::Image => { if sel.object_idx > 0 { layer.placed_images.swap(sel.object_idx, sel.object_idx - 1); project.selected_object = Some(crate::project::SelectedObject { object_idx: sel.object_idx - 1, ..sel }); } }
-                            crate::project::ObjectType::Stroke => { if sel.object_idx > 0 { layer.strokes.swap(sel.object_idx, sel.object_idx - 1); project.selected_object = Some(crate::project::SelectedObject { object_idx: sel.object_idx - 1, ..sel }); } }
-                            crate::project::ObjectType::Text => { if sel.object_idx > 0 { layer.text_annotations.swap(sel.object_idx, sel.object_idx - 1); project.selected_object = Some(crate::project::SelectedObject { object_idx: sel.object_idx - 1, ..sel }); } }
-                        }
+                } else {
+                    ui.label("Active Layer:");
+                    let layer = &mut project.layers[project.active_layer];
+                    let mut op = layer.opacity * 100.0;
+                    if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).prefix("Op: ").suffix("%")).changed() {
+                        layer.opacity = op / 100.0;
                     }
-                });
-            } else {
-                ui.label("Move tool active");
-            }
+                    if ui.button("⎌").on_hover_text("Reset Layer Transforms").clicked() {
+                        crate::utils::translate_layer(layer, -crate::utils::layer_bounds(layer).map(|b| b.min.to_vec2()).unwrap_or(egui::Vec2::ZERO));
+                    }
+                }
+            });
         }
         Tool::Embed => {
             ui.add(egui::TextEdit::singleline(embed_url).hint_text("URL..."));

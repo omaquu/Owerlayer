@@ -1,10 +1,7 @@
 use eframe::egui;
-use crate::types::*;
-use crate::utils::*;
 use crate::overlay::*;
 
 use crate::tools::ToolContext;
-use crate::ui::toolbar::{apply_box_blur, apply_pixelate, apply_vhs_glitch};
 
 pub fn update(ctx: &mut ToolContext) {
     let project = &mut *ctx.project;
@@ -13,11 +10,11 @@ pub fn update(ctx: &mut ToolContext) {
     let line_start = &mut *ctx.line_start;
     let ui = &mut *ctx.ui;
     let canvas_response = ctx.canvas_response;
-    let painter = ui.painter_at(canvas_response.rect);
+    let _painter = ui.painter_at(canvas_response.rect);
     let pos = mouse.pos;
     let left_just_pressed = mouse.left_just_pressed;
     let left_just_released = mouse.left_just_released;
-    let render_offset = ctx.render_offset;
+    let _render_offset = ctx.render_offset;
 
             if left_just_pressed { *line_start = Some(pos); }
             if left_just_released {

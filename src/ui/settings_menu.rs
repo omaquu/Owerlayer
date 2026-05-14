@@ -21,6 +21,8 @@ pub fn render_settings_window(
         .resizable(false)
         .collapsible(true)
         .default_width(280.0)
+        .default_pos(egui::pos2(ctx.screen_rect().max.x - 380.0, 60.0))
+        .pivot(egui::Align2::RIGHT_TOP)
         .frame(frame)
         .show(ctx, |ui| {
             ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::from_rgba_premultiplied(255, 255, 255, 8);

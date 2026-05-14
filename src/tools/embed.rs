@@ -1,6 +1,4 @@
 use eframe::egui;
-use crate::types::*;
-use crate::utils::*;
 use crate::overlay::*;
 
 use crate::tools::ToolContext;
@@ -28,9 +26,9 @@ pub fn update(ctx: &mut ToolContext) {
                     new_img.is_live = true;
                     project.layers[project.active_layer].placed_images.push(new_img);
                     
-                    project.selected_object = Some(crate::project::SelectedObject {
+                    project.selected_object = Some(SelectedObject {
                         layer_idx: project.active_layer,
-                        object_type: crate::project::ObjectType::Image,
+                        object_type: ObjectType::Image,
                         object_idx: project.layers[project.active_layer].placed_images.len() - 1,
                     });
                     *last_tool_used = Some(*active_tool);

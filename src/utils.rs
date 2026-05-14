@@ -150,42 +150,24 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
 
 pub fn layer_bounds(layer: &crate::project::Layer) -> Option<egui::Rect> {
     let mut rect: Option<egui::Rect> = None;
-    let mut extend = |pos: egui::Pos2, padding: f32| {
-        let p_rect = egui::Rect::from_center_size(pos, egui::vec2(padding, padding));
-        if let Some(r) = &mut rect { *r = r.union(p_rect); }
-        else { rect = Some(p_rect); }
+    let mut extend = |r: egui::Rect| {
+        if let Some(curr) = rect { rect = Some(curr.union(r)); }
+        else { rect = Some(r); }
     };
 
-    for img in &layer.placed_images {
-        let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-        extend(img.position, 0.0);
-        extend(img.position + egui::vec2(disp_w, disp_h), 0.0);
+    for i in 0..layer.placed_images.len() {
+        if let Some(b) = object_bounds(layer, ObjectType::Image, i) { extend(b); }
     }
-    for s in &layer.strokes {
-        let padding = s.width;
-        match s.kind {
-            StrokeKind::Circle | StrokeKind::Star | StrokeKind::Heart => {
-                if s.points.len() >= 2 {
-                    let center = s.points[0];
-                    let radius = center.distance(s.points[1]) + padding / 2.0;
-                    extend(center - egui::vec2(radius, radius), 0.0);
-                    extend(center + egui::vec2(radius, radius), 0.0);
-                }
-            }
-            _ => {
-                for p in &s.points { extend(*p, padding); }
-            }
-        }
+    for i in 0..layer.strokes.len() {
+        if let Some(b) = object_bounds(layer, ObjectType::Stroke, i) { extend(b); }
     }
-    for ann in &layer.text_annotations {
-        extend(ann.position, 0.0);
-        extend(ann.position + egui::vec2(ann.text.len() as f32 * ann.font_size * 0.6, ann.font_size * 1.2), 0.0);
+    for i in 0..layer.text_annotations.len() {
+        if let Some(b) = object_bounds(layer, ObjectType::Text, i) { extend(b); }
     }
     rect
 }
 
-pub fn object_bounds(layer: &crate::project::Layer, obj_type: crate::project::ObjectType, obj_idx: usize) -> Option<egui::Rect> {
+pub fn object_bounds(layer: &crate::project::Layer, obj_type: ObjectType, obj_idx: usize) -> Option<egui::Rect> {
     let mut rect: Option<egui::Rect> = None;
     let mut extend = |pos: egui::Pos2, padding: f32| {
         let p_rect = egui::Rect::from_center_size(pos, egui::vec2(padding, padding));
@@ -194,36 +176,55 @@ pub fn object_bounds(layer: &crate::project::Layer, obj_type: crate::project::Ob
     };
 
     match obj_type {
-        crate::project::ObjectType::Image => {
+        ObjectType::Image => {
             if let Some(img) = layer.placed_images.get(obj_idx) {
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                extend(img.position, 0.0);
-                extend(img.position + egui::vec2(disp_w, disp_h), 0.0);
+                let initial_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
+                let center = initial_rect.center();
+                for c in [initial_rect.left_top(), initial_rect.right_top(), initial_rect.left_bottom(), initial_rect.right_bottom()] {
+                    extend(transform_point_complex(c, center, img.rotation, img.skew, img.perspective, initial_rect, egui::vec2(1.0, 1.0)), 0.0);
+                }
             }
         }
-        crate::project::ObjectType::Stroke => {
+        ObjectType::Stroke => {
             if let Some(s) = layer.strokes.get(obj_idx) {
                 let padding = s.width;
+                if s.points.is_empty() { return None; }
+                let mut min = egui::pos2(f32::MAX, f32::MAX);
+                let mut max = egui::pos2(f32::MIN, f32::MIN);
+                for &pt in &s.points {
+                    min.x = min.x.min(pt.x); min.y = min.y.min(pt.y);
+                    max.x = max.x.max(pt.x); max.y = max.y.max(pt.y);
+                }
+                let initial_rect = egui::Rect::from_min_max(min, max);
+                let center = initial_rect.center();
+
                 match s.kind {
                     StrokeKind::Circle | StrokeKind::Star | StrokeKind::Heart => {
                         if s.points.len() >= 2 {
-                            let center = s.points[0];
-                            let radius = center.distance(s.points[1]) + padding / 2.0;
-                            extend(center - egui::vec2(radius, radius), 0.0);
-                            extend(center + egui::vec2(radius, radius), 0.0);
+                            let r_center = s.points[0];
+                            let radius = r_center.distance(s.points[1]) + padding / 2.0;
+                            extend(r_center - egui::vec2(radius, radius), 0.0);
+                            extend(r_center + egui::vec2(radius, radius), 0.0);
                         }
                     }
                     _ => {
-                        for p in &s.points { extend(*p, padding); }
+                        for p in &s.points {
+                            extend(transform_point_complex(*p, center, s.rotation, s.skew, s.perspective, initial_rect, s.scale), padding);
+                        }
                     }
                 }
             }
         }
-        crate::project::ObjectType::Text => {
+        ObjectType::Text => {
             if let Some(ann) = layer.text_annotations.get(obj_idx) {
-                extend(ann.position, 0.0);
-                extend(ann.position + egui::vec2(ann.text.len() as f32 * ann.font_size * 0.6, ann.font_size * 1.2), 0.0);
+                let size = egui::vec2(ann.text.len() as f32 * ann.font_size * 0.6, ann.font_size * 1.2);
+                let initial_rect = egui::Rect::from_min_size(ann.position, size);
+                let center = initial_rect.center();
+                for c in [initial_rect.left_top(), initial_rect.right_top(), initial_rect.left_bottom(), initial_rect.right_bottom()] {
+                    extend(transform_point_complex(c, center, ann.rotation, ann.skew, ann.perspective, initial_rect, ann.scale), 0.0);
+                }
             }
         }
     }
@@ -231,7 +232,7 @@ pub fn object_bounds(layer: &crate::project::Layer, obj_type: crate::project::Ob
 }
 
 pub fn translate_layer(layer: &mut crate::project::Layer, delta: egui::Vec2) {
-    for img in &mut layer.placed_images { img.position += delta; }
+    for img in &mut layer.placed_images { img.position += delta; img.thumbnail_dirty = true; }
     for s in &mut layer.strokes {
         for p in &mut s.points { *p += delta; }
     }
@@ -250,17 +251,22 @@ pub fn scale_layer(layer: &mut crate::project::Layer, center: egui::Pos2, scale:
         disp_w *= scale.x;
         disp_h *= scale.y;
         img.display_size = Some([disp_w, disp_h]);
+        img.thumbnail_dirty = true;
     }
     for s in &mut layer.strokes {
         for p in &mut s.points {
             let rel = *p - center;
             *p = center + egui::vec2(rel.x * scale.x, rel.y * scale.y);
         }
+        s.scale.x *= scale.x;
+        s.scale.y *= scale.y;
         s.width *= (scale.x.abs() + scale.y.abs()) * 0.5;
     }
     for ann in &mut layer.text_annotations {
         let rel = ann.position - center;
         ann.position = center + egui::vec2(rel.x * scale.x, rel.y * scale.y);
+        ann.scale.x *= scale.x;
+        ann.scale.y *= scale.y;
         ann.font_size *= (scale.x.abs() + scale.y.abs()) * 0.5;
     }
 }
@@ -272,7 +278,7 @@ pub fn rotate_layer(layer: &mut crate::project::Layer, center: egui::Pos2, angle
         let rel = p - center;
         center + egui::vec2(rel.x * cos - rel.y * sin, rel.y * cos + rel.x * sin)
     };
-    for img in &mut layer.placed_images { img.position = rot(img.position); img.rotation += angle; }
+    for img in &mut layer.placed_images { img.position = rot(img.position); img.rotation += angle; img.thumbnail_dirty = true; }
     for s in &mut layer.strokes {
         for p in &mut s.points { *p = rot(*p); }
         s.rotation += angle;
@@ -285,7 +291,7 @@ pub fn skew_layer(layer: &mut crate::project::Layer, center: egui::Pos2, skew_de
         let rel = p - center;
         center + egui::vec2(rel.x + rel.y * skew_delta.x, rel.y + rel.x * skew_delta.y)
     };
-    for img in &mut layer.placed_images { img.position = skew_p(img.position); img.skew += skew_delta; }
+    for img in &mut layer.placed_images { img.position = skew_p(img.position); img.skew += skew_delta; img.thumbnail_dirty = true; }
     for s in &mut layer.strokes {
         for p in &mut s.points { *p = skew_p(*p); }
         s.skew += skew_delta;
@@ -293,7 +299,7 @@ pub fn skew_layer(layer: &mut crate::project::Layer, center: egui::Pos2, skew_de
     for ann in &mut layer.text_annotations { ann.position = skew_p(ann.position); ann.skew += skew_delta; }
 }
 
-pub fn transform_mesh(mesh: &mut egui::Mesh, center: egui::Pos2, rotation: f32, skew: egui::Vec2, perspective: [egui::Vec2; 4]) {
+pub fn transform_mesh(mesh: &mut egui::Mesh, center: egui::Pos2, rotation: f32, skew: egui::Vec2, perspective: [egui::Vec2; 4], scale: egui::Vec2) {
     if mesh.vertices.is_empty() { return; }
     let mut min = egui::pos2(f32::MAX, f32::MAX);
     let mut max = egui::pos2(f32::MIN, f32::MIN);
@@ -316,24 +322,32 @@ pub fn transform_mesh(mesh: &mut egui::Mesh, center: egui::Pos2, rotation: f32, 
             perspective[2] * (1.0 - tx) * ty +        
             perspective[3] * tx * ty;                 
             
-        let rel_p = p - egui::Pos2::ZERO; 
-        let px = rel_p.x + p_offset.x + rel_p.y * skew.x;
-        let py = rel_p.y + p_offset.y + rel_p.x * skew.y;
+        let rel_p = p - center; 
+        let px = rel_p.x * scale.x + p_offset.x + rel_p.y * scale.y * skew.x;
+        let py = rel_p.y * scale.y + p_offset.y + rel_p.x * scale.x * skew.y;
         
         v.pos.x = center.x + px * cos - py * sin;
         v.pos.y = center.y + py * cos + px * sin;
     }
 }
 
-pub fn transform_point_complex(p: egui::Pos2, center: egui::Pos2, rotation: f32, skew: egui::Vec2, perspective: [egui::Vec2; 4]) -> egui::Pos2 {
-    let rel = p - center;
+pub fn transform_point_complex(p: egui::Pos2, center: egui::Pos2, rotation: f32, skew: egui::Vec2, perspective: [egui::Vec2; 4], initial_rect: egui::Rect, scale: egui::Vec2) -> egui::Pos2 {
+    let size = initial_rect.size();
+    let tx = if size.x > 0.0 { (p.x - initial_rect.min.x) / size.x } else { 0.5 };
+    let ty = if size.y > 0.0 { (p.y - initial_rect.min.y) / size.y } else { 0.5 };
+    
+    let p_offset = 
+        perspective[0] * (1.0 - tx) * (1.0 - ty) + 
+        perspective[1] * tx * (1.0 - ty) +        
+        perspective[2] * (1.0 - tx) * ty +        
+        perspective[3] * tx * ty;                 
+        
+    let rel_p = p - center; 
     let cos = rotation.cos();
     let sin = rotation.sin();
-    let rx = rel.x * cos - rel.y * sin;
-    let ry = rel.y * cos + rel.x * sin;
-    let sx = rx + ry * skew.x;
-    let sy = ry + rx * skew.y;
-    let px = sx + (sy * perspective[0].x + sx * perspective[0].y);
-    let py = sy + (sx * perspective[1].x + sy * perspective[1].y);
-    center + egui::vec2(px, py)
+    
+    let px = rel_p.x * scale.x + p_offset.x + rel_p.y * scale.y * skew.x;
+    let py = rel_p.y * scale.y + p_offset.y + rel_p.x * scale.x * skew.y;
+    
+    center + egui::vec2(px * cos - py * sin, py * cos + px * sin)
 }
