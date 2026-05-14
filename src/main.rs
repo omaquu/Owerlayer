@@ -10,6 +10,7 @@ mod project;
 mod utils;
 mod capture_thread;
 mod gl_renderer;
+mod history;
 #[cfg(feature = "webengine")]
 mod web_engine;
 
@@ -63,6 +64,10 @@ struct OwerlayerApp {
     #[cfg(feature = "webengine")]
     web_engine_initialized: bool,
     gl_renderer: Option<Arc<gl_renderer::GLRenderer>>,
+    history: history::History,
+    show_history_panel: bool,
+    request_history_push: Option<String>,
+    layer_prompt_open: bool,
 }
 
 impl OwerlayerApp {
@@ -116,6 +121,10 @@ impl OwerlayerApp {
                 }
             },
             capture_thread: capture_thread::CaptureThread::new(15.0),
+            history: history::History::new(),
+            show_history_panel: false,
+            request_history_push: None,
+            layer_prompt_open: false,
             #[cfg(feature = "webengine")]
             web_widgets: Vec::new(),
             #[cfg(feature = "webengine")]
@@ -432,6 +441,7 @@ impl eframe::App for OwerlayerApp {
                         if let Some(layer) = self.project.get_active_layer_mut() {
                             layer.text_annotations.push(TextAnnotation::new(pending.position, pending.buffer, self.settings.pen_color, self.settings.font_size));
                         }
+                        self.history.push(&self.project, "Text");
                     }
                 }
                 if !self.current_stroke.is_empty() {
@@ -450,6 +460,7 @@ impl eframe::App for OwerlayerApp {
                         );
                         layer.strokes.push(s);
                     }
+                    self.history.push(&self.project, "Brush Stroke");
                     self.current_stroke.clear();
                 }
                 self.line_start = None;
@@ -477,7 +488,8 @@ impl eframe::App for OwerlayerApp {
                         }
                     }
                 });
-                let finalize = ctx.input(|i| i.key_pressed(egui::Key::Enter));
+                let finalize = ctx.input(|i| i.key_pressed(egui::Key::Enter))
+                            || (ctx.input(|i| i.pointer.primary_pressed()) && !ctx.wants_pointer_input());
                 let cancel   = ctx.input(|i| i.key_pressed(egui::Key::Escape));
                 if finalize {
                     if let Some(p) = self.pending_text.take() {
@@ -492,20 +504,23 @@ impl eframe::App for OwerlayerApp {
                                 ann.wave_warp = self.settings.text_wave_warp;
                                 layer.text_annotations.push(ann);
                             }
+                            self.history.push(&self.project, "Text");
                         }
                     }
                 } else if cancel { self.pending_text = None; }
             }
+            // ── Undo / Redo ──
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
-                if let Some(layer) = self.project.get_active_layer_mut() {
-                    // Prevent out of bounds panics by strictly checking before popping
-                    if !layer.strokes.is_empty() {
-                        layer.strokes.pop();
-                    } else if !layer.text_annotations.is_empty() {
-                        layer.text_annotations.pop();
-                    } else if !layer.placed_images.is_empty() {
-                        layer.placed_images.pop();
-                    }
+                if let Some(snap) = self.history.undo() {
+                    let snap = snap.clone();
+                    self.project = snap;
+                    self.project.selected_object = None;
+                }
+            }
+            if ctx.input(|i| i.modifiers.ctrl && (i.key_pressed(egui::Key::Y) || (i.modifiers.shift && i.key_pressed(egui::Key::Z)))) {
+                if let Some(snap) = self.history.redo() {
+                    let snap = snap.clone();
+                    self.project = snap;
                     self.project.selected_object = None;
                 }
             }
@@ -524,7 +539,7 @@ impl eframe::App for OwerlayerApp {
         if show_ui {
             overlay::render_mode_indicator(ctx, self.edit_mode, self.settings.hotkey.display_name(), self.settings.toggle_mode, &self.settings, &self.owl_icon);
             let mut embed_trigger = false;
-            render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger);
+            render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger, &mut self.show_history_panel, &mut self.request_history_push);
             if embed_trigger { self.handle_embed_trigger(); }
             
             render_filter_menu(ctx, &mut self.project, &self.settings, &mut self.filters_open);
@@ -565,6 +580,56 @@ impl eframe::App for OwerlayerApp {
             }
             if self.show_layers_panel && self.edit_mode {
                 render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.active_tool, &mut self.show_layers_panel, &mut self.filters_open);
+            }
+            if self.show_history_panel && self.edit_mode {
+                if let Some(snap) = ui::history_menu::render_history_window(ctx, &mut self.history, &mut self.show_history_panel, &self.settings) {
+                    self.project = snap;
+                    self.project.selected_object = None;
+                }
+            }
+
+            if self.layer_prompt_open && self.edit_mode {
+                let mut close_prompt = false;
+                egui::Window::new("New Tool Selected")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .frame(photoshop_frame(&self.settings))
+                    .show(ctx, |ui| {
+                        ui.label("You selected a new tool. Create a new layer for this object?");
+                        ui.horizontal(|ui| {
+                            let mut remember = self.settings.auto_new_layer.is_some();
+                            if ui.checkbox(&mut remember, "Remember my choice").changed() {
+                                if !remember {
+                                    self.settings.auto_new_layer = None;
+                                }
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Create New Layer").clicked() {
+                                if self.settings.auto_new_layer.is_some() || ui.input(|i| i.modifiers.shift) {
+                                    self.settings.auto_new_layer = Some(true);
+                                } else {
+                                    self.settings.auto_new_layer = Some(true); // Temp apply
+                                }
+                                self.project.layers.push(crate::project::Layer::new(self.active_tool.name()));
+                                self.project.active_layer = self.project.layers.len() - 1;
+                                close_prompt = true;
+                            }
+                            if ui.button("Use Current Layer").clicked() {
+                                if self.settings.auto_new_layer.is_some() || ui.input(|i| i.modifiers.shift) {
+                                    self.settings.auto_new_layer = Some(false);
+                                } else {
+                                    self.settings.auto_new_layer = Some(false); // Temp apply
+                                }
+                                close_prompt = true;
+                            }
+                        });
+                    });
+                if close_prompt {
+                    self.layer_prompt_open = false;
+                }
             }
         }
 
@@ -626,6 +691,9 @@ impl eframe::App for OwerlayerApp {
                 }
             }
 
+                // ── Count placed images before canvas update (for Snip detection) ──
+                let img_count_before: usize = self.project.layers.iter().map(|l| l.placed_images.len()).sum();
+
                 overlay::render_canvas(
                     ui,
                     &mut self.active_tool,
@@ -641,6 +709,8 @@ impl eframe::App for OwerlayerApp {
                     &mut self.pending_text,
                     &mut self.last_tool_used,
                     self.edit_mode,
+                    &mut self.layer_prompt_open,
+                    &mut self.request_history_push,
                     &mouse,
                     can_draw,
                     &mut self.embed_trigger,
@@ -648,6 +718,21 @@ impl eframe::App for OwerlayerApp {
                     &self.capture_thread,
                     self.gl_renderer.clone(),
                 );
+
+                // ── Push history if requested ──
+                if let Some(action) = self.request_history_push.take() {
+                    self.history.push(&self.project, action);
+                }
+                
+                // Snip creates a new placed image — detect and push.
+                let img_count_after: usize = self.project.layers.iter().map(|l| l.placed_images.len()).sum();
+                if self.edit_mode && img_count_after > img_count_before {
+                    match self.active_tool {
+                        overlay::Tool::Snip   => self.history.push(&self.project, "Snip"),
+                        overlay::Tool::Embed  => self.history.push(&self.project, "Embed"),
+                        _ => self.history.push(&self.project, "Add Image"),
+                    }
+                }
             });
         // ---- 6b. Update web widgets (Ultralight) ----
         #[cfg(feature = "webengine")]

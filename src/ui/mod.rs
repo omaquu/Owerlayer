@@ -3,3 +3,4 @@ pub mod settings_menu;
 pub mod layer_menu;
 pub mod filter_menu;
 pub mod object_fx;
+pub mod history_menu;

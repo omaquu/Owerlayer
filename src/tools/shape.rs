@@ -34,6 +34,7 @@ pub fn update(ctx: &mut ToolContext) {
                         let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false);
                         layer.strokes.push(s);
                         current_stroke.clear();
+                        *ctx.request_history_push = Some("Shape".into());
                     }
                 } else {
                     if left_just_pressed { 
@@ -51,6 +52,7 @@ pub fn update(ctx: &mut ToolContext) {
                             };
                             let s = Stroke::new(vec![start, pos], settings.pen_color, settings.stroke_width, kind, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false);
                             layer.strokes.push(s);
+                            *ctx.request_history_push = Some("Shape".into());
                         }
                     }
                 }

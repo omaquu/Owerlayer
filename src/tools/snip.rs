@@ -388,6 +388,7 @@ pub fn update(ctx: &mut ToolContext) {
                     project.layers.last_mut().unwrap().placed_images.push(snip);
                 }
                 *snip_created = false;
+                *ctx.request_history_push = Some("Snip".into());
             }
 }
 

@@ -79,6 +79,8 @@ pub fn render_canvas(
     pending_text: &mut Option<PendingText>,
     last_tool_used: &mut Option<Tool>,
     edit_mode: bool,
+    layer_prompt_open: &mut bool,
+    request_history_push: &mut Option<String>,
     mouse: &MouseState,
     can_draw: bool,
     _embed_trigger: &mut bool,
@@ -522,6 +524,8 @@ pub fn render_canvas(
         drag_state,
         dragging_source_rect,
         edit_mode,
+        layer_prompt_open,
+        request_history_push,
     };
 
     // ── Live preview ──

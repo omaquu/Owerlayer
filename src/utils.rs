@@ -164,7 +164,9 @@ pub fn layer_bounds(layer: &crate::project::Layer) -> Option<egui::Rect> {
     for i in 0..layer.text_annotations.len() {
         if let Some(b) = object_bounds(layer, ObjectType::Text, i) { extend(b); }
     }
-    rect
+    
+    // If empty, return a default reasonable rect to allow selection
+    rect.or_else(|| Some(egui::Rect::from_center_size(egui::pos2(500.0, 500.0), egui::vec2(200.0, 150.0))))
 }
 
 pub fn object_bounds(layer: &crate::project::Layer, obj_type: ObjectType, obj_idx: usize) -> Option<egui::Rect> {
@@ -297,6 +299,12 @@ pub fn skew_layer(layer: &mut crate::project::Layer, center: egui::Pos2, skew_de
         s.skew += skew_delta;
     }
     for ann in &mut layer.text_annotations { ann.position = skew_p(ann.position); ann.skew += skew_delta; }
+}
+
+pub fn perspective_layer(layer: &mut crate::project::Layer, p_idx: usize, delta: egui::Vec2) {
+    for img in &mut layer.placed_images { img.perspective[p_idx] += delta; }
+    for s in &mut layer.strokes { s.perspective[p_idx] += delta; }
+    for ann in &mut layer.text_annotations { ann.perspective[p_idx] += delta; }
 }
 
 pub fn transform_mesh(mesh: &mut egui::Mesh, center: egui::Pos2, rotation: f32, skew: egui::Vec2, perspective: [egui::Vec2; 4], scale: egui::Vec2) {

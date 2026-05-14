@@ -67,6 +67,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     object_idx: layer.placed_images.len() - 1,
                                 });
                                 *switch_to_move = true;
+                                *ctx.request_history_push = Some("Mirror".into());
                             }
                         }
                     }
@@ -107,6 +108,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     object_idx: layer.placed_images.len() - 1,
                                 });
                                 *switch_to_move = true;
+                                *ctx.request_history_push = Some("Mirror".into());
                             }
                         }
                     }
@@ -147,6 +149,7 @@ pub fn update(ctx: &mut ToolContext) {
                                             object_idx: layer.placed_images.len() - 1,
                                         });
                                         *switch_to_move = true;
+                                        *ctx.request_history_push = Some("Mirror".into());
                                     }
                                     current_stroke.clear();
                                 } else {
@@ -194,6 +197,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 object_idx: layer.placed_images.len() - 1,
                             });
                             *switch_to_move = true;
+                            *ctx.request_history_push = Some("Mirror".into());
                         }
                         current_stroke.clear();
                     }
@@ -227,6 +231,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     object_idx: layer.placed_images.len() - 1,
                                 });
                                 *switch_to_move = true;
+                                *ctx.request_history_push = Some("Mirror".into());
                             }
                         }
                     }

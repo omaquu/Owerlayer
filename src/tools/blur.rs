@@ -41,6 +41,7 @@ pub fn update(ctx: &mut ToolContext) {
                         img.blur = settings.blur_strength;
                         img.blur_effect = settings.blur_effect;
                         target_layer.placed_images.push(img);
+                        *ctx.request_history_push = Some("Blur".into());
                     }
                 }
             }

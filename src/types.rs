@@ -547,6 +547,12 @@ pub struct Settings {
     pub is_vertical: bool,
     #[serde(skip)]
     pub fx_open: Option<SelectedObject>,
+    #[serde(default = "default_toolbar_pos")]
+    pub toolbar_pos: egui::Pos2,
+    #[serde(default = "default_layer_menu_pos")]
+    pub layer_menu_pos: egui::Pos2,
+    #[serde(default)]
+    pub auto_new_layer: Option<bool>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -560,6 +566,8 @@ fn default_blur_strength() -> f32 { 10.0 }
 fn default_capture_fps() -> f32 { 15.0 }
 fn default_fso_fix() -> bool { true }
 fn default_polygon_sides() -> u32 { 5 }
+fn default_toolbar_pos() -> egui::Pos2 { egui::pos2(40.0, 60.0) }
+fn default_layer_menu_pos() -> egui::Pos2 { egui::pos2(200.0, 60.0) }
 
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
@@ -637,6 +645,9 @@ impl Default for Settings {
             is_vertical: false,
             brush_arrow: false,
             fx_open: None,
+            toolbar_pos: default_toolbar_pos(),
+            layer_menu_pos: default_layer_menu_pos(),
+            auto_new_layer: None,
         }
     }
 }

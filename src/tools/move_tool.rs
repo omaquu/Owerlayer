@@ -45,7 +45,7 @@ pub fn update(ctx: &mut ToolContext) {
                     if let Some(raw_bounds) = raw_bounds_opt {
                         // bounds = translated for drawing; raw_bounds = for hit-testing with pos
                         let bounds = raw_bounds.translate(-render_offset);
-                        let draw_corners = [
+                        let _draw_corners = [
                             bounds.left_top(), bounds.right_top(),
                             bounds.left_bottom(), bounds.right_bottom(),
                         ];
@@ -121,10 +121,10 @@ pub fn update(ctx: &mut ToolContext) {
                 painter.rect_stroke(bounds, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Middle);
                 
                 // --- Transformation Buttons ---
-                let mut sel_is_blur = false;
+                let mut _sel_is_blur = false;
                 let mut sel_is_embed = false;
                 if let Some(sel) = project.selected_object {
-                    sel_is_blur = sel.object_type == ObjectType::Image
+                    _sel_is_blur = sel.object_type == ObjectType::Image
                         && sel.object_idx < layer.placed_images.len()
                         && (layer.placed_images[sel.object_idx].name == "Blur" || layer.placed_images[sel.object_idx].blur > 0.0);
                     sel_is_embed = sel.object_type == ObjectType::Image
@@ -391,15 +391,36 @@ pub fn update(ctx: &mut ToolContext) {
                             if *drag_state == 1 {
                                 // Rotation
                                 let center = initial_center.unwrap();
-                                let angle = (pos - center).angle() - (start - center).angle();
-                                rotate_layer(layer, center, angle);
+                                let mut angle = (pos - center).angle() - (start - center).angle();
+                                
+                                // Snap to 15 degree increments if Shift is held
+                                if ui.ctx().input(|i| i.modifiers.shift) {
+                                    let step = 15.0f32.to_radians();
+                                    angle = (angle / step).round() * step;
+                                }
+
+                                if let Some(sel) = project.selected_object {
+                                    match sel.object_type {
+                                        ObjectType::Image => { layer.placed_images[sel.object_idx].rotation += angle; }
+                                        ObjectType::Stroke => { layer.strokes[sel.object_idx].rotation += angle; }
+                                        ObjectType::Text => { layer.text_annotations[sel.object_idx].rotation += angle; }
+                                    }
+                                } else {
+                                    rotate_layer(layer, center, angle);
+                                }
                             } else if *drag_state >= 20 {
                                 // Perspective
                                 let p_idx = *drag_state - 20;
                                 let delta = pos - start;
-                                for img in &mut layer.placed_images { img.perspective[p_idx] += delta; }
-                                for s in &mut layer.strokes { s.perspective[p_idx] += delta; }
-                                for ann in &mut layer.text_annotations { ann.perspective[p_idx] += delta; }
+                                if let Some(sel) = project.selected_object {
+                                    match sel.object_type {
+                                        ObjectType::Image => { layer.placed_images[sel.object_idx].perspective[p_idx] += delta; }
+                                        ObjectType::Stroke => { layer.strokes[sel.object_idx].perspective[p_idx] += delta; }
+                                        ObjectType::Text => { layer.text_annotations[sel.object_idx].perspective[p_idx] += delta; }
+                                    }
+                                } else {
+                                    crate::utils::perspective_layer(layer, p_idx, delta);
+                                }
                             } else if *drag_state >= 10 {
                                 // Resize
                                 let handle_idx = *drag_state - 10;
@@ -409,7 +430,31 @@ pub fn update(ctx: &mut ToolContext) {
                                 let old_vec = ic[handle_idx] - anchor;
                                 let new_vec = pos - anchor;
                                 if old_vec.x.abs() > 1.0 && old_vec.y.abs() > 1.0 {
-                                    scale_layer(layer, anchor, egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y));
+                                    let scale = egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y);
+                                    if let Some(sel) = project.selected_object {
+                                        match sel.object_type {
+                                            ObjectType::Image => {
+                                                let img = &mut layer.placed_images[sel.object_idx];
+                                                img.scale.x *= scale.x;
+                                                img.scale.y *= scale.y;
+                                                let mut ds = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32]);
+                                                ds[0] *= scale.x; ds[1] *= scale.y;
+                                                img.display_size = Some(ds);
+                                            }
+                                            ObjectType::Stroke => {
+                                                let s = &mut layer.strokes[sel.object_idx];
+                                                s.scale.x *= scale.x;
+                                                s.scale.y *= scale.y;
+                                            }
+                                            ObjectType::Text => {
+                                                let t = &mut layer.text_annotations[sel.object_idx];
+                                                t.scale.x *= scale.x;
+                                                t.scale.y *= scale.y;
+                                            }
+                                        }
+                                    } else {
+                                        scale_layer(layer, anchor, scale);
+                                    }
                                 }
                             } else if *drag_state >= 2 && *drag_state <= 5 {
                                 // Skew
@@ -421,9 +466,17 @@ pub fn update(ctx: &mut ToolContext) {
                                 } else { // Top or Bottom center -> Skew X
                                     skew_delta.x = -delta.x * 0.01;
                                 }
-                                skew_layer(layer, initial_center.unwrap(), skew_delta);
+                                if let Some(sel) = project.selected_object {
+                                    match sel.object_type {
+                                        ObjectType::Image => { layer.placed_images[sel.object_idx].skew += skew_delta; }
+                                        ObjectType::Stroke => { layer.strokes[sel.object_idx].skew += skew_delta; }
+                                        ObjectType::Text => { layer.text_annotations[sel.object_idx].skew += skew_delta; }
+                                    }
+                                } else {
+                                    skew_layer(layer, initial_center.unwrap(), skew_delta);
+                                }
                             } else {
-                                // Translate without bounds clamping
+                                // Translate
                                 let delta = pos - start;
                                 if let Some(sel) = project.selected_object {
                                     match sel.object_type {
@@ -440,7 +493,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         ObjectType::Image => {
                                             if let Some(img) = layer.placed_images.get_mut(sel.object_idx) {
                                                 img.position += delta;
-                                        img.thumbnail_dirty = true;
+                                                img.thumbnail_dirty = true;
                                             }
                                         }
                                     }
@@ -571,6 +624,11 @@ pub fn update(ctx: &mut ToolContext) {
 
 
                 if left_just_released {
+                    if let Some(start) = *line_start {
+                        if (pos - start).length_sq() > 1.0 || *drag_state > 0 {
+                            *ctx.request_history_push = Some("Transform".into());
+                        }
+                    }
                     *line_start = None;
                     *initial_layer = None;
                     *dragging_source_rect = false;
@@ -624,14 +682,14 @@ pub fn render(ctx: &mut ToolContext) {
             painter.circle_stroke(rot_p, 5.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
 
             // 2. Perspective handles (corners, slightly offset)
-            let p_dist = 20.0;
-            let p_corners = [
+            let p_dist = 25.0;
+            let draw_p_corners = [
                 b.left_top() + egui::vec2(-p_dist, -p_dist),
                 b.right_top() + egui::vec2(p_dist, -p_dist),
                 b.left_bottom() + egui::vec2(-p_dist, p_dist),
                 b.right_bottom() + egui::vec2(p_dist, p_dist),
             ];
-            for pc in p_corners {
+            for pc in draw_p_corners {
                 painter.circle_filled(pc, 4.0, egui::Color32::from_rgb(50, 150, 255));
                 painter.circle_stroke(pc, 4.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
             }
@@ -650,12 +708,12 @@ pub fn render(ctx: &mut ToolContext) {
             }
 
             // 5. Delete button (X) at top right
-            let del_rect = egui::Rect::from_center_size(b.right_top() + egui::vec2(15.0, -15.0), egui::vec2(18.0, 18.0));
+            let del_rect_draw = egui::Rect::from_center_size(b.right_top() + egui::vec2(15.0, -15.0), egui::vec2(18.0, 18.0));
             let mouse_pos = ctx.mouse.pos;
-            let del_hover = del_rect.contains(mouse_pos);
-            painter.circle_filled(del_rect.center(), 9.0, if del_hover { egui::Color32::from_rgb(255, 50, 50) } else { egui::Color32::from_rgb(200, 0, 0) });
-            painter.line_segment([del_rect.left_top() + egui::vec2(5.0, 5.0), del_rect.right_bottom() - egui::vec2(5.0, 5.0)], egui::Stroke::new(2.0, egui::Color32::WHITE));
-            painter.line_segment([del_rect.right_top() + egui::vec2(-5.0, 5.0), del_rect.left_bottom() - egui::vec2(-5.0, -5.0)], egui::Stroke::new(2.0, egui::Color32::WHITE));
+            let del_hover = del_rect_draw.contains(mouse_pos);
+            painter.circle_filled(del_rect_draw.center(), 9.0, if del_hover { egui::Color32::from_rgb(255, 50, 50) } else { egui::Color32::from_rgb(200, 0, 0) });
+            painter.line_segment([del_rect_draw.left_top() + egui::vec2(5.0, 5.0), del_rect_draw.right_bottom() - egui::vec2(5.0, 5.0)], egui::Stroke::new(2.0, egui::Color32::WHITE));
+            painter.line_segment([del_rect_draw.right_top() + egui::vec2(-5.0, 5.0), del_rect_draw.left_bottom() + egui::vec2(5.0, -5.0)], egui::Stroke::new(2.0, egui::Color32::WHITE));
         }
     }
 }

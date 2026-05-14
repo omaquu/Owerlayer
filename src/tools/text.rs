@@ -28,13 +28,17 @@ pub fn update(ctx: &mut ToolContext) {
     let settings = &mut *ctx.settings;
     let mouse    = ctx.mouse;
     let pending_text    = &mut *ctx.pending_text;
-    let ui              = &mut *ctx.ui;
+    let _ui              = &mut *ctx.ui;
     let canvas_response = ctx.canvas_response;
     let pos      = mouse.pos;
     let left_just_pressed = mouse.left_just_pressed;
     let active_layer_idx  = project.active_layer;
 
-    let layer = &mut project.layers[active_layer_idx];
+    let layer = if let Some(l) = project.get_active_layer_mut() {
+        l
+    } else {
+        return;
+    };
 
     // ── Commit: pending_text is finalized in main.rs; we handle commit here only for
     //    consistency (main.rs takes care of Enter/Escape). Nothing else to do. ──

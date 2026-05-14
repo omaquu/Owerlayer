@@ -301,6 +301,8 @@ pub fn render_photoshop_panel(
     project: &mut crate::project::Project,
     embed_url: &mut String,
     embed_trigger: &mut bool,
+    show_history_panel: &mut bool,
+    request_history_push: &mut Option<String>,
 ) {
     let main_tools = vec![
         Tool::Move, Tool::Brush, Tool::Eraser, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur, Tool::Embed,
@@ -315,13 +317,13 @@ pub fn render_photoshop_panel(
         .resizable(false)
         .collapsible(false)
         .movable(true)
-        .default_pos(egui::pos2(40.0, 60.0))
+        .default_pos(settings.toolbar_pos)
         .pivot(egui::Align2::LEFT_TOP)
         .frame(frame);
     
     if is_vertical { win = win.min_width(160.0); }
     
-    win.show(ctx, |ui| {
+    let win_resp = win.show(ctx, |ui| {
         if is_vertical {
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
@@ -334,13 +336,14 @@ pub fn render_photoshop_panel(
                     }
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
+                    if ui.add(egui::Button::new("🕓").min_size(egui::vec2(28.0, 24.0))).on_hover_text("History").clicked() { *show_history_panel = !*show_history_panel; }
                     if ui.add(egui::Button::new("⚙").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Settings").clicked() { *show_settings_panel = !*show_settings_panel; }
                     if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::from_rgb(180, 50, 50))).min_size(egui::vec2(28.0, 24.0))).on_hover_text("Exit").clicked() { *show_exit_dialog = true; }
                 });
                 ui.add(egui::Separator::default().vertical());
                 ui.vertical(|ui| {
                     ui.set_width(120.0);
-                    render_tool_options(ui, active_tool, settings, project, true, embed_url, embed_trigger);
+                    render_tool_options(ui, active_tool, settings, project, true, embed_url, embed_trigger, request_history_push);
                 });
             });
         } else {
@@ -354,20 +357,30 @@ pub fn render_photoshop_panel(
                     }
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
+                    if ui.add(egui::Button::new("🕓").min_size(egui::vec2(28.0, 24.0))).on_hover_text("History").clicked() { *show_history_panel = !*show_history_panel; }
                     if ui.add(egui::Button::new("⚙").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Settings").clicked() { *show_settings_panel = !*show_settings_panel; }
                     if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::from_rgb(180, 50, 50))).min_size(egui::vec2(28.0, 24.0))).on_hover_text("Exit").clicked() { *show_exit_dialog = true; }
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.set_height(24.0);
-                    render_tool_options(ui, active_tool, settings, project, false, embed_url, embed_trigger);
+                    render_tool_options(ui, active_tool, settings, project, false, embed_url, embed_trigger, request_history_push);
                 });
             });
         }
     });
+
+    if let Some(resp) = win_resp {
+        if resp.response.dragged() {
+            let layer_id = resp.response.layer_id;
+            if let Some(rect) = ctx.memory(|m| m.area_rect(layer_id.id)) {
+                settings.toolbar_pos = rect.min;
+            }
+        }
+    }
 }
 
-pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, _is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool) {
+pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, _is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool, request_history_push: &mut Option<String>) {
     ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
     
     if !matches!(active_tool, Tool::Move | Tool::Mirror | Tool::Embed) {
@@ -520,6 +533,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         let layer = &mut project.layers[sel.layer_idx];
                         let b = crate::utils::object_bounds(layer, sel.object_type, sel.object_idx).unwrap_or(egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(1.0, 1.0)));
                         crate::utils::rotate_layer(layer, b.center(), std::f32::consts::PI / 2.0);
+                        *request_history_push = Some("Rotate".into());
                     }
                     if ui.button("↔").on_hover_text("Flip H").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
@@ -528,6 +542,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_h = !layer.strokes[sel.object_idx].flipped_h; }
                             ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_h = !layer.text_annotations[sel.object_idx].flipped_h; }
                         }
+                        *request_history_push = Some("Flip H".into());
                     }
                     if ui.button("↕").on_hover_text("Flip V").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
@@ -536,6 +551,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_v = !layer.strokes[sel.object_idx].flipped_v; }
                             ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_v = !layer.text_annotations[sel.object_idx].flipped_v; }
                         }
+                        *request_history_push = Some("Flip V".into());
                     }
                     ui.separator();
 
@@ -580,6 +596,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             ObjectType::Stroke => { let s = &mut layer.strokes[sel.object_idx]; s.rotation = 0.0; s.skew = egui::Vec2::ZERO; s.perspective = [egui::Vec2::ZERO; 4]; }
                             ObjectType::Text => { let t = &mut layer.text_annotations[sel.object_idx]; t.rotation = 0.0; t.skew = egui::Vec2::ZERO; t.perspective = [egui::Vec2::ZERO; 4]; }
                         }
+                        *request_history_push = Some("Reset Transforms".into());
                     }
                 } else {
                     ui.label("Active Layer:");
@@ -606,7 +623,6 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.selectable_value(&mut settings.mirror_mode, MirrorMode::Window, "Win");
             });
         }
-        _ => {}
     }
 }
 
@@ -621,7 +637,9 @@ pub fn render_toolbar(
     project: &mut crate::project::Project,
     embed_url: &mut String,
     embed_trigger: &mut bool,
+    show_history_panel: &mut bool,
+    request_history_push: &mut Option<String>,
 ) {
-    render_photoshop_panel(ctx, active_tool, settings, show_settings_panel, show_layers_panel, show_exit_dialog, project, embed_url, embed_trigger);
+    render_photoshop_panel(ctx, active_tool, settings, show_settings_panel, show_layers_panel, show_exit_dialog, project, embed_url, embed_trigger, show_history_panel, request_history_push);
 }
 

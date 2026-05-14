@@ -138,6 +138,10 @@ pub fn update(ctx: &mut ToolContext) {
                     }
                 }
 
+                if ctx.mouse.left_just_released {
+                    *ctx.request_history_push = Some("Erase".into());
+                }
+
                 // Visual cursor
                 let cursor_r = settings.pen_width.max(1.0);
                 let color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180);

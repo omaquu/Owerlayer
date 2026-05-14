@@ -78,6 +78,25 @@ pub fn render_settings_window(
             ui.add_space(6.0);
             ui.checkbox(&mut settings.keep_ui_visible, "Keep toolbar visible in pass-through");
             ui.checkbox(&mut settings.hide_edit_info, "Hide Edit Mode Info Text");
+            
+            ui.add_space(4.0);
+            let mut auto_new = settings.auto_new_layer.unwrap_or(true);
+            let mut prompt = settings.auto_new_layer.is_none();
+            ui.horizontal(|ui| {
+                ui.label("When switching tools:");
+                if ui.selectable_value(&mut prompt, true, "Prompt").clicked() {
+                    settings.auto_new_layer = None;
+                }
+                if ui.selectable_value(&mut prompt, false, "Remember").clicked() {
+                    settings.auto_new_layer = Some(auto_new);
+                }
+            });
+            if !prompt {
+                if ui.checkbox(&mut auto_new, "Auto-create new layer").changed() {
+                    settings.auto_new_layer = Some(auto_new);
+                }
+            }
+
             if settings.experimental_features {
                 ui.label("Warning: Web embeds may degrade performance.");
             }

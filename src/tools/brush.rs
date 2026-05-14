@@ -63,6 +63,7 @@ pub fn update(ctx: &mut ToolContext) {
                     let s = Stroke::new(current_stroke.clone(), settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow);
                     layer.strokes.push(s);
                     current_stroke.clear();
+                    *ctx.request_history_push = Some("Brush".into());
                 }
 
             // Visual cursor

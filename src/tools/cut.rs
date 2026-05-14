@@ -199,6 +199,7 @@ pub fn update(ctx: &mut ToolContext) {
                 };
                 layer.strokes.retain(|s| !s.points.iter().any(|&p| should_erase_point(p)));
                 layer.text_annotations.retain(|t| !should_erase_point(t.position));
+                *ctx.request_history_push = Some("Cut".into());
             }
 
 }
