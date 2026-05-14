@@ -134,30 +134,6 @@ impl Project {
                     return Some(p);
                 }
             }
-            // Fallback: find the most recently modified project
-            let projects_dir = proj_dirs.config_dir().join("projects");
-            if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-                let mut best: Option<(std::time::SystemTime, String)> = None;
-                for entry in entries.flatten() {
-                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                        let json = entry.path().join("project.json");
-                        if json.exists() {
-                            if let Ok(meta) = std::fs::metadata(&json) {
-                                if let Ok(modified) = meta.modified() {
-                                    if best.as_ref().map_or(true, |(t, _)| modified > *t) {
-                                        if let Ok(n) = entry.file_name().into_string() {
-                                            best = Some((modified, n));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if let Some((_, name)) = best {
-                    return Self::load(&name);
-                }
-            }
         }
         None
     }
