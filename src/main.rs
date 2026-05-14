@@ -780,6 +780,11 @@ impl eframe::App for OwerlayerApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
+
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        self.project.save();
+        self.settings.save();
+    }
 }
 
 fn main() -> eframe::Result<()> {
