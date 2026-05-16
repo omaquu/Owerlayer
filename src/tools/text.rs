@@ -155,12 +155,16 @@ pub fn draw_layer_text(
                     // Apply relative transform
                     for v in &mut mesh.vertices {
                         v.pos -= center.to_vec2();
-                        if ann.flipped_h { v.pos.x = -v.pos.x; }
-                        if ann.flipped_v { v.pos.y = -v.pos.y; }
                     }
                     
                     // Apply transform_mesh for rotation/skew/perspective/scale
-                    transform_mesh(&mut mesh, center, ann.rotation, ann.skew, ann.perspective, ann.scale);
+                    let mut final_scale = ann.scale;
+                    if ann.flipped_h { final_scale.x *= -1.0; }
+                    if ann.flipped_v { final_scale.y *= -1.0; }
+                    transform_mesh(&mut mesh, center, ann.rotation, ann.skew, ann.perspective, final_scale);
+                    
+                    // Apply Filters
+                    apply_mesh_filters(&mut mesh, ann.grayscale || layer.grayscale, ann.invert || layer.invert, ann.sepia || layer.sepia);
                     
                     // Apply render offset
                     for v in &mut mesh.vertices {

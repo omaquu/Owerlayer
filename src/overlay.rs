@@ -172,6 +172,7 @@ pub fn render_canvas(
         // Placed Images
         // Shadows for images
         for img in layer.placed_images.iter() {
+            if !img.visible { continue; }
             if img.shadow || settings.snip_shadow {
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
@@ -181,6 +182,7 @@ pub fn render_canvas(
         }
 
         for img in layer.placed_images.iter_mut() {
+            if !img.visible { continue; }
             if img.is_live {
                 let ppp = ui.ctx().pixels_per_point();
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
@@ -214,7 +216,7 @@ pub fn render_canvas(
                     )
                 } else {
                     let mut dummy_mesh = egui::Mesh::default();
-                    dummy_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(-disp_w*0.5, -disp_h*0.5), egui::vec2(disp_w, disp_h)), egui::Rect::from_min_max(egui::pos2(0.0,0.0), egui::pos2(1.0,1.0)), egui::Color32::WHITE);
+                    dummy_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), egui::Rect::from_min_max(egui::pos2(0.0,0.0), egui::pos2(1.0,1.0)), egui::Color32::WHITE);
                     transform_mesh(&mut dummy_mesh, center, img.rotation, img.skew, img.perspective, img.scale);
                     let mut min = egui::pos2(f32::MAX, f32::MAX);
                     let mut max = egui::pos2(f32::MIN, f32::MIN);
@@ -347,28 +349,30 @@ pub fn render_canvas(
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
                 let center = (img.position - render_offset) + egui::vec2(disp_w * 0.5, disp_h * 0.5);
 
-                let mut uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                if img.flipped_h { std::mem::swap(&mut uv.min.x, &mut uv.max.x); }
-                if img.flipped_v { std::mem::swap(&mut uv.min.y, &mut uv.max.y); }
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+
+                let mut final_scale = img.scale;
+                if img.flipped_h { final_scale.x *= -1.0; }
+                if img.flipped_v { final_scale.y *= -1.0; }
 
                 if layer.shadow || img.shadow {
                     let mut s_mesh = egui::Mesh::with_texture(tex.id());
-                    s_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(-disp_w*0.5, -disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, egui::Color32::from_black_alpha((100.0 * l_op) as u8));
-                    transform_mesh(&mut s_mesh, center + egui::vec2(3.0, 3.0), img.rotation, img.skew, img.perspective, img.scale);
+                    s_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, egui::Color32::from_black_alpha((100.0 * l_op) as u8));
+                    transform_mesh(&mut s_mesh, center + egui::vec2(3.0, 3.0), img.rotation, img.skew, img.perspective, final_scale);
                     painter.add(egui::Shape::mesh(s_mesh));
                 }
 
                 if layer.outline || img.outline {
                     let mut o_mesh = egui::Mesh::with_texture(tex.id());
-                    o_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(-disp_w*0.5-1.5, -disp_h*0.5-1.5), egui::vec2(disp_w+3.0, disp_h+3.0)), uv, egui::Color32::from_white_alpha((200.0 * l_op) as u8));
-                    transform_mesh(&mut o_mesh, center, img.rotation, img.skew, img.perspective, img.scale);
+                    o_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5 - 1.5, center.y - disp_h*0.5 - 1.5), egui::vec2(disp_w+3.0, disp_h+3.0)), uv, egui::Color32::from_white_alpha((200.0 * l_op) as u8));
+                    transform_mesh(&mut o_mesh, center, img.rotation, img.skew, img.perspective, final_scale);
                     painter.add(egui::Shape::mesh(o_mesh));
                 }
 
                 let mut mesh = egui::Mesh::with_texture(tex.id());
                 let color = egui::Color32::from_white_alpha((255.0 * l_op * img.opacity) as u8);
-                mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(-disp_w*0.5, -disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, color);
-                transform_mesh(&mut mesh, center, img.rotation, img.skew, img.perspective, img.scale);
+                mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, color);
+                transform_mesh(&mut mesh, center, img.rotation, img.skew, img.perspective, final_scale);
 
                 // Fix: sample whole texture UVs correctly for live images
                 if img.is_live && img.source_rect.is_none() {
@@ -411,6 +415,12 @@ pub fn render_canvas(
                     }
 
                     let paint_rect = mesh.calc_bounds();
+                    let effect = img.blur_effect as i32;
+                    let strength = img.blur;
+                    let grayscale = img.grayscale;
+                    let invert = img.invert;
+                    let sepia = img.sepia;
+
                     painter.add(egui::PaintCallback {
                         rect: paint_rect,
                         callback: Arc::new(egui_glow::CallbackFn::new(move |_info, render_ctx: &egui_glow::Painter| {
@@ -431,7 +441,7 @@ pub fn render_canvas(
                                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(renderer.vertex_buffer));
                                 gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&vertices), glow::DYNAMIC_DRAW);
 
-                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time);
+                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia);
                             }
                         })),
                     });

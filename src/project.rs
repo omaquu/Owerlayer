@@ -25,6 +25,20 @@ pub struct Layer {
     pub outline_color: [u8; 4],
     #[serde(default)]
     pub expanded: bool,
+    #[serde(default)]
+    pub grayscale: bool,
+    #[serde(default)]
+    pub invert: bool,
+    #[serde(default)]
+    pub sepia: bool,
+    #[serde(default)]
+    pub glow: bool,
+    #[serde(default)]
+    pub glow_strength: f32,
+    #[serde(default)]
+    pub blur: f32,
+    #[serde(default)]
+    pub blur_effect: crate::types::BlurEffect,
 }
 
 fn default_shadow_offset() -> [f32; 2] { [2.0, 2.0] }
@@ -50,6 +64,13 @@ impl Layer {
             outline_width: 1.0,
             outline_color: [255, 255, 255, 255],
             expanded: false,
+            grayscale: false,
+            invert: false,
+            sepia: false,
+            glow: false,
+            glow_strength: 0.0,
+            blur: 0.0,
+            blur_effect: crate::types::BlurEffect::Gaussian,
         }
     }
 }
@@ -174,4 +195,10 @@ impl Project {
         None
     }
 
+    pub fn delete(name: &str) {
+        let dir = Self::project_dir(name);
+        if dir.exists() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
 }

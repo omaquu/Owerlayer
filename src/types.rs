@@ -109,6 +109,20 @@ pub struct Stroke {
     #[serde(default)]
     pub background_color: Option<[u8; 4]>,
     #[serde(default)]
+    pub grayscale: bool,
+    #[serde(default)]
+    pub invert: bool,
+    #[serde(default)]
+    pub sepia: bool,
+    #[serde(default)]
+    pub glow: bool,
+    #[serde(default)]
+    pub glow_strength: f32,
+    #[serde(default)]
+    pub blur: f32,
+    #[serde(default)]
+    pub blur_effect: crate::types::BlurEffect,
+    #[serde(default)]
     pub shadow: bool,
     #[serde(default)]
     pub rotation: f32,
@@ -188,6 +202,13 @@ impl Stroke {
             shadow_color: [0, 0, 0, 0],
             shadow_offset: [0.0, 0.0],
             shadow_blur: 0.0,
+            grayscale: false,
+            invert: false,
+            sepia: false,
+            glow: false,
+            glow_strength: 0.0,
+            blur: 0.0,
+            blur_effect: BlurEffect::Gaussian,
         }
     }
 }
@@ -230,6 +251,20 @@ pub struct TextAnnotation {
     pub wave_warp: bool,
     #[serde(default)]
     pub exact_size: [f32; 2],
+    #[serde(default)]
+    pub grayscale: bool,
+    #[serde(default)]
+    pub invert: bool,
+    #[serde(default)]
+    pub sepia: bool,
+    #[serde(default)]
+    pub glow: bool,
+    #[serde(default)]
+    pub glow_strength: f32,
+    #[serde(default)]
+    pub blur: f32,
+    #[serde(default)]
+    pub blur_effect: crate::overlay::BlurEffect,
 }
 
 impl TextAnnotation {
@@ -248,6 +283,13 @@ impl TextAnnotation {
             opacity: 1.0,
             wave_warp: false,
             exact_size: [0.0, 0.0],
+            grayscale: false,
+            invert: false,
+            sepia: false,
+            glow: false,
+            glow_strength: 0.0,
+            blur: 0.0,
+            blur_effect: crate::overlay::BlurEffect::Gaussian,
         }
     }
 }
@@ -291,6 +333,16 @@ pub struct PlacedImage {
     pub blur: f32,
     #[serde(default)]
     pub blur_effect: BlurEffect,
+    #[serde(default)]
+    pub grayscale: bool,
+    #[serde(default)]
+    pub invert: bool,
+    #[serde(default)]
+    pub sepia: bool,
+    #[serde(default)]
+    pub glow: bool,
+    #[serde(default)]
+    pub glow_strength: f32,
     #[serde(skip)]
     pub mask: Option<Vec<u8>>,
     #[serde(skip)]
@@ -360,6 +412,11 @@ impl Clone for PlacedImage {
             thumbnail_texture: None,
             thumbnail_dirty: self.thumbnail_dirty,
             mask_dirty: self.mask_dirty,
+            grayscale: self.grayscale,
+            invert: self.invert,
+            sepia: self.sepia,
+            glow: self.glow,
+            glow_strength: self.glow_strength,
         }
     }
 }
@@ -398,6 +455,11 @@ impl PlacedImage {
             thumbnail_texture: None,
             thumbnail_dirty: true,
             mask_dirty: false,
+            grayscale: false,
+            invert: false,
+            sepia: false,
+            glow: false,
+            glow_strength: 0.0,
         }
     }
 }

@@ -359,3 +359,28 @@ pub fn transform_point_complex(p: egui::Pos2, center: egui::Pos2, rotation: f32,
     
     center + egui::vec2(px * cos - py * sin, py * cos + px * sin)
 }
+
+pub fn apply_mesh_filters(mesh: &mut egui::Mesh, grayscale: bool, invert: bool, sepia: bool) {
+    if !grayscale && !invert && !sepia { return; }
+    for v in &mut mesh.vertices {
+        let mut r = v.color.r() as f32 / 255.0;
+        let mut g = v.color.g() as f32 / 255.0;
+        let mut b = v.color.b() as f32 / 255.0;
+        let a = v.color.a();
+
+        if grayscale {
+            let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            r = gray; g = gray; b = gray;
+        }
+        if invert {
+            r = 1.0 - r; g = 1.0 - g; b = 1.0 - b;
+        }
+        if sepia {
+            let tr = (r * 0.393) + (g * 0.769) + (b * 0.189);
+            let tg = (r * 0.349) + (g * 0.686) + (b * 0.168);
+            let tb = (r * 0.272) + (g * 0.534) + (b * 0.131);
+            r = tr.min(1.0); g = tg.min(1.0); b = tb.min(1.0);
+        }
+        v.color = egui::Color32::from_rgba_unmultiplied((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, a);
+    }
+}

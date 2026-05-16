@@ -29,10 +29,16 @@ impl GLRenderer {
                 uniform sampler2D u_sampler;
                 uniform sampler2D u_mask;
                 uniform bool u_has_mask;
-                uniform int u_effect; // 0: None, 1: Blur, 2: Pixelate, 3: VHS
+                uniform int u_effect; // 0: None, 1: Blur, 2: Pixelate, 3: VHS, 4: Grayscale, 5: Invert, 6: Sepia
                 uniform float u_strength;
                 uniform vec2 u_resolution;
                 uniform float u_time;
+                
+                // Extra filter toggles
+                uniform bool u_grayscale;
+                uniform bool u_invert;
+                uniform bool u_sepia;
+
                 in vec2 v_uv;
                 out vec4 f_color;
 
@@ -41,36 +47,55 @@ impl GLRenderer {
                 }
 
                 void main() {
+                    vec2 uv = v_uv;
+                    vec4 color = vec4(0.0);
+
                     if (u_effect == 1) { // Blur (Box blur approximation)
                         vec2 tex_offset = 1.0 / u_resolution * u_strength;
-                        vec4 result = vec4(0.0);
-                        int samples = 3;
+                        int samples = 2;
                         for(int x = -samples; x <= samples; x++) {
                             for(int y = -samples; y <= samples; y++) {
-                                result += texture(u_sampler, v_uv + vec2(x, y) * tex_offset);
+                                color += texture(u_sampler, uv + vec2(x, y) * tex_offset);
                             }
                         }
-                        f_color = result / pow(float(samples * 2 + 1), 2.0);
+                        color /= pow(float(samples * 2 + 1), 2.0);
                     } else if (u_effect == 2) { // Pixelate
                         float pixel_size = max(1.0, u_strength);
-                        vec2 p = v_uv * u_resolution;
+                        vec2 p = uv * u_resolution;
                         p = floor(p / pixel_size) * pixel_size;
-                        f_color = texture(u_sampler, p / u_resolution);
+                        color = texture(u_sampler, p / u_resolution);
                     } else if (u_effect == 3) { // VHS Glitch
-                        vec2 uv = v_uv;
-                        float strength = u_strength * 0.05;
+                        float strength = u_strength * 0.02;
                         float jitter = (rand(vec2(u_time, uv.y)) - 0.5) * strength;
-                        uv.x += jitter;
+                        vec2 jittered_uv = uv + vec2(jitter, 0.0);
                         
-                        float r = texture(u_sampler, uv + vec2(strength * 0.5, 0.0)).r;
-                        float g = texture(u_sampler, uv).g;
-                        float b = texture(u_sampler, uv - vec2(strength * 0.5, 0.0)).b;
+                        float r = texture(u_sampler, jittered_uv + vec2(strength * 0.5, 0.0)).r;
+                        float g = texture(u_sampler, jittered_uv).g;
+                        float b = texture(u_sampler, jittered_uv - vec2(strength * 0.5, 0.0)).b;
                         
-                        float scanline = sin(uv.y * u_resolution.y * 0.5) * 0.1;
-                        f_color = vec4(r - scanline, g - scanline, b - scanline, 1.0);
+                        float scanline = sin(uv.y * u_resolution.y * 0.8) * 0.05;
+                        color = vec4(r - scanline, g - scanline, b - scanline, texture(u_sampler, jittered_uv).a);
                     } else {
-                        f_color = texture(u_sampler, v_uv);
+                        color = texture(u_sampler, uv);
                     }
+
+                    // Apply secondary filters
+                    if (u_grayscale) {
+                        float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+                        color.rgb = vec3(gray);
+                    }
+                    if (u_invert) {
+                        color.rgb = 1.0 - color.rgb;
+                    }
+                    if (u_sepia) {
+                        color.rgb = vec3(
+                            dot(color.rgb, vec3(0.393, 0.769, 0.189)),
+                            dot(color.rgb, vec3(0.349, 0.686, 0.168)),
+                            dot(color.rgb, vec3(0.272, 0.534, 0.131))
+                        );
+                    }
+
+                    f_color = color;
 
                     if (u_has_mask) {
                         float m = texture(u_mask, v_uv).r;
@@ -166,6 +191,9 @@ impl GLRenderer {
         strength: f32,
         resolution: [f32; 2],
         time: f32,
+        grayscale: bool,
+        invert: bool,
+        sepia: bool,
     ) {
         unsafe {
             gl.use_program(Some(self.program));
@@ -195,6 +223,13 @@ impl GLRenderer {
             gl.uniform_1_f32(u_strength.as_ref(), strength);
             gl.uniform_2_f32(u_resolution.as_ref(), resolution[0], resolution[1]);
             gl.uniform_1_f32(u_time.as_ref(), time);
+
+            let u_gray = gl.get_uniform_location(self.program, "u_grayscale");
+            let u_inv = gl.get_uniform_location(self.program, "u_invert");
+            let u_sep = gl.get_uniform_location(self.program, "u_sepia");
+            gl.uniform_1_i32(u_gray.as_ref(), grayscale as i32);
+            gl.uniform_1_i32(u_inv.as_ref(), invert as i32);
+            gl.uniform_1_i32(u_sep.as_ref(), sepia as i32);
 
             gl.bind_vertex_array(Some(self.vertex_array));
             gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);

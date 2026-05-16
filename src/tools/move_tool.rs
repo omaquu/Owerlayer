@@ -43,15 +43,14 @@ pub fn update(ctx: &mut ToolContext) {
                     };
                     
                     if let Some(raw_bounds) = raw_bounds_opt {
-                        // bounds = translated for drawing; raw_bounds = for hit-testing with pos
                         let bounds = raw_bounds.translate(-render_offset);
                         let _draw_corners = [
                             bounds.left_top(), bounds.right_top(),
                             bounds.left_bottom(), bounds.right_bottom(),
                         ];
                         let hit_corners = [
-                            raw_bounds.left_top(), raw_bounds.right_top(),
-                            raw_bounds.left_bottom(), raw_bounds.right_bottom(),
+                            bounds.left_top(), bounds.right_top(),
+                            bounds.left_bottom(), bounds.right_bottom(),
                         ];
 
                         #[cfg(feature = "webengine")]
@@ -134,7 +133,7 @@ pub fn update(ctx: &mut ToolContext) {
 
                 // Use two rows: row 1 = URL bar (for embeds), row 2 = buttons
                 let bar_height = if sel_is_embed { 52.0 } else { 32.0 };
-                let top_btns_rect = egui::Rect::from_min_size(bounds.left_top() - egui::vec2(0.0, bar_height), egui::vec2(bounds.width().max(320.0), bar_height));
+                let top_btns_rect = egui::Rect::from_min_size(bounds.left_top() - egui::vec2(0.0, bar_height + 40.0), egui::vec2(bounds.width().max(320.0), bar_height));
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(top_btns_rect), |ui| {
                     ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_black_alpha(150);
 
@@ -178,17 +177,21 @@ pub fn update(ctx: &mut ToolContext) {
                         ui.separator();
 
                         // Flip buttons
-                        if ui.button("⬌").on_hover_text("Flip Horizontal").clicked() {
-                            let center = bounds.center().x;
-                            for img in &mut layer.placed_images { img.position.x = center - (img.position.x - center) - (img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0]); img.flipped_h = !img.flipped_h; }
-                            for ann in &mut layer.text_annotations { ann.position.x = center - (ann.position.x - center) - (ann.text.len() as f32 * ann.font_size * 0.6); }
-                            for s in &mut layer.strokes { for p in &mut s.points { p.x = center - (p.x - center); } }
-                        }
-                        if ui.button("⬍").on_hover_text("Flip Vertical").clicked() {
-                            let center = bounds.center().y;
-                            for img in &mut layer.placed_images { img.position.y = center - (img.position.y - center) - (img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1]); img.flipped_v = !img.flipped_v; }
-                            for ann in &mut layer.text_annotations { ann.position.y = center - (ann.position.y - center) - ann.font_size; }
-                            for s in &mut layer.strokes { for p in &mut s.points { p.y = center - (p.y - center); } }
+                        if let Some(sel) = project.selected_object {
+                            if ui.button("⬌").on_hover_text("Flip Horizontal").clicked() {
+                                match sel.object_type {
+                                    ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_h = !layer.placed_images[sel.object_idx].flipped_h; }
+                                    ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_h = !layer.strokes[sel.object_idx].flipped_h; }
+                                    ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_h = !layer.text_annotations[sel.object_idx].flipped_h; }
+                                }
+                            }
+                            if ui.button("⬍").on_hover_text("Flip Vertical").clicked() {
+                                match sel.object_type {
+                                    ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_v = !layer.placed_images[sel.object_idx].flipped_v; }
+                                    ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_v = !layer.strokes[sel.object_idx].flipped_v; }
+                                    ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_v = !layer.text_annotations[sel.object_idx].flipped_v; }
+                                }
+                            }
                         }
 
                         ui.separator();
@@ -255,22 +258,23 @@ pub fn update(ctx: &mut ToolContext) {
 
                 // Skew handles (hit-test only, visuals drawn in render())
                 let _draw_mids = [bounds.left_center(), bounds.right_center(), bounds.center_top(), bounds.center_bottom()];
-                let hit_mids = [raw_bounds.left_center(), raw_bounds.right_center(), raw_bounds.center_top(), raw_bounds.center_bottom()];
+                let hit_mids = [bounds.left_center(), bounds.right_center(), bounds.center_top(), bounds.center_bottom()];
 
                 // Perspective handles (hit-test only, visuals drawn in render())
                 let p_dist = 25.0;
                 let hit_p_corners = [
-                    raw_bounds.left_top() + egui::vec2(-p_dist, -p_dist),
-                    raw_bounds.right_top() + egui::vec2(p_dist, -p_dist),
-                    raw_bounds.left_bottom() + egui::vec2(-p_dist, p_dist),
-                    raw_bounds.right_bottom() + egui::vec2(p_dist, p_dist),
+                    bounds.left_top() + egui::vec2(-p_dist, -p_dist),
+                    bounds.right_top() + egui::vec2(p_dist, -p_dist),
+                    bounds.left_bottom() + egui::vec2(-p_dist, p_dist),
+                    bounds.right_bottom() + egui::vec2(p_dist, p_dist),
                 ];
                 
-                // Rotation handle
-                let hit_rot = raw_bounds.center_top() - egui::vec2(0.0, 25.0);
+                // Rotation handles
+                let hit_rot_top = bounds.center_top() - egui::vec2(0.0, 25.0);
+                let hit_rot_bot = bounds.center_bottom() + egui::vec2(0.0, 25.0);
                 
                 // Delete button
-                let del_rect = egui::Rect::from_center_size(raw_bounds.right_top() + egui::vec2(25.0, -25.0), egui::vec2(18.0, 18.0));
+                let del_rect = egui::Rect::from_center_size(bounds.right_top() + egui::vec2(25.0, -25.0), egui::vec2(18.0, 18.0));
                 if left_just_pressed && del_rect.contains(pos) {
                     if let Some(sel) = project.selected_object {
                         match sel.object_type {
@@ -287,7 +291,7 @@ pub fn update(ctx: &mut ToolContext) {
 
                 if left_just_pressed && !*dragging_source_rect {
                     let mut hit = false;
-                    if hit_rot.distance(pos) < 16.0 {
+                    if hit_rot_top.distance(pos) < 20.0 || hit_rot_bot.distance(pos) < 20.0 {
                         *line_start = Some(pos);
                         *drag_state = 1;
                         *initial_center = Some(raw_bounds.center());
@@ -328,8 +332,27 @@ pub fn update(ctx: &mut ToolContext) {
                             }
                         }
                     }
-                    if !hit && raw_bounds.contains(pos) {
+                    if !hit && bounds.contains(pos) {
                         // Click INSIDE body → move this object
+                        let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
+                        if is_double_click {
+                            if let Some(sel) = project.selected_object {
+                                if sel.object_type == ObjectType::Text && sel.object_idx < layer.text_annotations.len() {
+                                    let txt = layer.text_annotations.remove(sel.object_idx);
+                                    settings.pen_color      = txt.color;
+                                    settings.text_font      = txt.font;
+                                    settings.font_size      = txt.font_size;
+                                    settings.text_shadow    = txt.shadow;
+                                    settings.text_outline   = txt.outline;
+                                    settings.text_wave_warp = txt.wave_warp;
+                                    *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
+                                    *active_tool = crate::overlay::Tool::Text;
+                                    project.selected_object = None;
+                                    return;
+                                }
+                            }
+                        }
+
                         *line_start = Some(pos);
                         *drag_state = 0;
                         *initial_bounds = Some(raw_bounds);
@@ -344,6 +367,8 @@ pub fn update(ctx: &mut ToolContext) {
                 
                 if let Some(start) = *line_start {
                     if left_down {
+                        let world_pos = pos + render_offset;
+                        let world_start = start + render_offset;
                         if *dragging_source_rect {
                             // Dragging Mirror Source Rect
                             if let Some(sel) = project.selected_object {
@@ -375,7 +400,7 @@ pub fn update(ctx: &mut ToolContext) {
                             if *drag_state == 1 {
                                 // Rotation
                                 let center = initial_center.unwrap();
-                                let mut angle = (pos - center).angle() - (start - center).angle();
+                                let mut angle = (world_pos - center).angle() - (world_start - center).angle();
                                 
                                 // Snap to 15 degree increments if Shift is held
                                 if ui.ctx().input(|i| i.modifiers.shift) {
@@ -412,15 +437,13 @@ pub fn update(ctx: &mut ToolContext) {
                                 let ic = [ib.left_top(), ib.right_top(), ib.left_bottom(), ib.right_bottom()];
                                 let anchor = ic[3 - handle_idx];
                                 let old_vec = ic[handle_idx] - anchor;
-                                let new_vec = pos - anchor;
+                                let new_vec = world_pos - anchor;
                                 if old_vec.x.abs() > 1.0 && old_vec.y.abs() > 1.0 {
                                     let scale = egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y);
                                     if let Some(sel) = project.selected_object {
                                         match sel.object_type {
                                             ObjectType::Image => {
                                                 let img = &mut layer.placed_images[sel.object_idx];
-                                                img.scale.x *= scale.x;
-                                                img.scale.y *= scale.y;
                                                 let mut ds = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32]);
                                                 ds[0] *= scale.x; ds[1] *= scale.y;
                                                 img.display_size = Some(ds);
@@ -491,119 +514,6 @@ pub fn update(ctx: &mut ToolContext) {
                 
 
 
-                if left_just_pressed && !click_consumed {
-                    if ui.ctx().wants_pointer_input() { return; } 
-                    let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
-                    let mut found_objects = Vec::new();
-                    
-                    for (l_idx, l) in project.layers.iter().enumerate() {
-                        if !l.visible { continue; }
-                        
-                        // Hit test images
-                        for (img_idx, img) in l.placed_images.iter().enumerate() {
-                            let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                            let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                            let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
-                            if img_rect.contains(pos) {
-                                found_objects.push(SelectedObject {
-                                    layer_idx: l_idx, object_type: ObjectType::Image, object_idx: img_idx
-                                });
-                            }
-                        }
-                        
-                        // Hit test text
-                        for (txt_idx, txt) in l.text_annotations.iter().enumerate() {
-                            let txt_rect = egui::Rect::from_min_size(txt.position, egui::vec2(txt.text.len() as f32 * txt.font_size * 0.6, txt.font_size));
-                            if txt_rect.contains(pos) {
-                                found_objects.push(SelectedObject {
-                                    layer_idx: l_idx, object_type: ObjectType::Text, object_idx: txt_idx
-                                });
-                            }
-                        }
-
-                        // Hit test strokes
-                        for (s_idx, s) in l.strokes.iter().enumerate() {
-                            let hit = if s.points.len() < 2 {
-                                s.points.iter().any(|p| p.distance(pos) < s.width + 10.0)
-                            } else {
-                                let mut hit_line = false;
-                                for w in s.points.windows(2) {
-                                    let (p0, p1) = (w[0], w[1]);
-                                    let len_sq = p0.distance_sq(p1);
-                                    if len_sq > 0.0 {
-                                        let t = ((pos.x - p0.x) * (p1.x - p0.x) + (pos.y - p0.y) * (p1.y - p0.y)) / len_sq;
-                                        let t = t.clamp(0.0, 1.0);
-                                        let proj = p0 + (p1 - p0) * t;
-                                        if pos.distance(proj) < s.width * 0.5 + 5.0 {
-                                            hit_line = true; break;
-                                        }
-                                    }
-                                }
-                                hit_line
-                            };
-                            if hit {
-                                found_objects.push(SelectedObject {
-                                    layer_idx: l_idx, object_type: ObjectType::Stroke, object_idx: s_idx
-                                });
-                            }
-                        }
-                    }
-
-                    if found_objects.is_empty() {
-                        // Click empty space: ALWAYS deselect
-                        project.selected_object = None;
-                        if let Some(layer) = project.get_active_layer() {
-                            *line_start = Some(pos);
-                            *drag_state = 0;
-                            *initial_layer = Some(layer.clone());
-                        }
-                    } else if is_double_click {
-                        // Double click: Select object
-                        found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
-                        let top = found_objects[0];
-
-                        // If double-clicking text, enter edit mode
-                        if top.object_type == ObjectType::Text {
-                            let layer = &mut project.layers[top.layer_idx];
-                            let txt = layer.text_annotations.remove(top.object_idx);
-                            // Restore annotation settings into toolbar
-                            settings.pen_color      = txt.color;
-                            settings.text_font      = txt.font;
-                            settings.font_size      = txt.font_size;
-                            settings.text_shadow    = txt.shadow;
-                            settings.text_outline   = txt.outline;
-                            settings.text_wave_warp = txt.wave_warp;
-                            *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
-                            *active_tool = crate::overlay::Tool::Text;
-                            project.selected_object = None;
-                            return;
-                        }
-
-                        project.active_layer = top.layer_idx;
-                        project.selected_object = Some(top);
-
-                        // Also start dragging this object
-                        *line_start = Some(pos);
-                        *drag_state = 0;
-                        if let Some(layer) = project.get_active_layer() {
-                            *initial_bounds = crate::utils::object_bounds(layer, top.object_type, top.object_idx);
-                            *initial_layer = Some(layer.clone());
-                        }
-                    } else {
-                        // Single click on object: Select it!
-                        found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
-                        let top = found_objects[0];
-                        project.active_layer = top.layer_idx;
-                        project.selected_object = Some(top);
-                        
-                        *line_start = Some(pos);
-                        *drag_state = 0;
-                        if let Some(layer) = project.get_active_layer() {
-                            *initial_bounds = crate::utils::object_bounds(layer, top.object_type, top.object_idx);
-                            *initial_layer = Some(layer.clone());
-                        }
-                    }
-                }
 
 
 
@@ -629,8 +539,124 @@ pub fn update(ctx: &mut ToolContext) {
                         // Layer is empty, but we shouldn't automatically delete it here.
                     }
                 }
+                }
+            }
+
+    // Global click detection for unselected objects
+    if left_just_pressed && !click_consumed {
+        if ui.ctx().wants_pointer_input() { return; } 
+        let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
+        let world_pos = pos + render_offset;
+        let mut found_objects = Vec::new();
+        
+        for (l_idx, l) in project.layers.iter().enumerate() {
+            if !l.visible { continue; }
+            
+            // Hit test images
+            for (img_idx, _img) in l.placed_images.iter().enumerate() {
+                if let Some(rect) = crate::utils::object_bounds(l, ObjectType::Image, img_idx) {
+                    if rect.contains(world_pos) {
+                        found_objects.push(SelectedObject {
+                            layer_idx: l_idx, object_type: ObjectType::Image, object_idx: img_idx
+                        });
+                    }
+                }
+            }
+            
+            // Hit test text — use exact_size when available for accurate hit rect
+            for (txt_idx, _txt) in l.text_annotations.iter().enumerate() {
+                if let Some(rect) = crate::utils::object_bounds(l, ObjectType::Text, txt_idx) {
+                    if rect.contains(world_pos) {
+                        found_objects.push(SelectedObject {
+                            layer_idx: l_idx, object_type: ObjectType::Text, object_idx: txt_idx
+                        });
+                    }
+                }
+            }
+
+            // Hit test strokes
+            for (s_idx, s) in l.strokes.iter().enumerate() {
+                let hit = if s.points.len() < 2 {
+                    s.points.iter().any(|p| p.distance(world_pos) < s.width + 10.0)
+                } else {
+                    let mut hit_line = false;
+                    for w in s.points.windows(2) {
+                        let (p0, p1) = (w[0], w[1]);
+                        let len_sq = p0.distance_sq(p1);
+                        if len_sq > 0.0 {
+                            let t = ((world_pos.x - p0.x) * (p1.x - p0.x) + (world_pos.y - p0.y) * (p1.y - p0.y)) / len_sq;
+                            let t = t.clamp(0.0, 1.0);
+                            let proj = p0 + (p1 - p0) * t;
+                            if world_pos.distance(proj) < s.width * 0.5 + 5.0 {
+                                hit_line = true; break;
+                            }
+                        }
+                    }
+                    hit_line
+                };
+                if hit {
+                    found_objects.push(SelectedObject {
+                        layer_idx: l_idx, object_type: ObjectType::Stroke, object_idx: s_idx
+                    });
+                }
             }
         }
+
+        if found_objects.is_empty() {
+            // Click empty space: ALWAYS deselect
+            project.selected_object = None;
+            if let Some(layer) = project.get_active_layer() {
+                *line_start = Some(pos);
+                *drag_state = 0;
+                *initial_layer = Some(layer.clone());
+            }
+        } else if is_double_click {
+            // Double click on object: select and focus
+            found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
+            let top = found_objects[0];
+
+            // If double-clicking text, enter edit mode
+            if top.object_type == ObjectType::Text {
+                let layer = &mut project.layers[top.layer_idx];
+                let txt = layer.text_annotations.remove(top.object_idx);
+                // Restore annotation settings into toolbar
+                settings.pen_color      = txt.color;
+                settings.text_font      = txt.font;
+                settings.font_size      = txt.font_size;
+                settings.text_shadow    = txt.shadow;
+                settings.text_outline   = txt.outline;
+                settings.text_wave_warp = txt.wave_warp;
+                *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
+                *active_tool = crate::overlay::Tool::Text;
+                project.selected_object = None;
+                return;
+            }
+
+            project.active_layer = top.layer_idx;
+            project.selected_object = Some(top);
+
+            // Also start dragging this object
+            *line_start = Some(pos);
+            *drag_state = 0;
+            if let Some(layer) = project.get_active_layer() {
+                *initial_bounds = crate::utils::object_bounds(layer, top.object_type, top.object_idx);
+                *initial_layer = Some(layer.clone());
+            }
+        } else {
+            // Single click on object: Select it!
+            found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
+            let top = found_objects[0];
+            project.active_layer = top.layer_idx;
+            project.selected_object = Some(top);
+            
+            *line_start = Some(pos);
+            *drag_state = 0;
+            if let Some(layer) = project.get_active_layer() {
+                *initial_bounds = crate::utils::object_bounds(layer, top.object_type, top.object_idx);
+                *initial_layer = Some(layer.clone());
+            }
+        }
+    }
 }
 
 pub fn render(ctx: &mut ToolContext) {
@@ -665,11 +691,17 @@ pub fn render(ctx: &mut ToolContext) {
             // Draw main selection rect
             painter.rect_stroke(b, 0.0, egui::Stroke::new(1.5, color), egui::StrokeKind::Middle);
 
-            // 1. Rotation handle (top)
-            let rot_p = b.center_top() - egui::vec2(0.0, 25.0);
-            painter.line_segment([b.center_top(), rot_p], egui::Stroke::new(1.0, egui::Color32::GRAY));
-            painter.circle_filled(rot_p, 5.0, egui::Color32::from_rgb(255, 200, 50));
-            painter.circle_stroke(rot_p, 5.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+            // 1. Rotation handles
+            let rot_p_top = b.center_top() - egui::vec2(0.0, 25.0);
+            let rot_p_bot = b.center_bottom() + egui::vec2(0.0, 25.0);
+            
+            painter.line_segment([b.center_top(), rot_p_top], egui::Stroke::new(1.0, egui::Color32::GRAY));
+            painter.circle_filled(rot_p_top, 5.0, egui::Color32::from_rgb(255, 200, 50));
+            painter.circle_stroke(rot_p_top, 5.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+
+            painter.line_segment([b.center_bottom(), rot_p_bot], egui::Stroke::new(1.0, egui::Color32::GRAY));
+            painter.circle_filled(rot_p_bot, 5.0, egui::Color32::from_rgb(255, 200, 50));
+            painter.circle_stroke(rot_p_bot, 5.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
 
             // 2. Perspective handles (corners, slightly offset)
             let p_dist = 25.0;

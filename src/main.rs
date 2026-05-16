@@ -483,25 +483,32 @@ impl eframe::App for OwerlayerApp {
                 self.project.save();
             }
         }
-
         // ---- 4. Text keyboard input ----
         if self.edit_mode {
             if let Some(pending) = self.pending_text.as_mut() {
-                ctx.input(|i| {
-                    for event in &i.events {
-                        if let egui::Event::Text(t) = event {
-                            // Filter newlines — Enter is handled separately via key_pressed
-                            let filtered: String = t.chars().filter(|c| *c != '\n' && *c != '\r').collect();
-                            pending.buffer.push_str(&filtered);
-                        }
-                        if let egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } = event {
-                            pending.buffer.pop();
-                        }
-                    }
-                });
-                let finalize = ctx.input(|i| i.key_pressed(egui::Key::Enter))
-                            || (ctx.input(|i| i.pointer.primary_pressed()) && !ctx.wants_pointer_input());
-                let cancel   = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+                let mut finalize = false;
+                let mut cancel = false;
+
+                egui::Window::new("Edit Text")
+                    .collapsible(false)
+                    .resizable(false)
+                    .title_bar(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 40.0])
+                    .frame(photoshop_frame(&self.settings))
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("✏").color(egui::Color32::from_rgb(180, 180, 200)));
+                            let edit_resp = ui.add(egui::TextEdit::singleline(&mut pending.buffer).desired_width(350.0).hint_text("Type here, Enter to place, Esc to cancel"));
+                            edit_resp.request_focus();
+                            
+                            if edit_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                finalize = true;
+                            }
+                        });
+                    });
+
+                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { cancel = true; }
+
                 if finalize {
                     if let Some(p) = self.pending_text.take() {
                         if !p.buffer.is_empty() {
@@ -514,18 +521,22 @@ impl eframe::App for OwerlayerApp {
                                 ann.stroke_width = self.settings.text_stroke_width;
                                 ann.font = self.settings.text_font;
                                 ann.wave_warp = self.settings.text_wave_warp;
+                                
                                 let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
                                 let galley = ctx.fonts(|f| f.layout_no_wrap(text_str.clone(), font, egui::Color32::WHITE));
                                 ann.exact_size = [galley.size().x, galley.size().y];
+                                
                                 layer.text_annotations.push(ann);
                             }
                             self.history.push(&self.project, format!("Text: {}", text_str));
                             self.project.save();
                         }
                     }
-                } else if cancel { self.pending_text = None; }
+                } else if cancel {
+                    self.pending_text = None;
+                }
             }
-            // ── Undo / Redo ──
+        // ── Undo / Redo ──
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
                 if let Some(snap) = self.history.undo() {
                     let snap = snap.clone();

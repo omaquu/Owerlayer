@@ -79,6 +79,37 @@ pub fn render_filter_menu(
                 ui.checkbox(&mut layer.visible, "Visible");
                 ui.add_space(8.0);
 
+                section_heading(ui, "Color & Effects", accent);
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut layer.grayscale, "Grayscale");
+                    ui.checkbox(&mut layer.invert, "Invert");
+                    ui.checkbox(&mut layer.sepia, "Sepia");
+                });
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut layer.glow, "Glow");
+                    if layer.glow {
+                        ui.add(egui::DragValue::new(&mut layer.glow_strength).range(0.0..=100.0).prefix("Glow: "));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let mut bl = layer.blur > 0.0;
+                    if ui.checkbox(&mut bl, "Blur").changed() {
+                        layer.blur = if bl { 10.0 } else { 0.0 };
+                    }
+                    if layer.blur > 0.0 {
+                        ui.add(egui::DragValue::new(&mut layer.blur).range(0.0..=100.0));
+                    }
+                });
+                if layer.blur > 0.0 {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut layer.blur_effect, crate::types::BlurEffect::Gaussian, "Gaus");
+                        ui.selectable_value(&mut layer.blur_effect, crate::types::BlurEffect::Pixelate, "Pix");
+                        ui.selectable_value(&mut layer.blur_effect, crate::types::BlurEffect::Glitch, "VHS");
+                    });
+                }
+                
+                ui.add_space(8.0);
+
                 if ui.button("Close").clicked() {
                     *filters_open = None;
                 }
