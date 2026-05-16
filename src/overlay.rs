@@ -389,7 +389,8 @@ pub fn render_canvas(
                     }
                 }
 
-                if img.blur > 0.1 && gl_renderer.is_some() {
+                let has_gl_effect = img.blur > 0.1 || img.grayscale || img.invert || img.sepia || img.glow;
+                if has_gl_effect && gl_renderer.is_some() {
                     let renderer = gl_renderer.as_ref().unwrap().clone();
                     let effect = match img.blur_effect {
                         BlurEffect::Gaussian => 1,
@@ -420,6 +421,8 @@ pub fn render_canvas(
                     let grayscale = img.grayscale;
                     let invert = img.invert;
                     let sepia = img.sepia;
+                    let glow = img.glow;
+                    let glow_strength = img.glow_strength;
 
                     painter.add(egui::PaintCallback {
                         rect: paint_rect,
@@ -441,7 +444,7 @@ pub fn render_canvas(
                                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(renderer.vertex_buffer));
                                 gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&vertices), glow::DYNAMIC_DRAW);
 
-                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia);
+                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia, glow, glow_strength);
                             }
                         })),
                     });

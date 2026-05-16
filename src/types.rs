@@ -227,6 +227,16 @@ pub struct TextAnnotation {
     pub monospace: bool,
     pub shadow: bool,
     pub outline: bool,
+    #[serde(default = "default_outline_color")]
+    pub outline_color: [u8; 4],
+    #[serde(default = "default_outline_width")]
+    pub outline_width: f32,
+    #[serde(default = "default_shadow_color")]
+    pub shadow_color: [u8; 4],
+    #[serde(default = "default_shadow_offset")]
+    pub shadow_offset: [f32; 2],
+    #[serde(default)]
+    pub shadow_blur: f32,
     #[serde(default)]
     pub stroke_width: f32,
     #[serde(default)]
@@ -273,6 +283,8 @@ impl TextAnnotation {
             name: "Text".to_string(),
             position, text, color, font_size,
             monospace: false, shadow: false, outline: false,
+            outline_color: [0, 0, 0, 0], outline_width: 1.0,
+            shadow_color: [0, 0, 0, 0], shadow_offset: [0.0, 0.0], shadow_blur: 0.0,
             stroke_width: 1.0,
             rotation: 0.0, flipped_h: false, flipped_v: false,
             perspective: [egui::Vec2::ZERO; 4],
@@ -327,6 +339,16 @@ pub struct PlacedImage {
     pub is_live: bool,
     #[serde(default)]
     pub outline: bool,
+    #[serde(default = "default_outline_color")]
+    pub outline_color: [u8; 4],
+    #[serde(default = "default_outline_width")]
+    pub outline_width: f32,
+    #[serde(default = "default_shadow_color")]
+    pub shadow_color: [u8; 4],
+    #[serde(default = "default_shadow_offset")]
+    pub shadow_offset: [f32; 2],
+    #[serde(default)]
+    pub shadow_blur: f32,
     pub source_rect: Option<[f32; 4]>,
     pub url: Option<String>,
     #[serde(default)]
@@ -393,6 +415,11 @@ impl Clone for PlacedImage {
             opacity: self.opacity,
             is_live: self.is_live,
             outline: self.outline,
+            outline_color: self.outline_color,
+            outline_width: self.outline_width,
+            shadow_color: self.shadow_color,
+            shadow_offset: self.shadow_offset,
+            shadow_blur: self.shadow_blur,
             source_rect: self.source_rect,
             url: self.url.clone(),
             blur: self.blur,
@@ -436,6 +463,11 @@ impl PlacedImage {
             opacity: 1.0,
             is_live: false,
             outline: false,
+            outline_color: [0, 0, 0, 0],
+            outline_width: 1.0,
+            shadow_color: [0, 0, 0, 0],
+            shadow_offset: [0.0, 0.0],
+            shadow_blur: 0.0,
             source_rect: None,
             url: None,
             blur: 0.0,
@@ -488,6 +520,11 @@ fn default_scale() -> egui::Vec2 { egui::vec2(1.0, 1.0) }
 fn default_stroke_name() -> String { "Stroke".to_string() }
 fn default_text_name() -> String { "Text".to_string() }
 fn default_image_name() -> String { "Image".to_string() }
+
+fn default_outline_color() -> [u8; 4] { [0, 0, 0, 0] }
+fn default_outline_width() -> f32 { 1.0 }
+fn default_shadow_color() -> [u8; 4] { [0, 0, 0, 0] }
+fn default_shadow_offset() -> [f32; 2] { [0.0, 0.0] }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EraserMode { Stroke, Pixel }
@@ -618,6 +655,8 @@ pub struct Settings {
     pub layer_menu_pos: egui::Pos2,
     #[serde(default)]
     pub auto_new_layer: Option<bool>,
+    #[serde(default = "default_prompt_delete")]
+    pub prompt_delete_layer: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -633,6 +672,7 @@ fn default_fso_fix() -> bool { true }
 fn default_polygon_sides() -> u32 { 5 }
 fn default_toolbar_pos() -> egui::Pos2 { egui::pos2(40.0, 60.0) }
 fn default_layer_menu_pos() -> egui::Pos2 { egui::pos2(200.0, 60.0) }
+fn default_prompt_delete() -> bool { true }
 
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
@@ -713,6 +753,7 @@ impl Default for Settings {
             toolbar_pos: default_toolbar_pos(),
             layer_menu_pos: default_layer_menu_pos(),
             auto_new_layer: None,
+            prompt_delete_layer: true,
         }
     }
 }

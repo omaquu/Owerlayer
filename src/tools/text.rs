@@ -122,9 +122,18 @@ pub fn draw_layer_text(
 
         let shadow_col = egui::Color32::from_black_alpha((150.0 * l_op * ann.opacity) as u8);
 
+        let is_gray = ann.grayscale || layer.grayscale;
+        let is_inv = ann.invert || layer.invert;
+        let is_sepia = ann.sepia || layer.sepia;
+        let is_glow = ann.glow || layer.glow;
+        let glow_str = if ann.glow { ann.glow_strength } else { layer.glow_strength };
+
         if ann.wave_warp {
             // ── Wave warp: render character-by-character with sinusoidal vertical offset ──
-            draw_wave_text(p, ann, &font, c, outline_col, shadow_col, render_offset, layer, settings, l_op, time);
+            let wave_c = apply_color_effects(c, is_gray, is_inv, is_sepia, is_glow, glow_str);
+            let wave_out = apply_color_effects(outline_col, is_gray, is_inv, is_sepia, is_glow, glow_str);
+            let wave_shad = apply_color_effects(shadow_col, is_gray, is_inv, is_sepia, is_glow, glow_str);
+            draw_wave_text(p, ann, &font, wave_c, wave_out, wave_shad, render_offset, layer, settings, l_op, time);
         } else {
             // ── Normal rendering with proper mesh tessellation for transforms ──
             let text_shape = |color: egui::Color32, offset: egui::Vec2| {
@@ -164,7 +173,7 @@ pub fn draw_layer_text(
                     transform_mesh(&mut mesh, center, ann.rotation, ann.skew, ann.perspective, final_scale);
                     
                     // Apply Filters
-                    apply_mesh_filters(&mut mesh, ann.grayscale || layer.grayscale, ann.invert || layer.invert, ann.sepia || layer.sepia);
+                    apply_mesh_filters(&mut mesh, is_gray, is_inv, is_sepia, is_glow, glow_str);
                     
                     // Apply render offset
                     for v in &mut mesh.vertices {

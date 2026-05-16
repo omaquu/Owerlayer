@@ -282,6 +282,8 @@ pub fn update(ctx: &mut ToolContext) {
             stroke_color = egui::Color32::from_rgba_unmultiplied(base_c.r(), base_c.g(), base_c.b(), (102.0 * l_op * s.opacity) as u8);
         }
 
+        stroke_color = crate::utils::apply_color_effects(stroke_color, s.grayscale, s.invert, s.sepia, s.glow, s.glow_strength);
+
         // --- Pass 1: Shadow (Only if stroke has shadow enabled) ---
         if s.shadow {
             let s_off = egui::vec2(2.0, 2.0);

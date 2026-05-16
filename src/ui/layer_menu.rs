@@ -17,7 +17,7 @@ pub fn render_layers_window(
         .open(open)
         .title_bar(false)
         .resizable(true)
-        .default_width(320.0)
+        .default_width(340.0)
         .default_pos(settings.layer_menu_pos)
         .frame(frame)
         .show(ctx, |ui| {
@@ -160,7 +160,7 @@ pub fn render_layers_window(
                                 ui.indent(format!("layer_obj_{}", i), |ui: &mut egui::Ui| {
                                     for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
                                         let is_sel = project.selected_object == Some(SelectedObject { layer_idx: i, object_type: ObjectType::Image, object_idx: img_idx });
-                                        let bg_color = if is_sel { egui::Color32::from_rgba_unmultiplied(60, 120, 200, 100) } else { egui::Color32::TRANSPARENT };
+                                        let bg_color = if is_sel { egui::Color32::from_rgba_premultiplied(40, 80, 180, 180) } else { egui::Color32::TRANSPARENT };
                                         egui::Frame::NONE.fill(bg_color).inner_margin(egui::Margin::symmetric(4, 2)).corner_radius(4.0).show(ui, |ui| {
                                             ui.horizontal(|ui: &mut egui::Ui| {
                                                 ui.checkbox(&mut img.visible, "");
@@ -198,7 +198,7 @@ pub fn render_layers_window(
                                     }
                                     for (t_idx, ann) in layer.text_annotations.iter_mut().enumerate() {
                                         let is_sel = project.selected_object == Some(SelectedObject { layer_idx: i, object_type: ObjectType::Text, object_idx: t_idx });
-                                        let bg_color = if is_sel { egui::Color32::from_rgba_unmultiplied(60, 120, 200, 100) } else { egui::Color32::TRANSPARENT };
+                                        let bg_color = if is_sel { egui::Color32::from_rgba_premultiplied(40, 80, 180, 180) } else { egui::Color32::TRANSPARENT };
                                         egui::Frame::NONE.fill(bg_color).inner_margin(egui::Margin::symmetric(4, 2)).corner_radius(4.0).show(ui, |ui| {
                                             ui.horizontal(|ui: &mut egui::Ui| {
                                                 ui.checkbox(&mut ann.visible, "");
@@ -241,7 +241,7 @@ pub fn render_layers_window(
                                             continue;
                                         }
                                         let is_sel = project.selected_object == Some(SelectedObject { layer_idx: i, object_type: ObjectType::Stroke, object_idx: s_idx });
-                                        let bg_color = if is_sel { egui::Color32::from_rgba_unmultiplied(60, 120, 200, 100) } else { egui::Color32::TRANSPARENT };
+                                        let bg_color = if is_sel { egui::Color32::from_rgba_premultiplied(40, 80, 180, 180) } else { egui::Color32::TRANSPARENT };
                                         egui::Frame::NONE.fill(bg_color).inner_margin(egui::Margin::symmetric(4, 2)).corner_radius(4.0).show(ui, |ui| {
                                             ui.horizontal(|ui: &mut egui::Ui| {
                                                 ui.checkbox(&mut s.visible, "");
@@ -328,11 +328,15 @@ pub fn render_layers_window(
                     }
                 }
                 if let Some(idx) = layer_to_remove {
-                    project.layers.remove(idx);
-                    project.selected_object = None;
-                    if project.layers.is_empty() { project.layers.push(crate::project::Layer::new("Layer 1")); }
-                    project.active_layer = project.active_layer.min(project.layers.len() - 1);
-                    project.save();
+                    if settings.prompt_delete_layer {
+                        ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("layer_to_delete"), idx));
+                    } else {
+                        project.layers.remove(idx);
+                        project.selected_object = None;
+                        if project.layers.is_empty() { project.layers.push(crate::project::Layer::new("Layer 1")); }
+                        project.active_layer = project.active_layer.min(project.layers.len().saturating_sub(1));
+                        project.save();
+                    }
                 }
                 if let Some(idx) = layer_to_move_up {
                     if idx < total_layers - 1 {
@@ -427,6 +431,44 @@ pub fn render_layers_window(
 
             });
         });
+
+    let layer_to_delete: Option<usize> = ctx.memory_mut(|m| m.data.get_temp(egui::Id::new("layer_to_delete")));
+    if let Some(idx) = layer_to_delete {
+        let mut close = false;
+        egui::Window::new("Confirm Delete Layer")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(photoshop_frame(settings))
+            .show(ctx, |ui| {
+                ui.label(format!("Are you sure you want to delete '{}'?", project.layers.get(idx).map(|l| l.name.as_str()).unwrap_or("Layer")));
+                ui.add_space(8.0);
+                let mut dont_show = !settings.prompt_delete_layer;
+                if ui.checkbox(&mut dont_show, "Don't show this again").changed() {
+                    settings.prompt_delete_layer = !dont_show;
+                    settings.save();
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Yes, delete").clicked() {
+                        if idx < project.layers.len() {
+                            project.layers.remove(idx);
+                            project.selected_object = None;
+                            if project.layers.is_empty() { project.layers.push(crate::project::Layer::new("Layer 1")); }
+                            project.active_layer = project.active_layer.min(project.layers.len().saturating_sub(1));
+                            project.save();
+                        }
+                        close = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if close {
+            ctx.memory_mut(|m| m.data.remove::<usize>(egui::Id::new("layer_to_delete")));
+        }
+    }
 
     if let Some(resp) = win_resp {
         if resp.response.dragged() {

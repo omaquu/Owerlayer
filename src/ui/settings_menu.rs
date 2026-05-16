@@ -78,6 +78,7 @@ pub fn render_settings_window(
             ui.add_space(6.0);
             ui.checkbox(&mut settings.keep_ui_visible, "Keep toolbar visible in pass-through");
             ui.checkbox(&mut settings.hide_edit_info, "Hide Edit Mode Info Text");
+            ui.checkbox(&mut settings.prompt_delete_layer, "Prompt before deleting layer");
             
             ui.add_space(4.0);
             let mut auto_new = settings.auto_new_layer.unwrap_or(true);
@@ -188,7 +189,7 @@ pub fn render_settings_window(
                 }
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new("Owerlayer").strong().size(14.0));
-                    ui.label(egui::RichText::new("v0.5.1").size(11.0).color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new("v0.6.5").size(11.0).color(egui::Color32::GRAY));
                     ui.label(egui::RichText::new("by omaquu").size(11.0).color(egui::Color32::GRAY));
                 });
             });

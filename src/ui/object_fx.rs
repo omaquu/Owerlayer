@@ -1,10 +1,14 @@
 use eframe::egui;
 use crate::project::Project;
-use crate::types::Settings;
+use crate::types::{Settings, ObjectType};
+use crate::utils::color32;
+use crate::ui::settings_menu::section_heading;
 
 pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &mut Settings) {
     if let Some(sel) = settings.fx_open {
         let frame = crate::ui::toolbar::photoshop_frame(settings);
+        let accent = color32(&settings.accent_color);
+        
         egui::Window::new("Object Effects")
             .title_bar(false)
             .resizable(true)
@@ -13,7 +17,7 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
             .default_pos(settings.layer_menu_pos + egui::vec2(-260.0, 0.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Object FX").strong().color(egui::Color32::from_rgb(180, 180, 255)));
+                    ui.label(egui::RichText::new("Object FX").strong().color(accent));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("✖").clicked() { settings.fx_open = None; }
                     });
@@ -26,61 +30,105 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                 }
 
                 let layer = &mut project.layers[sel.layer_idx];
-                
-                // Helper to render filter controls
-                let mut render_filters = |ui: &mut egui::Ui, grayscale: &mut bool, invert: &mut bool, sepia: &mut bool, glow: &mut bool, glow_strength: &mut f32, blur: &mut f32, blur_effect: &mut crate::overlay::BlurEffect| {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(grayscale, "Grayscale");
-                        ui.checkbox(invert, "Invert");
-                        ui.checkbox(sepia, "Sepia");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.checkbox(glow, "Glow");
-                        if *glow {
-                            ui.add(egui::DragValue::new(glow_strength).range(0.0..=100.0).prefix("Glow: "));
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        let mut bl = *blur > 0.0;
-                        if ui.checkbox(&mut bl, "Blur").changed() {
-                            *blur = if bl { 10.0 } else { 0.0 };
-                        }
-                        if *blur > 0.0 {
-                            ui.add(egui::DragValue::new(blur).range(0.0..=100.0));
-                        }
-                    });
-                    if *blur > 0.0 {
+
+                macro_rules! render_object_fx {
+                    ($obj:expr, $is_vector:expr) => {
+                        section_heading(ui, "Shadow / Glow", accent);
+                        ui.checkbox(&mut $obj.shadow, "Enable Drop Shadow");
                         ui.horizontal(|ui| {
-                            ui.selectable_value(blur_effect, crate::overlay::BlurEffect::Gaussian, "Gaus");
-                            ui.selectable_value(blur_effect, crate::overlay::BlurEffect::Pixelate, "Pix");
-                            ui.selectable_value(blur_effect, crate::overlay::BlurEffect::Glitch, "VHS");
+                            ui.label("Distance:");
+                            ui.add(egui::DragValue::new(&mut $obj.shadow_offset[0]).speed(0.1).prefix("X:"));
+                            ui.add(egui::DragValue::new(&mut $obj.shadow_offset[1]).speed(0.1).prefix("Y:"));
                         });
-                    }
-                };
+                        ui.horizontal(|ui| {
+                            ui.label("Color:");
+                            let mut c = egui::Color32::from_rgba_unmultiplied($obj.shadow_color[0], $obj.shadow_color[1], $obj.shadow_color[2], $obj.shadow_color[3]);
+                            if ui.color_edit_button_srgba(&mut c).changed() {
+                                $obj.shadow_color = [c.r(), c.g(), c.b(), c.a()];
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        section_heading(ui, "Outline / Stroke", accent);
+                        ui.checkbox(&mut $obj.outline, "Enable Outline");
+                        ui.horizontal(|ui| {
+                            ui.label("Thickness:");
+                            ui.add(egui::Slider::new(&mut $obj.outline_width, 0.5..=20.0));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Color:");
+                            let mut c = egui::Color32::from_rgba_unmultiplied($obj.outline_color[0], $obj.outline_color[1], $obj.outline_color[2], $obj.outline_color[3]);
+                            if ui.color_edit_button_srgba(&mut c).changed() {
+                                $obj.outline_color = [c.r(), c.g(), c.b(), c.a()];
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        section_heading(ui, "Opacity & Visibility", accent);
+                        ui.horizontal(|ui| {
+                            ui.label("Opacity:");
+                            let mut op = $obj.opacity * 100.0;
+                            if ui.add(egui::Slider::new(&mut op, 0.0..=100.0).suffix("%")).changed() {
+                                $obj.opacity = op / 100.0;
+                            }
+                        });
+                        ui.checkbox(&mut $obj.visible, "Visible");
+                        ui.add_space(8.0);
+
+                        section_heading(ui, "Color & Effects", accent);
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut $obj.grayscale, "Grayscale");
+                            ui.checkbox(&mut $obj.invert, "Invert");
+                            ui.checkbox(&mut $obj.sepia, "Sepia");
+                        });
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut $obj.glow, "Glow");
+                            if $obj.glow {
+                                ui.add(egui::DragValue::new(&mut $obj.glow_strength).range(0.0..=100.0).prefix("Glow: "));
+                            }
+                        });
+                        
+                        if !$is_vector {
+                            ui.horizontal(|ui| {
+                                let mut bl = $obj.blur > 0.0;
+                                if ui.checkbox(&mut bl, "Blur").changed() {
+                                    $obj.blur = if bl { 10.0 } else { 0.0 };
+                                }
+                                if $obj.blur > 0.0 {
+                                    ui.add(egui::DragValue::new(&mut $obj.blur).range(0.0..=100.0));
+                                }
+                            });
+                            if $obj.blur > 0.0 {
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(&mut $obj.blur_effect, crate::types::BlurEffect::Gaussian, "Gaus");
+                                    ui.selectable_value(&mut $obj.blur_effect, crate::types::BlurEffect::Pixelate, "Pix");
+                                    ui.selectable_value(&mut $obj.blur_effect, crate::types::BlurEffect::Glitch, "VHS");
+                                });
+                            }
+                        } else {
+                            // Unsupported FX
+                            ui.label(egui::RichText::new("Blur FX unsupported on vector strokes.").size(10.0).color(egui::Color32::from_gray(120)));
+                        }
+                    };
+                }
 
                 match sel.object_type {
-                    crate::types::ObjectType::Image => {
+                    ObjectType::Image => {
                         if sel.object_idx < layer.placed_images.len() {
                             let img = &mut layer.placed_images[sel.object_idx];
-                            ui.checkbox(&mut img.shadow, "Shadow");
-                            ui.checkbox(&mut img.outline, "Outline");
-                            render_filters(ui, &mut img.grayscale, &mut img.invert, &mut img.sepia, &mut img.glow, &mut img.glow_strength, &mut img.blur, &mut img.blur_effect);
+                            render_object_fx!(img, false);
                         }
                     }
-                    crate::types::ObjectType::Text => {
+                    ObjectType::Text => {
                         if sel.object_idx < layer.text_annotations.len() {
                             let ann = &mut layer.text_annotations[sel.object_idx];
-                            ui.checkbox(&mut ann.shadow, "Shadow");
-                            ui.checkbox(&mut ann.outline, "Outline");
-                            render_filters(ui, &mut ann.grayscale, &mut ann.invert, &mut ann.sepia, &mut ann.glow, &mut ann.glow_strength, &mut ann.blur, &mut ann.blur_effect);
+                            render_object_fx!(ann, true);
                         }
                     }
-                    crate::types::ObjectType::Stroke => {
+                    ObjectType::Stroke => {
                         if sel.object_idx < layer.strokes.len() {
                             let s = &mut layer.strokes[sel.object_idx];
-                            ui.checkbox(&mut s.shadow, "Shadow");
-                            ui.checkbox(&mut s.outline, "Outline");
-                            render_filters(ui, &mut s.grayscale, &mut s.invert, &mut s.sepia, &mut s.glow, &mut s.glow_strength, &mut s.blur, &mut s.blur_effect);
+                            render_object_fx!(s, true);
                         }
                     }
                 }

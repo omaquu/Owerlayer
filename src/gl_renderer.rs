@@ -38,6 +38,8 @@ impl GLRenderer {
                 uniform bool u_grayscale;
                 uniform bool u_invert;
                 uniform bool u_sepia;
+                uniform bool u_glow;
+                uniform float u_glow_strength;
 
                 in vec2 v_uv;
                 out vec4 f_color;
@@ -93,6 +95,11 @@ impl GLRenderer {
                             dot(color.rgb, vec3(0.349, 0.686, 0.168)),
                             dot(color.rgb, vec3(0.272, 0.534, 0.131))
                         );
+                    }
+
+                    if (u_glow) {
+                        float glow_intensity = u_glow_strength * 0.05;
+                        color.rgb += vec3(glow_intensity) * color.a;
                     }
 
                     f_color = color;
@@ -194,6 +201,8 @@ impl GLRenderer {
         grayscale: bool,
         invert: bool,
         sepia: bool,
+        glow: bool,
+        glow_strength: f32,
     ) {
         unsafe {
             gl.use_program(Some(self.program));
@@ -227,9 +236,13 @@ impl GLRenderer {
             let u_gray = gl.get_uniform_location(self.program, "u_grayscale");
             let u_inv = gl.get_uniform_location(self.program, "u_invert");
             let u_sep = gl.get_uniform_location(self.program, "u_sepia");
+            let u_glow = gl.get_uniform_location(self.program, "u_glow");
+            let u_glow_str = gl.get_uniform_location(self.program, "u_glow_strength");
             gl.uniform_1_i32(u_gray.as_ref(), grayscale as i32);
             gl.uniform_1_i32(u_inv.as_ref(), invert as i32);
             gl.uniform_1_i32(u_sep.as_ref(), sepia as i32);
+            gl.uniform_1_i32(u_glow.as_ref(), glow as i32);
+            gl.uniform_1_f32(u_glow_str.as_ref(), glow_strength);
 
             gl.bind_vertex_array(Some(self.vertex_array));
             gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);

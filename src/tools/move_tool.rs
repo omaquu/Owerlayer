@@ -240,16 +240,21 @@ pub fn update(ctx: &mut ToolContext) {
                         }
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if !is_layer_mode {
-                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED)).min_size(egui::vec2(24.0, 24.0))).on_hover_text("Delete Selected").clicked() {
-                                    if let Some(sel) = project.selected_object {
-                                        match sel.object_type {
-                                            ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
-                                            ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
-                                            ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
-                                        }
-                                        project.selected_object = None;
+                            let hover_text = if is_layer_mode { "Delete Layer" } else { "Delete Selected" };
+                            if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED)).min_size(egui::vec2(24.0, 24.0))).on_hover_text(hover_text).clicked() {
+                                if is_layer_mode {
+                                    if settings.prompt_delete_layer {
+                                        ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("layer_to_delete"), layer_idx));
+                                    } else {
+                                        *remove_active_layer = true;
                                     }
+                                } else if let Some(sel) = project.selected_object {
+                                    match sel.object_type {
+                                        ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
+                                        ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
+                                        ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
+                                    }
+                                    project.selected_object = None;
                                 }
                             }
                         });
@@ -273,19 +278,7 @@ pub fn update(ctx: &mut ToolContext) {
                 let hit_rot_top = bounds.center_top() - egui::vec2(0.0, 25.0);
                 let hit_rot_bot = bounds.center_bottom() + egui::vec2(0.0, 25.0);
                 
-                // Delete button
-                let del_rect = egui::Rect::from_center_size(bounds.right_top() + egui::vec2(25.0, -25.0), egui::vec2(18.0, 18.0));
-                if left_just_pressed && del_rect.contains(pos) {
-                    if let Some(sel) = project.selected_object {
-                        match sel.object_type {
-                            ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
-                            ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
-                            ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
-                        }
-                        project.selected_object = None;
-                    }
-                    return;
-                }
+                // Removed duplicate red garbage bin delete button logic
 
                 if top_btns_rect.contains(pos) { return; }
 
@@ -729,12 +722,7 @@ pub fn render(ctx: &mut ToolContext) {
                 painter.circle_stroke(mid, 3.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
             }
 
-            // 5. Delete button (🗑) at top right, offset to avoid resize handle overlap
-            let del_rect_draw = egui::Rect::from_center_size(b.right_top() + egui::vec2(25.0, -25.0), egui::vec2(18.0, 18.0));
-            let mouse_pos = ctx.mouse.pos;
-            let del_hover = del_rect_draw.contains(mouse_pos);
-            painter.circle_filled(del_rect_draw.center(), 11.0, if del_hover { egui::Color32::from_rgb(255, 50, 50) } else { egui::Color32::from_rgb(200, 0, 0) });
-            painter.text(del_rect_draw.center(), egui::Align2::CENTER_CENTER, "🗑", egui::FontId::proportional(12.0), egui::Color32::WHITE);
+            // Removed duplicate red garbage bin button rendering
         }
     }
 }
