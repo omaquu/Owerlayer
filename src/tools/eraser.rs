@@ -15,6 +15,12 @@ pub fn update(ctx: &mut ToolContext) {
     let active_layer_idx = project.active_layer;
     if active_layer_idx >= project.layers.len() { return; }
 
+    // Block erasing on a locked layer
+    if project.layers[active_layer_idx].locked {
+        *ctx.layer_prompt_open = true;
+        return;
+    }
+
                 let layer = &mut project.layers[active_layer_idx];
                 if left_down {
                     let r = settings.pen_width.max(1.0);

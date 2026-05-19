@@ -116,9 +116,30 @@ pub fn update(ctx: &mut ToolContext) {
                     }
                 }
 
-                // Draw selection rect
-                painter.rect_stroke(bounds, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Middle);
+
+                // Draw selection rect — amber border for locked objects
+                let obj_is_locked = project.selected_object.map_or(false, |sel| match sel.object_type {
+                    ObjectType::Image => layer.placed_images.get(sel.object_idx).map_or(false, |o| o.locked),
+                    ObjectType::Stroke => layer.strokes.get(sel.object_idx).map_or(false, |o| o.locked),
+                    ObjectType::Text => layer.text_annotations.get(sel.object_idx).map_or(false, |o| o.locked),
+                });
+                let sel_rect_color = if obj_is_locked {
+                    egui::Color32::from_rgb(255, 180, 0)
+                } else {
+                    egui::Color32::WHITE
+                };
+                painter.rect_stroke(bounds, 0.0, egui::Stroke::new(1.0, sel_rect_color), egui::StrokeKind::Middle);
+                if obj_is_locked {
+                    painter.text(
+                        bounds.center_top() - egui::vec2(0.0, 12.0),
+                        egui::Align2::CENTER_BOTTOM,
+                        "🔒 Locked",
+                        egui::FontId::proportional(11.0),
+                        egui::Color32::from_rgb(255, 180, 0),
+                    );
+                }
                 
+
                 // --- Transformation Buttons ---
                 let mut _sel_is_blur = false;
                 let mut sel_is_embed = false;
@@ -293,15 +314,22 @@ pub fn update(ctx: &mut ToolContext) {
                 if top_btns_rect.contains(pos) { return; }
 
                 if left_just_pressed && !*dragging_source_rect {
+                    // Locked objects: show selection box but block all transforms
+                    let sel_is_locked = project.selected_object.map_or(false, |sel| match sel.object_type {
+                        ObjectType::Image => layer.placed_images.get(sel.object_idx).map_or(false, |o| o.locked),
+                        ObjectType::Stroke => layer.strokes.get(sel.object_idx).map_or(false, |o| o.locked),
+                        ObjectType::Text => layer.text_annotations.get(sel.object_idx).map_or(false, |o| o.locked),
+                    });
+
                     let mut hit = false;
-                    if hit_rot_top.distance(pos) < 20.0 || hit_rot_bot.distance(pos) < 20.0 {
+                    if !sel_is_locked && (hit_rot_top.distance(pos) < 20.0 || hit_rot_bot.distance(pos) < 20.0) {
                         *line_start = Some(pos);
                         *drag_state = 1;
                         *initial_center = Some(raw_bounds.center());
                         *initial_layer = Some(layer.clone());
                         hit = true;
                     }
-                    if !hit {
+                    if !hit && !sel_is_locked {
                         for (idx, pc) in hit_p_corners.iter().enumerate() {
                             if pc.distance(pos) < 16.0 {
                                 *line_start = Some(pos);
@@ -312,7 +340,7 @@ pub fn update(ctx: &mut ToolContext) {
                             }
                         }
                     }
-                    if !hit {
+                    if !hit && !sel_is_locked {
                         for (idx, corner) in hit_corners.iter().enumerate() {
                             if egui::Rect::from_center_size(*corner, egui::vec2(20.0, 20.0)).contains(pos) {
                                 *line_start = Some(pos);
@@ -324,7 +352,7 @@ pub fn update(ctx: &mut ToolContext) {
                             }
                         }
                     }
-                    if !hit {
+                    if !hit && !sel_is_locked {
                         for (idx, &mp) in hit_mids.iter().enumerate() {
                             if egui::Rect::from_center_size(mp, egui::vec2(20.0, 20.0)).contains(pos) {
                                 *line_start = Some(pos);
@@ -336,7 +364,7 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                     }
                     if !hit && bounds.contains(pos) {
-                        // Click INSIDE body → move this object
+                        // Click INSIDE body → move this object (only if not locked)
                         let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
                         if is_double_click {
                             if let Some(sel) = project.selected_object {
@@ -356,10 +384,12 @@ pub fn update(ctx: &mut ToolContext) {
                             }
                         }
 
-                        *line_start = Some(pos);
-                        *drag_state = 0;
-                        *initial_bounds = Some(raw_bounds);
-                        *initial_layer = Some(layer.clone());
+                        if !sel_is_locked {
+                            *line_start = Some(pos);
+                            *drag_state = 0;
+                            *initial_bounds = Some(raw_bounds);
+                            *initial_layer = Some(layer.clone());
+                        }
                         click_consumed = true;
                     } else if !hit {
                         // Click OUTSIDE selected object → only deselect if we are NOT clicking another object (handled below)
