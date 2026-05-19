@@ -41,6 +41,9 @@ pub struct Layer {
     pub blur_effect: crate::types::BlurEffect,
     #[serde(default)]
     pub locked: bool,
+    /// Per-layer: user checked "don't ask again" for the lock prompt on THIS layer.
+    #[serde(skip)]
+    pub lock_prompt_dismissed: bool,
 }
 
 fn default_shadow_offset() -> [f32; 2] { [2.0, 2.0] }
@@ -74,6 +77,7 @@ impl Layer {
             blur: 0.0,
             blur_effect: crate::types::BlurEffect::Gaussian,
             locked: false,
+            lock_prompt_dismissed: false,
         }
     }
 }

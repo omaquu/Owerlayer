@@ -665,46 +665,123 @@ impl eframe::App for OwerlayerApp {
             }
 
             if self.layer_prompt_open && self.edit_mode {
-                let mut close_prompt = false;
-                egui::Window::new("New Tool Selected")
-                    .collapsible(false)
-                    .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .frame(photoshop_frame(&self.settings))
-                    .show(ctx, |ui| {
-                        ui.label("You selected a new tool. Create a new layer for this object?");
-                        ui.horizontal(|ui| {
-                            let mut remember = self.settings.auto_new_layer.is_some();
-                            if ui.checkbox(&mut remember, "Remember my choice").changed() {
-                                if !remember {
-                                    self.settings.auto_new_layer = None;
+                // Auto-dismiss if the active layer already told us not to ask again
+                let already_dismissed = self.project.layers
+                    .get(self.project.active_layer)
+                    .map_or(false, |l| l.lock_prompt_dismissed);
+                if already_dismissed {
+                    // Silently unlock the selected object and carry on
+                    let layer_idx = self.project.active_layer;
+                    if let Some(sel) = self.project.selected_object {
+                        if sel.layer_idx == layer_idx {
+                            match sel.object_type {
+                                crate::overlay::ObjectType::Image => {
+                                    if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
+                                        img.locked = false;
+                                    }
+                                }
+                                crate::overlay::ObjectType::Stroke => {
+                                    if let Some(s) = self.project.layers[layer_idx].strokes.get_mut(sel.object_idx) {
+                                        s.locked = false;
+                                    }
+                                }
+                                crate::overlay::ObjectType::Text => {
+                                    if let Some(t) = self.project.layers[layer_idx].text_annotations.get_mut(sel.object_idx) {
+                                        t.locked = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.layer_prompt_open = false;
+                } else {
+                    let mut close_prompt = false;
+                    let mut action: Option<u8> = None; // 1=unlock+use, 2=new object, 3=new layer
+                    let layer_idx = self.project.active_layer;
+
+                    egui::Window::new("Layer is Locked")
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                        .frame(photoshop_frame(&self.settings))
+                        .show(ctx, |ui| {
+                            ui.label("The current layer or object is locked. What would you like to do?");
+                            ui.add_space(8.0);
+
+                            ui.horizontal(|ui| {
+                                if ui.button("🔓 Use Current Object (Unlock)").clicked() {
+                                    action = Some(1);
+                                    close_prompt = true;
+                                }
+                                if ui.button("📄 New Object (Same Layer)").clicked() {
+                                    action = Some(2);
+                                    close_prompt = true;
+                                }
+                                if ui.button("➕ New Layer").clicked() {
+                                    action = Some(3);
+                                    close_prompt = true;
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    close_prompt = true;
+                                }
+                            });
+
+                            ui.add_space(6.0);
+                            // Per-layer "don't ask again"
+                            if layer_idx < self.project.layers.len() {
+                                let mut dismissed = self.project.layers[layer_idx].lock_prompt_dismissed;
+                                if ui.checkbox(&mut dismissed, "Don't ask again for this layer").changed() {
+                                    self.project.layers[layer_idx].lock_prompt_dismissed = dismissed;
                                 }
                             }
                         });
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Create New Layer").clicked() {
-                                if self.settings.auto_new_layer.is_some() || ui.input(|i| i.modifiers.shift) {
-                                    self.settings.auto_new_layer = Some(true);
-                                } else {
-                                    self.settings.auto_new_layer = Some(true); // Temp apply
+
+                    if let Some(act) = action {
+                        match act {
+                            1 => {
+                                // Unlock the selected/active object
+                                if let Some(sel) = self.project.selected_object {
+                                    if sel.layer_idx == layer_idx && layer_idx < self.project.layers.len() {
+                                        match sel.object_type {
+                                            crate::overlay::ObjectType::Image => {
+                                                if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
+                                                    img.locked = false;
+                                                }
+                                            }
+                                            crate::overlay::ObjectType::Stroke => {
+                                                if let Some(s) = self.project.layers[layer_idx].strokes.get_mut(sel.object_idx) {
+                                                    s.locked = false;
+                                                }
+                                            }
+                                            crate::overlay::ObjectType::Text => {
+                                                if let Some(t) = self.project.layers[layer_idx].text_annotations.get_mut(sel.object_idx) {
+                                                    t.locked = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if layer_idx < self.project.layers.len() {
+                                    // No specific object selected — unlock the layer itself
+                                    self.project.layers[layer_idx].locked = false;
                                 }
+                            }
+                            2 => {
+                                // Create a new (unlocked) PlacedImage on the current layer, deselect current
+                                self.project.selected_object = None;
+                            }
+                            3 => {
+                                // Create a new layer and switch to it
                                 self.project.layers.push(crate::project::Layer::new(self.active_tool.name()));
                                 self.project.active_layer = self.project.layers.len() - 1;
-                                close_prompt = true;
+                                self.project.selected_object = None;
                             }
-                            if ui.button("Use Current Layer").clicked() {
-                                if self.settings.auto_new_layer.is_some() || ui.input(|i| i.modifiers.shift) {
-                                    self.settings.auto_new_layer = Some(false);
-                                } else {
-                                    self.settings.auto_new_layer = Some(false); // Temp apply
-                                }
-                                close_prompt = true;
-                            }
-                        });
-                    });
-                if close_prompt {
-                    self.layer_prompt_open = false;
+                            _ => {}
+                        }
+                    }
+
+                    if close_prompt {
+                        self.layer_prompt_open = false;
+                    }
                 }
             }
         }
