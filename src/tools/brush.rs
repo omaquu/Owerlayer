@@ -52,44 +52,63 @@ pub fn update(ctx: &mut ToolContext) {
                 // Reject glitchy points (0,0) or huge jumps
                 if pos.x < 1.0 && pos.y < 1.0 { return; }
 
-                // ── Auto-create or find target PlacedImage ──
-                let mut sel = project.selected_object;
-                let mut has_target_image = sel.map_or(false, |s| {
+                // ── Find or create target PlacedImage ──
+                // Priority: keep the currently selected image, then fall back to the
+                // last unlocked PlacedImage on this layer, then create a new one.
+                let has_target_image = project.selected_object.map_or(false, |s| {
                     s.object_type == ObjectType::Image
                         && s.layer_idx == active_layer_idx
                         && s.object_idx < project.layers[active_layer_idx].placed_images.len()
                 });
 
-                if has_target_image && current_stroke.is_empty() {
-                    let s = sel.unwrap();
-                    let img_rect = crate::utils::object_bounds(&project.layers[s.layer_idx], ObjectType::Image, s.object_idx)
-                        .unwrap_or_else(|| {
-                            let img = &project.layers[s.layer_idx].placed_images[s.object_idx];
-                            egui::Rect::from_min_size(img.position, egui::vec2(img.size[0] as f32, img.size[1] as f32))
+                if !has_target_image && current_stroke.is_empty() {
+                    // Try to reuse the last unlocked canvas on this layer
+                    let reuse_idx = project.layers[active_layer_idx]
+                        .placed_images
+                        .iter()
+                        .rposition(|img| !img.locked);
+
+                    if let Some(idx) = reuse_idx {
+                        // Check if it is locked — if so, prompt instead of drawing
+                        if project.layers[active_layer_idx].placed_images[idx].locked {
+                            *ctx.layer_prompt_open = true;
+                            return;
+                        }
+                        project.selected_object = Some(SelectedObject {
+                            layer_idx: active_layer_idx,
+                            object_type: ObjectType::Image,
+                            object_idx: idx,
                         });
-                    if !img_rect.contains(world_pos) {
-                        project.selected_object = None;
-                        has_target_image = false;
+                    } else {
+                        // No usable canvas exists — create one
+                        let canvas_w: usize = 800;
+                        let canvas_h: usize = 600;
+                        let pixels = vec![0u8; canvas_w * canvas_h * 4];
+                        let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                        let img_pos = egui::pos2(world_pos.x - canvas_w as f32 / 2.0, world_pos.y - canvas_h as f32 / 2.0);
+                        let count = project.layers[active_layer_idx].placed_images.len();
+                        let mut new_img = crate::types::PlacedImage::new(id, img_pos, [canvas_w, canvas_h], pixels);
+                        new_img.name = format!("Canvas {}", count + 1);
+                        project.layers[active_layer_idx].placed_images.push(new_img);
+                        let new_idx = project.layers[active_layer_idx].placed_images.len() - 1;
+                        project.selected_object = Some(SelectedObject {
+                            layer_idx: active_layer_idx,
+                            object_type: ObjectType::Image,
+                            object_idx: new_idx,
+                        });
                     }
                 }
 
-                if !has_target_image && current_stroke.is_empty() {
-                    // Auto-create a new canvas object at the mouse position
-                    let canvas_w: usize = 800;
-                    let canvas_h: usize = 600;
-                    let pixels = vec![0u8; canvas_w * canvas_h * 4]; // fully transparent
-                    let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                    let img_pos = egui::pos2(world_pos.x - canvas_w as f32 / 2.0, world_pos.y - canvas_h as f32 / 2.0);
-                    let count = project.layers[active_layer_idx].placed_images.len();
-                    let mut new_img = crate::types::PlacedImage::new(id, img_pos, [canvas_w, canvas_h], pixels);
-                    new_img.name = format!("Canvas {}", count + 1);
-                    project.layers[active_layer_idx].placed_images.push(new_img);
-                    let new_idx = project.layers[active_layer_idx].placed_images.len() - 1;
-                    project.selected_object = Some(SelectedObject {
-                        layer_idx: active_layer_idx,
-                        object_type: ObjectType::Image,
-                        object_idx: new_idx,
-                    });
+                // If the currently selected canvas is locked, refuse and prompt
+                if let Some(sel) = project.selected_object {
+                    if sel.object_type == ObjectType::Image
+                        && sel.layer_idx == active_layer_idx
+                        && project.layers[active_layer_idx].placed_images.get(sel.object_idx).map_or(false, |img| img.locked)
+                        && current_stroke.is_empty()
+                    {
+                        *ctx.layer_prompt_open = true;
+                        return;
+                    }
                 }
 
                 let prev_len = current_stroke.len();
