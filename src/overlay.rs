@@ -87,6 +87,9 @@ pub fn render_canvas(
     frame_count: u64,
     _capture_thread: &crate::capture_thread::CaptureThread,
     gl_renderer: Option<Arc<crate::gl_renderer::GLRenderer>>,
+    rasterize_phase: u8,
+    rasterize_bbox: Option<[f32; 4]>,
+    rasterize_capture: crate::rasterize::CaptureBuffer,
 ) {
     let rect = ui.available_rect_before_wrap();
     
@@ -164,8 +167,15 @@ pub fn render_canvas(
 
 
     // ── Layers Rendering ──
+    let rasterize_req = project.rasterize_request;
     for (i, layer) in project.layers.iter_mut().enumerate().filter(|(_, l)| l.visible) {
-        if settings.hide_all { continue; }
+        if settings.hide_all && rasterize_phase == 0 { continue; }
+        // During rasterize capture, only render the target layer
+        if rasterize_phase == 1 {
+            if let Some(req) = &rasterize_req {
+                if i != req.layer_idx { continue; }
+            }
+        }
         let _is_active = project.active_layer == i;
         let l_op = layer.opacity;
         
@@ -357,14 +367,18 @@ pub fn render_canvas(
 
                 if layer.shadow || img.shadow {
                     let mut s_mesh = egui::Mesh::with_texture(tex.id());
-                    s_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, egui::Color32::from_black_alpha((100.0 * l_op) as u8));
-                    transform_mesh(&mut s_mesh, center + egui::vec2(3.0, 3.0), img.rotation, img.skew, img.perspective, final_scale);
+                    let (s_col_arr, s_off) = if img.shadow { (img.shadow_color, img.shadow_offset) } else { (layer.shadow_color, layer.shadow_offset) };
+                    let s_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op) as u8);
+                    s_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, s_col);
+                    transform_mesh(&mut s_mesh, center + egui::vec2(s_off[0], s_off[1]), img.rotation, img.skew, img.perspective, final_scale);
                     painter.add(egui::Shape::mesh(s_mesh));
                 }
 
                 if layer.outline || img.outline {
                     let mut o_mesh = egui::Mesh::with_texture(tex.id());
-                    o_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5 - 1.5, center.y - disp_h*0.5 - 1.5), egui::vec2(disp_w+3.0, disp_h+3.0)), uv, egui::Color32::from_white_alpha((200.0 * l_op) as u8));
+                    let (o_col_arr, o_width) = if img.outline { (img.outline_color, img.outline_width) } else { (layer.outline_color, layer.outline_width) };
+                    let o_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op) as u8);
+                    o_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5 - o_width*0.5, center.y - disp_h*0.5 - o_width*0.5), egui::vec2(disp_w+o_width, disp_h+o_width)), uv, o_col);
                     transform_mesh(&mut o_mesh, center, img.rotation, img.skew, img.perspective, final_scale);
                     painter.add(egui::Shape::mesh(o_mesh));
                 }
@@ -404,7 +418,8 @@ pub fn render_canvas(
                     let mask_tex_id = img.mask_texture.as_ref().map(|t| t.id());
                     
                     let mut vertices = Vec::new();
-                    for v in &mesh.vertices {
+                    for &idx in &mesh.indices {
+                        let v = &mesh.vertices[idx as usize];
                         // Map egui screen coords to GL coords (-1 to 1)
                         let screen_size = ui.ctx().screen_rect().size();
                         let gl_x = (v.pos.x / screen_size.x) * 2.0 - 1.0;
@@ -423,6 +438,8 @@ pub fn render_canvas(
                     let sepia = img.sepia;
                     let glow = img.glow;
                     let glow_strength = img.glow_strength;
+                    let opacity = l_op * img.opacity;
+                    let vertex_count = mesh.indices.len() as i32;
 
                     painter.add(egui::PaintCallback {
                         rect: paint_rect,
@@ -444,7 +461,7 @@ pub fn render_canvas(
                                 gl.bind_buffer(glow::ARRAY_BUFFER, Some(renderer.vertex_buffer));
                                 gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&vertices), glow::DYNAMIC_DRAW);
 
-                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia, glow, glow_strength);
+                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia, glow, glow_strength, opacity, vertex_count);
                             }
                         })),
                     });
@@ -455,11 +472,27 @@ pub fn render_canvas(
         }
 
         // Completed strokes
-        crate::tools::brush::draw_layer_strokes(&painter, layer, -render_offset, l_op);
+        let skip_strokes = rasterize_phase == 1 && rasterize_req.map(|r| r.object_idx.is_some() && !matches!(r.object_idx, Some((crate::types::ObjectType::Stroke, _)))).unwrap_or(false);
+        if !skip_strokes {
+            crate::tools::brush::draw_layer_strokes(&painter, layer, -render_offset, l_op);
+        }
 
         // Text annotations
-        crate::tools::text::draw_layer_text(&painter, layer, -render_offset, l_op, settings, ui.input(|i| i.time) as f32);
+        let skip_text = rasterize_phase == 1 && rasterize_req.map(|r| r.object_idx.is_some() && !matches!(r.object_idx, Some((crate::types::ObjectType::Text, _)))).unwrap_or(false);
+        if !skip_text {
+            crate::tools::text::draw_layer_text(&painter, layer, -render_offset, l_op, settings, ui.input(|i| i.time) as f32);
+        }
 
+    }
+
+    // ── Rasterize capture callback ──
+    if rasterize_phase == 1 {
+        if let Some(bbox) = rasterize_bbox {
+            let ppp = ui.ctx().pixels_per_point();
+            let screen_h = ui.ctx().screen_rect().height();
+            let cb = crate::rasterize::create_capture_callback(bbox, ppp, screen_h, rasterize_capture);
+            painter.add(cb);
+        }
     }
 
     // ── Pending text cursor ──
@@ -541,26 +574,23 @@ pub fn render_canvas(
         request_history_push,
     };
 
-    // ── Live preview ──
-    match *ctx.active_tool {
-        Tool::Brush => crate::tools::brush::render_preview(&mut ctx),
-        Tool::Shape => crate::tools::shape::render_preview(&mut ctx),
-        Tool::Snip => crate::tools::snip::render_preview(&mut ctx),
-        Tool::Blur => crate::tools::blur::render_preview(&mut ctx),
-        _ => {}
+    // ── Live preview (skip during rasterize) ──
+    if rasterize_phase == 0 {
+        match *ctx.active_tool {
+            Tool::Brush => crate::tools::brush::render_preview(&mut ctx),
+            Tool::Shape => crate::tools::shape::render_preview(&mut ctx),
+            Tool::Snip => crate::tools::snip::render_preview(&mut ctx),
+            Tool::Blur => crate::tools::blur::render_preview(&mut ctx),
+            _ => {}
+        }
+
+        // Bounding box for Move tool
+        if *ctx.active_tool == Tool::Move {
+            crate::tools::move_tool::render(&mut ctx);
+        }
     }
 
-    // Bounding box for Move tool
-    if *ctx.active_tool == Tool::Move {
-        crate::tools::move_tool::render(&mut ctx);
-    }
-
-
-
-
-
-
-    if edit_mode && can_draw && active_layer_idx < ctx.project.layers.len() {
+    if rasterize_phase == 0 && edit_mode && can_draw && active_layer_idx < ctx.project.layers.len() {
         match *ctx.active_tool {
             Tool::Brush => {
                 crate::tools::brush::update(&mut ctx);

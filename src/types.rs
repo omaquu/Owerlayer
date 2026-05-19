@@ -12,6 +12,12 @@ pub struct SelectedObject {
     pub object_idx: usize,
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct RasterizeRequest {
+    pub layer_idx: usize,
+    pub object_idx: Option<(ObjectType, usize)>,
+}
+
 pub struct MouseState {
     pub pos: egui::Pos2,
     #[allow(dead_code)]
@@ -319,6 +325,7 @@ pub struct PlacedImage {
     pub position: egui::Pos2,
     pub size: [usize; 2],
     pub display_size: Option<[f32; 2]>,
+    #[serde(skip)]
     pub pixels: Vec<u8>,
     #[serde(skip)]
     pub texture: Option<egui::TextureHandle>,
@@ -695,7 +702,7 @@ impl Default for Settings {
             pen_width: 3.0,
             font_size: 20.0,
             keep_ui_visible: false,
-            toggle_mode: false,
+            toggle_mode: true,
             accent_color: [100, 140, 255, 255],
             menu_hue: 90.0,
             menu_opacity: 0.75,

@@ -54,6 +54,8 @@ pub fn render_layers_window(
                 let mut object_to_select = None;
                 let mut object_to_move: Option<(usize, ObjectType, usize, i32)> = None;
                 let mut object_to_clone: Option<(usize, ObjectType, usize)> = None;
+                let mut object_to_rasterize: Option<(usize, ObjectType, usize)> = None;
+                let mut layer_to_rasterize: Option<usize> = None;
                 let total_layers = project.layers.len();
 
                 for i in (0..total_layers).rev() {
@@ -129,6 +131,12 @@ pub fn render_layers_window(
                                     layer_to_remove = Some(i); 
                                 }
                                 if ui.button("fx").clicked() { *filters_open = Some(i); }
+                                if ui.add(egui::Button::new(egui::RichText::new(if layer.locked { "🔒" } else { "🔓" })).fill(egui::Color32::from_black_alpha(40))).on_hover_text(if layer.locked { "Unlock Layer" } else { "Lock Layer" }).clicked() {
+                                    layer.locked = !layer.locked;
+                                }
+                                if ui.button("📷").on_hover_text("Rasterize Layer").clicked() {
+                                    layer_to_rasterize = Some(i);
+                                }
                                 if ui.add(egui::Button::new(egui::RichText::new("➕").color(egui::Color32::from_rgb(100, 255, 100))).fill(egui::Color32::from_black_alpha(40))).on_hover_text("Add New Object").clicked() {
                                     let obj_idx = layer.placed_images.len();
                                     let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
@@ -220,6 +228,7 @@ pub fn render_layers_window(
                                                     if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone").clicked() { object_to_clone = Some((i, ObjectType::Text, t_idx)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Text, t_idx, -1)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Text, t_idx, 1)); }
+                                                    if ui.add(egui::Button::new(egui::RichText::new("📷").size(10.0)).frame(false)).on_hover_text("Rasterize Object").clicked() { object_to_rasterize = Some((i, ObjectType::Text, t_idx)); object_to_select = Some((i, ObjectType::Text, t_idx)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Text, object_idx: t_idx }))).clicked() {
                                                         let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Text, object_idx: t_idx };
                                                         if settings.fx_open == Some(target) { settings.fx_open = None; }
@@ -262,6 +271,7 @@ pub fn render_layers_window(
                                                     if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone").clicked() { object_to_clone = Some((i, ObjectType::Stroke, s_idx)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, s_idx, -1)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, s_idx, 1)); }
+                                                    if ui.add(egui::Button::new(egui::RichText::new("📷").size(10.0)).frame(false)).on_hover_text("Rasterize Object").clicked() { object_to_rasterize = Some((i, ObjectType::Stroke, s_idx)); object_to_select = Some((i, ObjectType::Stroke, s_idx)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: s_idx }))).clicked() {
                                                         let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: s_idx };
                                                         if settings.fx_open == Some(target) { settings.fx_open = None; }
@@ -326,6 +336,18 @@ pub fn render_layers_window(
                         project.active_layer = idx - 1;
                         project.selected_object = None;
                     }
+                }
+                if let Some((l_idx, obj_type, o_idx)) = object_to_rasterize {
+                    project.rasterize_request = Some(crate::types::RasterizeRequest {
+                        layer_idx: l_idx,
+                        object_idx: Some((obj_type, o_idx)),
+                    });
+                }
+                if let Some(idx) = layer_to_rasterize {
+                    project.rasterize_request = Some(crate::types::RasterizeRequest {
+                        layer_idx: idx,
+                        object_idx: None,
+                    });
                 }
                 if let Some(idx) = layer_to_remove {
                     if settings.prompt_delete_layer {

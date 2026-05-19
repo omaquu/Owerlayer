@@ -243,30 +243,41 @@ pub fn translate_layer(layer: &mut crate::project::Layer, delta: egui::Vec2) {
 
 pub fn scale_layer(layer: &mut crate::project::Layer, center: egui::Pos2, scale: egui::Vec2) {
     if scale.x.abs() < 0.01 || scale.y.abs() < 0.01 { return; }
+    let scale_p = |p: egui::Pos2| {
+        let rel = p - center;
+        center + egui::vec2(rel.x * scale.x, rel.y * scale.y)
+    };
 
     for img in &mut layer.placed_images {
-        let rel = img.position - center;
-        img.position = center + egui::vec2(rel.x * scale.x, rel.y * scale.y);
-        
-        let mut disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-        let mut disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-        disp_w *= scale.x;
-        disp_h *= scale.y;
-        img.display_size = Some([disp_w, disp_h]);
+        let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+        let c = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
+        let c_new = scale_p(c);
+        img.position += c_new - c;
+        img.display_size = Some([disp_w * scale.x, disp_h * scale.y]);
         img.thumbnail_dirty = true;
     }
     for s in &mut layer.strokes {
-        for p in &mut s.points {
-            let rel = *p - center;
-            *p = center + egui::vec2(rel.x * scale.x, rel.y * scale.y);
+        if s.points.is_empty() { continue; }
+        let mut min = egui::pos2(f32::MAX, f32::MAX);
+        let mut max = egui::pos2(f32::MIN, f32::MIN);
+        for &pt in &s.points {
+            min.x = min.x.min(pt.x); min.y = min.y.min(pt.y);
+            max.x = max.x.max(pt.x); max.y = max.y.max(pt.y);
         }
+        let c = egui::Rect::from_min_max(min, max).center();
+        let c_new = scale_p(c);
+        let delta = c_new - c;
+        for p in &mut s.points { *p += delta; }
         s.scale.x *= scale.x;
         s.scale.y *= scale.y;
         s.width *= (scale.x.abs() + scale.y.abs()) * 0.5;
     }
     for ann in &mut layer.text_annotations {
-        let rel = ann.position - center;
-        ann.position = center + egui::vec2(rel.x * scale.x, rel.y * scale.y);
+        let size = egui::vec2(ann.exact_size[0], ann.exact_size[1]);
+        let c = egui::Rect::from_min_size(ann.position, size).center();
+        let c_new = scale_p(c);
+        ann.position += c_new - c;
         ann.scale.x *= scale.x;
         ann.scale.y *= scale.y;
         ann.font_size *= (scale.x.abs() + scale.y.abs()) * 0.5;
@@ -280,12 +291,36 @@ pub fn rotate_layer(layer: &mut crate::project::Layer, center: egui::Pos2, angle
         let rel = p - center;
         center + egui::vec2(rel.x * cos - rel.y * sin, rel.y * cos + rel.x * sin)
     };
-    for img in &mut layer.placed_images { img.position = rot(img.position); img.rotation += angle; img.thumbnail_dirty = true; }
+    for img in &mut layer.placed_images {
+        let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+        let c = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
+        let c_new = rot(c);
+        img.position += c_new - c;
+        img.rotation += angle;
+        img.thumbnail_dirty = true;
+    }
     for s in &mut layer.strokes {
-        for p in &mut s.points { *p = rot(*p); }
+        if s.points.is_empty() { continue; }
+        let mut min = egui::pos2(f32::MAX, f32::MAX);
+        let mut max = egui::pos2(f32::MIN, f32::MIN);
+        for &pt in &s.points {
+            min.x = min.x.min(pt.x); min.y = min.y.min(pt.y);
+            max.x = max.x.max(pt.x); max.y = max.y.max(pt.y);
+        }
+        let c = egui::Rect::from_min_max(min, max).center();
+        let c_new = rot(c);
+        let delta = c_new - c;
+        for p in &mut s.points { *p += delta; }
         s.rotation += angle;
     }
-    for ann in &mut layer.text_annotations { ann.position = rot(ann.position); ann.rotation += angle; }
+    for ann in &mut layer.text_annotations {
+        let size = egui::vec2(ann.exact_size[0], ann.exact_size[1]);
+        let c = egui::Rect::from_min_size(ann.position, size).center();
+        let c_new = rot(c);
+        ann.position += c_new - c;
+        ann.rotation += angle;
+    }
 }
 
 pub fn skew_layer(layer: &mut crate::project::Layer, center: egui::Pos2, skew_delta: egui::Vec2) {
@@ -293,12 +328,36 @@ pub fn skew_layer(layer: &mut crate::project::Layer, center: egui::Pos2, skew_de
         let rel = p - center;
         center + egui::vec2(rel.x + rel.y * skew_delta.x, rel.y + rel.x * skew_delta.y)
     };
-    for img in &mut layer.placed_images { img.position = skew_p(img.position); img.skew += skew_delta; img.thumbnail_dirty = true; }
+    for img in &mut layer.placed_images {
+        let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+        let c = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
+        let c_new = skew_p(c);
+        img.position += c_new - c;
+        img.skew += skew_delta;
+        img.thumbnail_dirty = true;
+    }
     for s in &mut layer.strokes {
-        for p in &mut s.points { *p = skew_p(*p); }
+        if s.points.is_empty() { continue; }
+        let mut min = egui::pos2(f32::MAX, f32::MAX);
+        let mut max = egui::pos2(f32::MIN, f32::MIN);
+        for &pt in &s.points {
+            min.x = min.x.min(pt.x); min.y = min.y.min(pt.y);
+            max.x = max.x.max(pt.x); max.y = max.y.max(pt.y);
+        }
+        let c = egui::Rect::from_min_max(min, max).center();
+        let c_new = skew_p(c);
+        let delta = c_new - c;
+        for p in &mut s.points { *p += delta; }
         s.skew += skew_delta;
     }
-    for ann in &mut layer.text_annotations { ann.position = skew_p(ann.position); ann.skew += skew_delta; }
+    for ann in &mut layer.text_annotations {
+        let size = egui::vec2(ann.exact_size[0], ann.exact_size[1]);
+        let c = egui::Rect::from_min_size(ann.position, size).center();
+        let c_new = skew_p(c);
+        ann.position += c_new - c;
+        ann.skew += skew_delta;
+    }
 }
 
 pub fn perspective_layer(layer: &mut crate::project::Layer, p_idx: usize, delta: egui::Vec2) {
@@ -368,10 +427,12 @@ pub fn apply_mesh_filters(mesh: &mut egui::Mesh, grayscale: bool, invert: bool, 
 }
 
 pub fn apply_color_effects(mut color: egui::Color32, grayscale: bool, invert: bool, sepia: bool, glow: bool, glow_strength: f32) -> egui::Color32 {
-    let mut r = color.r() as f32 / 255.0;
-    let mut g = color.g() as f32 / 255.0;
-    let mut b = color.b() as f32 / 255.0;
-    let a = color.a();
+    if color.a() == 0 { return color; }
+    let a_f32 = color.a() as f32 / 255.0;
+
+    let mut r = (color.r() as f32 / 255.0) / a_f32;
+    let mut g = (color.g() as f32 / 255.0) / a_f32;
+    let mut b = (color.b() as f32 / 255.0) / a_f32;
 
     if grayscale {
         let gray = 0.299 * r + 0.587 * g + 0.114 * b;
@@ -392,5 +453,10 @@ pub fn apply_color_effects(mut color: egui::Color32, grayscale: bool, invert: bo
         g = (g * glow_mod).min(1.0);
         b = (b * glow_mod).min(1.0);
     }
-    egui::Color32::from_rgba_unmultiplied((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, a)
+    
+    r = (r * a_f32).clamp(0.0, 1.0);
+    g = (g * a_f32).clamp(0.0, 1.0);
+    b = (b * a_f32).clamp(0.0, 1.0);
+
+    egui::Color32::from_rgba_premultiplied((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, color.a())
 }

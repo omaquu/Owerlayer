@@ -10,6 +10,7 @@ mod project;
 mod utils;
 mod capture_thread;
 mod gl_renderer;
+mod rasterize;
 mod history;
 #[cfg(feature = "webengine")]
 mod web_engine;
@@ -69,6 +70,9 @@ struct OwerlayerApp {
     request_history_push: Option<String>,
     layer_prompt_open: bool,
     load_picker_open: bool,
+    rasterize_phase: u8,  // 0=idle, 1=isolate+render, 2=read pixels
+    rasterize_bbox: Option<[f32; 4]>,
+    rasterize_capture: rasterize::CaptureBuffer,
 }
 
 impl OwerlayerApp {
@@ -98,7 +102,7 @@ impl OwerlayerApp {
             dragging_source_rect: false,
             pending_text: None,
             show_settings_panel: false,
-            show_layers_panel: false,
+            show_layers_panel: true,
             show_exit_dialog: false,
             load_picker_open: false,
             layer_prompt_open: false,
@@ -132,6 +136,9 @@ impl OwerlayerApp {
             #[cfg(feature = "webengine")]
             web_engine_initialized: false,
             gl_renderer: cc.gl.as_ref().map(|gl| Arc::new(gl_renderer::GLRenderer::new(gl))),
+            rasterize_phase: 0,
+            rasterize_bbox: None,
+            rasterize_capture: rasterize::new_capture_buffer(),
         }
     }
 
@@ -317,6 +324,10 @@ impl OwerlayerApp {
                 layer.text_annotations.push(overlay::TextAnnotation::new(egui::pos2(110.0, 110.0), label, [255, 180, 180, 255], 14.0));
             }
         }
+        
+        if self.frame_count > 60 {
+            std::process::exit(0);
+        }
     }
 }
 
@@ -358,6 +369,7 @@ impl eframe::App for OwerlayerApp {
         // ---- 0. First-frame init ----
         if !self.initialized {
             self.initialized = true;
+            println!("DEBUG: First frame init. rasterize_phase={}, rasterize_request_is_some={}", self.rasterize_phase, self.project.rasterize_request.is_some());
             ctx.request_repaint();
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
@@ -477,7 +489,6 @@ impl eframe::App for OwerlayerApp {
                 self.line_start = None;
                 self.initial_bounds = None;
                 self.initial_center = None;
-                if !self.settings.keep_ui_visible { self.show_settings_panel = false; self.show_layers_panel = false; }
                 
                 // Save project automatically when exiting edit mode
                 self.project.save();
@@ -559,11 +570,48 @@ impl eframe::App for OwerlayerApp {
             }
         }
 
-        // ---- 5. Render UI ----
-        let show_ui = self.edit_mode || self.settings.keep_ui_visible;
-        self.capture_thread.set_fps(self.settings.capture_fps);
+        // ---- Rasterize Pipeline ----
+        if self.rasterize_phase == 0 {
+            if let Some(req) = self.project.rasterize_request {
+                let ppp = self.settings.ui_scale;
+                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                let render_offset = if self.settings.use_absolute_screen_coords {
+                    egui::vec2(wx as f32 / ppp, wy as f32 / ppp)
+                } else { egui::Vec2::ZERO };
+                if let Some(bbox) = rasterize::compute_target_bbox(&self.project, &req, render_offset) {
+                    self.rasterize_bbox = Some(bbox);
+                    self.rasterize_phase = 1;
+                    ctx.request_repaint();
+                } else {
+                    self.project.rasterize_request = None;
+                }
+            }
+        } else if self.rasterize_phase == 2 {
+            println!("DEBUG: Entering Phase 2. Taking request.");
+            let captured = if let Ok(mut buf) = self.rasterize_capture.lock() { buf.take() } else { None };
+            let req_opt = self.project.rasterize_request.take();
+            if let Some(frame) = captured {
+                if let Some(req) = req_opt {
+                    let ppp = self.settings.ui_scale;
+                    let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                    let render_offset = if self.settings.use_absolute_screen_coords {
+                        egui::vec2(wx as f32 / ppp, wy as f32 / ppp)
+                    } else { egui::Vec2::ZERO };
+                    rasterize::finalize_rasterize(&mut self.project, &req, frame, render_offset);
+                    self.history.push(&self.project, "Rasterize");
+                }
+            }
+            self.rasterize_phase = 0;
+            self.rasterize_bbox = None;
+            self.settings.fx_open = None;
+        }
 
+        // ---- 5. Render UI ----
+        let rasterizing = self.rasterize_phase == 1;
+        let show_ui = (self.edit_mode || self.settings.keep_ui_visible) && !rasterizing;
+        self.capture_thread.set_fps(self.settings.capture_fps);
         if show_ui {
+            println!("DEBUG: Frame {} | show_ui=true | edit_mode={} | rasterize_phase={} | req={:?}", self.frame_count, self.edit_mode, self.rasterize_phase, self.project.rasterize_request.is_some());
             overlay::render_mode_indicator(ctx, self.edit_mode, self.settings.hotkey.display_name(), self.settings.toggle_mode, &self.settings, &self.owl_icon);
             let mut embed_trigger = false;
             render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger, &mut self.show_history_panel, &mut self.request_history_push);
@@ -606,6 +654,7 @@ impl eframe::App for OwerlayerApp {
                 }
             }
             if self.show_layers_panel && self.edit_mode {
+                println!("DEBUG: Rendering Layers window");
                 render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.active_tool, &mut self.show_layers_panel, &mut self.filters_open, &mut self.load_picker_open);
             }
             if self.show_history_panel && self.edit_mode {
@@ -744,7 +793,16 @@ impl eframe::App for OwerlayerApp {
                     self.frame_count,
                     &self.capture_thread,
                     self.gl_renderer.clone(),
+                    self.rasterize_phase,
+                    self.rasterize_bbox,
+                    self.rasterize_capture.clone(),
                 );
+
+                // Advance rasterize phase after render
+                if self.rasterize_phase == 1 {
+                    self.rasterize_phase = 2;
+                    ctx.request_repaint();
+                }
 
                 // ── Push history if requested ──
                 if let Some(action) = self.request_history_push.take() {

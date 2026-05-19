@@ -177,20 +177,30 @@ pub fn update(ctx: &mut ToolContext) {
                         ui.separator();
 
                         // Flip buttons
-                        if let Some(sel) = project.selected_object {
-                            if ui.button("⬌").on_hover_text("Flip Horizontal").clicked() {
+                        if ui.button("⬌").on_hover_text(if project.selected_object.is_some() { "Flip Horizontal" } else { "Flip Layer Horizontal" }).clicked() {
+                            if let Some(sel) = project.selected_object {
                                 match sel.object_type {
                                     ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_h = !layer.placed_images[sel.object_idx].flipped_h; }
                                     ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_h = !layer.strokes[sel.object_idx].flipped_h; }
                                     ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_h = !layer.text_annotations[sel.object_idx].flipped_h; }
                                 }
+                            } else {
+                                for img in &mut layer.placed_images { img.flipped_h = !img.flipped_h; }
+                                for s in &mut layer.strokes { s.flipped_h = !s.flipped_h; }
+                                for ann in &mut layer.text_annotations { ann.flipped_h = !ann.flipped_h; }
                             }
-                            if ui.button("⬍").on_hover_text("Flip Vertical").clicked() {
+                        }
+                        if ui.button("⬍").on_hover_text(if project.selected_object.is_some() { "Flip Vertical" } else { "Flip Layer Vertical" }).clicked() {
+                            if let Some(sel) = project.selected_object {
                                 match sel.object_type {
                                     ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_v = !layer.placed_images[sel.object_idx].flipped_v; }
                                     ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_v = !layer.strokes[sel.object_idx].flipped_v; }
                                     ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_v = !layer.text_annotations[sel.object_idx].flipped_v; }
                                 }
+                            } else {
+                                for img in &mut layer.placed_images { img.flipped_v = !img.flipped_v; }
+                                for s in &mut layer.strokes { s.flipped_v = !s.flipped_v; }
+                                for ann in &mut layer.text_annotations { ann.flipped_v = !ann.flipped_v; }
                             }
                         }
 
@@ -440,16 +450,24 @@ pub fn update(ctx: &mut ToolContext) {
                                                 let mut ds = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32]);
                                                 ds[0] *= scale.x; ds[1] *= scale.y;
                                                 img.display_size = Some(ds);
+                                                let rel = img.position - anchor;
+                                                img.position = anchor + egui::vec2(rel.x * scale.x, rel.y * scale.y);
                                             }
                                             ObjectType::Stroke => {
                                                 let s = &mut layer.strokes[sel.object_idx];
                                                 s.scale.x *= scale.x;
                                                 s.scale.y *= scale.y;
+                                                let initial_c = initial_center.unwrap();
+                                                let diff = (anchor + (initial_c - anchor) * scale) - initial_c;
+                                                for p in &mut s.points { *p += diff; }
                                             }
                                             ObjectType::Text => {
                                                 let t = &mut layer.text_annotations[sel.object_idx];
                                                 t.scale.x *= scale.x;
                                                 t.scale.y *= scale.y;
+                                                let initial_c = initial_center.unwrap();
+                                                let diff = (anchor + (initial_c - anchor) * scale) - initial_c;
+                                                t.position += diff;
                                             }
                                         }
                                     } else {

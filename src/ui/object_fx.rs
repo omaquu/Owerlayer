@@ -9,6 +9,8 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
         let frame = crate::ui::toolbar::photoshop_frame(settings);
         let accent = color32(&settings.accent_color);
         
+        let mut request_rasterize = false;
+        
         egui::Window::new("Object Effects")
             .title_bar(false)
             .resizable(true)
@@ -107,7 +109,10 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                             }
                         } else {
                             // Unsupported FX
-                            ui.label(egui::RichText::new("Blur FX unsupported on vector strokes.").size(10.0).color(egui::Color32::from_gray(120)));
+                            ui.label(egui::RichText::new("Blur FX requires rasterized image.").size(10.0).color(egui::Color32::from_gray(120)));
+                            if ui.button("Rasterize Object").clicked() {
+                                request_rasterize = true;
+                            }
                         }
                     };
                 }
@@ -133,5 +138,12 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                     }
                 }
             });
+            
+        if request_rasterize {
+            project.rasterize_request = Some(crate::types::RasterizeRequest {
+                layer_idx: sel.layer_idx,
+                object_idx: Some((sel.object_type, sel.object_idx)),
+            });
+        }
     }
 }

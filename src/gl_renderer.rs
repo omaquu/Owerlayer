@@ -40,6 +40,7 @@ impl GLRenderer {
                 uniform bool u_sepia;
                 uniform bool u_glow;
                 uniform float u_glow_strength;
+                uniform float u_opacity;
 
                 in vec2 v_uv;
                 out vec4 f_color;
@@ -82,6 +83,11 @@ impl GLRenderer {
                     }
 
                     // Apply secondary filters
+                    float a = color.a;
+                    if (a > 0.0) {
+                        color.rgb /= a;
+                    }
+
                     if (u_grayscale) {
                         float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
                         color.rgb = vec3(gray);
@@ -97,6 +103,10 @@ impl GLRenderer {
                         );
                     }
 
+                    if (a > 0.0) {
+                        color.rgb *= a;
+                    }
+
                     if (u_glow) {
                         float glow_intensity = u_glow_strength * 0.05;
                         color.rgb += vec3(glow_intensity) * color.a;
@@ -108,6 +118,7 @@ impl GLRenderer {
                         float m = texture(u_mask, v_uv).r;
                         f_color.a *= m;
                     }
+                    f_color.a *= u_opacity;
                 }
             "#;
 
@@ -203,6 +214,8 @@ impl GLRenderer {
         sepia: bool,
         glow: bool,
         glow_strength: f32,
+        opacity: f32,
+        vertex_count: i32,
     ) {
         unsafe {
             gl.use_program(Some(self.program));
@@ -238,14 +251,21 @@ impl GLRenderer {
             let u_sep = gl.get_uniform_location(self.program, "u_sepia");
             let u_glow = gl.get_uniform_location(self.program, "u_glow");
             let u_glow_str = gl.get_uniform_location(self.program, "u_glow_strength");
+            let u_opacity = gl.get_uniform_location(self.program, "u_opacity");
+
             gl.uniform_1_i32(u_gray.as_ref(), grayscale as i32);
             gl.uniform_1_i32(u_inv.as_ref(), invert as i32);
             gl.uniform_1_i32(u_sep.as_ref(), sepia as i32);
             gl.uniform_1_i32(u_glow.as_ref(), glow as i32);
             gl.uniform_1_f32(u_glow_str.as_ref(), glow_strength);
+            gl.uniform_1_f32(u_opacity.as_ref(), opacity);
 
-            gl.bind_vertex_array(Some(self.vertex_array));
-            gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 16, 0);
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, 16, 8);
+
+            gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
         }
     }
 

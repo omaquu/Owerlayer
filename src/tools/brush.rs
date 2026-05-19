@@ -253,7 +253,7 @@ pub fn update(ctx: &mut ToolContext) {
 
 }
 
-    pub fn draw_stroke(p: &egui::Painter, s: &Stroke, _col: egui::Color32, offset: egui::Vec2, _w: f32, l_op: f32) {
+    pub fn draw_stroke(p: &egui::Painter, s: &Stroke, stroke_color: egui::Color32, offset: egui::Vec2, width: f32, l_op: f32) {
         if s.points.is_empty() { return; }
         
         // Calculate initial bounds for perspective calculation
@@ -273,57 +273,17 @@ pub fn update(ctx: &mut ToolContext) {
             transformed + offset
         }).collect();
         
-        let mut base_c = color32(&s.color);
-        let total_alpha = (base_c.a() as f32 * l_op * s.opacity) as u8;
-        base_c = egui::Color32::from_rgba_unmultiplied(base_c.r(), base_c.g(), base_c.b(), total_alpha);
-
-        let mut stroke_color = base_c;
+        let mut stroke_color = stroke_color;
         if s.brush_mode == BrushMode::Highlighter {
-            stroke_color = egui::Color32::from_rgba_unmultiplied(base_c.r(), base_c.g(), base_c.b(), (102.0 * l_op * s.opacity) as u8);
+            stroke_color = egui::Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), (stroke_color.a() as f32 * (102.0 / 255.0)) as u8);
         }
-
-        stroke_color = crate::utils::apply_color_effects(stroke_color, s.grayscale, s.invert, s.sepia, s.glow, s.glow_strength);
-
-        // --- Pass 1: Shadow (Only if stroke has shadow enabled) ---
-        if s.shadow {
-            let s_off = egui::vec2(2.0, 2.0);
-            let s_col = egui::Color32::from_black_alpha((100.0 * l_op) as u8);
-            match s.kind {
-                StrokeKind::Freehand => {
-                    if s.brush_shape == BrushShape::Round {
-                        p.add(egui::Shape::line(pts.iter().map(|&pt| pt + s_off).collect(), egui::Stroke::new(s.width, s_col)));
-                    } else {
-                        for &pt in &pts { p.rect_filled(egui::Rect::from_center_size(pt + s_off, egui::vec2(s.width, s.width)), 0.0, s_col); }
-                    }
-                }
-                _ => {} 
-            }
-        }
-
-        // --- Pass 2: Outline (Only if stroke has outline enabled) ---
-        if s.outline {
-            let o_col = if stroke_color.r() as u32 + stroke_color.g() as u32 + stroke_color.b() as u32 > 382 { egui::Color32::BLACK } else { egui::Color32::WHITE };
-            let o_col = egui::Color32::from_rgba_unmultiplied(o_col.r(), o_col.g(), o_col.b(), total_alpha);
-            let o_w = s.width + 2.0;
-            match s.kind {
-                StrokeKind::Freehand => {
-                    if s.brush_shape == BrushShape::Round {
-                        p.add(egui::Shape::line(pts.clone(), egui::Stroke::new(o_w, o_col)));
-                    } else {
-                        for &pt in &pts { p.rect_filled(egui::Rect::from_center_size(pt, egui::vec2(o_w, o_w)), 0.0, o_col); }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // --- Pass 3: Main Stroke ---
+        // Shadow and Outline are handled by draw_layer_strokes
         match s.kind {
             StrokeKind::Freehand => {
                 match s.brush_mode {
                     BrushMode::Spray => {
                         let mut rng = 42u32;
-                        let half_w = s.width * 0.5;
+                        let half_w = width * 0.5;
                         for pt in &pts {
                             for _ in 0..15 {
                                 rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
@@ -361,7 +321,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 };
                                 
                                 let cross = (dir.x * nib_dir.y - dir.y * nib_dir.x).abs();
-                                let thickness = s.width * (cross * 0.85 + 0.15); // Dynamic thickness based on angle
+                                let thickness = width * (cross * 0.85 + 0.15); // Dynamic thickness based on angle
                                 let perp = egui::vec2(-dir.y, dir.x) * thickness * 0.5;
                                 
                                 mesh.vertices.push(egui::epaint::Vertex { pos: pts[i] + perp, uv: egui::Pos2::ZERO, color: stroke_color });
@@ -376,7 +336,7 @@ pub fn update(ctx: &mut ToolContext) {
                             p.add(egui::Shape::mesh(mesh));
                         } else {
                             // Square calligraphy: Flat angled nib
-                            let perp = nib_dir * s.width * 0.5;
+                            let perp = nib_dir * width * 0.5;
                             for window in pts.windows(2) {
                                 draw_quad(p, window[0] - perp, window[0] + perp, window[1] + perp, window[1] - perp, stroke_color);
                             }
@@ -384,7 +344,7 @@ pub fn update(ctx: &mut ToolContext) {
                     }
                     BrushMode::Real => {
                         let mut rng = 42u32;
-                        let num_bristles = (s.width * 0.4).clamp(4.0, 10.0) as usize;
+                        let num_bristles = (width * 0.4).clamp(4.0, 10.0) as usize;
                         let mut bristle_offsets = Vec::new();
                         
                         for _ in 0..num_bristles {
@@ -396,9 +356,9 @@ pub fn update(ctx: &mut ToolContext) {
                             let (off_x, off_y) = if s.brush_shape == BrushShape::Round {
                                 let len = (rx*rx + ry*ry).sqrt().max(0.001);
                                 let scale = if len > 1.0 { 1.0 / len } else { 1.0 };
-                                (rx * scale * s.width * 0.45, ry * scale * s.width * 0.45)
+                                (rx * scale * width * 0.45, ry * scale * width * 0.45)
                             } else {
-                                (rx * s.width * 0.45, ry * s.width * 0.45)
+                                (rx * width * 0.45, ry * width * 0.45)
                             };
                             
                             rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
@@ -406,7 +366,7 @@ pub fn update(ctx: &mut ToolContext) {
                             let mut b_col = stroke_color;
                             b_col = egui::Color32::from_rgba_unmultiplied(b_col.r(), b_col.g(), b_col.b(), (b_col.a() as f32 * alpha_mod) as u8);
                             
-                            let b_width = (s.width * 0.25).max(1.0);
+                            let b_width = (width * 0.25).max(1.0);
                             bristle_offsets.push((egui::vec2(off_x, off_y), b_col, b_width));
                         }
                         
@@ -453,7 +413,7 @@ pub fn update(ctx: &mut ToolContext) {
                         let mut mesh = egui::Mesh::default();
                         
                         let mut smoothed: Vec<egui::Pos2> = Vec::new();
-                        let min_dist = (s.width * 0.15).clamp(2.0, 10.0);
+                        let min_dist = (width * 0.15).clamp(2.0, 10.0);
                         for &pt in &pts {
                             if smoothed.is_empty() || smoothed.last().unwrap().distance(pt) > min_dist {
                                 smoothed.push(pt);
@@ -479,7 +439,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 egui::vec2(1.0, 0.0)
                             };
 
-                            let perp = egui::vec2(-dir.y, dir.x) * s.width * 0.5;
+                            let perp = egui::vec2(-dir.y, dir.x) * width * 0.5;
                             
                             mesh.vertices.push(egui::epaint::Vertex { pos: render_pts[i] + perp, uv: egui::Pos2::ZERO, color: stroke_color });
                             mesh.vertices.push(egui::epaint::Vertex { pos: render_pts[i] - perp, uv: egui::Pos2::ZERO, color: stroke_color });
@@ -501,15 +461,15 @@ pub fn update(ctx: &mut ToolContext) {
                                     let base_angle = dir.angle() + if is_start { std::f32::consts::PI / 2.0 } else { -std::f32::consts::PI / 2.0 };
                                     for i in 0..=steps {
                                         let a = base_angle + (i as f32 / steps as f32) * std::f32::consts::PI;
-                                        let pos = pt + egui::vec2(a.cos(), a.sin()) * s.width * 0.5;
+                                        let pos = pt + egui::vec2(a.cos(), a.sin()) * width * 0.5;
                                         mesh.vertices.push(egui::epaint::Vertex { pos, uv: egui::Pos2::ZERO, color: stroke_color });
                                         if i > 0 {
                                             mesh.indices.extend_from_slice(&[center_idx, center_idx + i as u32, center_idx + i as u32 + 1]);
                                         }
                                     }
                                 } else {
-                                    let perp = egui::vec2(-dir.y, dir.x) * s.width * 0.5;
-                                    let ext = dir * if is_start { -s.width * 0.5 } else { s.width * 0.5 };
+                                    let perp = egui::vec2(-dir.y, dir.x) * width * 0.5;
+                                    let ext = dir * if is_start { -width * 0.5 } else { width * 0.5 };
                                     
                                     let p1 = pt + perp;
                                     let p2 = pt - perp;
@@ -540,7 +500,7 @@ pub fn update(ctx: &mut ToolContext) {
                     let prev = pts[pts.len()-2];
                     let dir = (end - prev).normalized();
                     let perp = egui::vec2(-dir.y, dir.x);
-                    let head_len = (s.width * 4.5).max(14.0);
+                    let head_len = (width * 4.5).max(14.0);
                     // The arrow tip should be ahead of the brush. Base is at 'end'.
                     let tip = end + dir * head_len; 
                     let p1 = end + perp * head_len * 0.45;
@@ -555,17 +515,17 @@ pub fn update(ctx: &mut ToolContext) {
                         bg_col = egui::Color32::from_rgba_unmultiplied(bg_col.r(), bg_col.g(), bg_col.b(), (bg_col.a() as f32 * l_op * s.opacity) as u8);
                         p.add(egui::Shape::convex_polygon(pts.clone(), bg_col, egui::Stroke::NONE));
                     }
-                    p.add(egui::Shape::line(pts, egui::Stroke::new(s.width, stroke_color)));
+                    p.add(egui::Shape::line(pts, egui::Stroke::new(width, stroke_color)));
                 }
             }
             StrokeKind::Line => {
                 if s.points.len() == 2 {
-                    p.line_segment([s.points[0] + offset, s.points[1] + offset], egui::Stroke::new(s.width, stroke_color));
+                    p.line_segment([s.points[0] + offset, s.points[1] + offset], egui::Stroke::new(width, stroke_color));
                 }
             }
             StrokeKind::Arrow => {
                 if s.points.len() == 2 {
-                    draw_arrow(p, s.points[0] + offset, s.points[1] + offset, s.width, stroke_color);
+                    draw_arrow(p, s.points[0] + offset, s.points[1] + offset, width, stroke_color);
                 }
             }
             StrokeKind::Rect => {
@@ -576,7 +536,7 @@ pub fn update(ctx: &mut ToolContext) {
                         bg_col = egui::Color32::from_rgba_unmultiplied(bg_col.r(), bg_col.g(), bg_col.b(), (bg_col.a() as f32 * l_op * s.opacity) as u8);
                         p.rect_filled(rect, 0.0, bg_col);
                     }
-                    p.rect_stroke(rect, 0.0, egui::Stroke::new(s.width, stroke_color), egui::StrokeKind::Middle);
+                    p.rect_stroke(rect, 0.0, egui::Stroke::new(width, stroke_color), egui::StrokeKind::Middle);
                 }
             }
             StrokeKind::Circle => {
@@ -588,7 +548,7 @@ pub fn update(ctx: &mut ToolContext) {
                         bg_col = egui::Color32::from_rgba_unmultiplied(bg_col.r(), bg_col.g(), bg_col.b(), (bg_col.a() as f32 * l_op * s.opacity) as u8);
                         p.circle_filled(center, radius, bg_col);
                     }
-                    p.circle_stroke(center, radius, egui::Stroke::new(s.width, stroke_color));
+                    p.circle_stroke(center, radius, egui::Stroke::new(width, stroke_color));
                 }
             }
             StrokeKind::Star => {
@@ -599,7 +559,7 @@ pub fn update(ctx: &mut ToolContext) {
                         let mut bg_c = color32(bg);
                         bg_c = egui::Color32::from_rgba_unmultiplied(bg_c.r(), bg_c.g(), bg_c.b(), (bg_c.a() as f32 * l_op * s.opacity) as u8);
                         bg_c
-                    }), s.width);
+                    }), width);
                 }
             }
             StrokeKind::Heart => {
@@ -610,7 +570,7 @@ pub fn update(ctx: &mut ToolContext) {
                         let mut bg_c = color32(bg);
                         bg_c = egui::Color32::from_rgba_unmultiplied(bg_c.r(), bg_c.g(), bg_c.b(), (bg_c.a() as f32 * l_op * s.opacity) as u8);
                         bg_c
-                    }), s.width);
+                    }), width);
                 }
             }
             _ => {}
@@ -621,16 +581,20 @@ pub fn draw_layer_strokes(p: &egui::Painter, layer: &crate::project::Layer, rend
     for s in layer.strokes.iter() {
         let mut stroke_c = color32(&s.color);
         stroke_c = egui::Color32::from_rgba_unmultiplied(stroke_c.r(), stroke_c.g(), stroke_c.b(), (stroke_c.a() as f32 * l_op * s.opacity) as u8);
+        stroke_c = crate::utils::apply_color_effects(stroke_c, s.grayscale, s.invert, s.sepia, s.glow, s.glow_strength);
 
-        // Layer-level shadow/outline (Only if layer explicitly has them)
-        if layer.shadow {
-            let s_col = egui::Color32::from_rgba_unmultiplied(layer.shadow_color[0], layer.shadow_color[1], layer.shadow_color[2], (layer.shadow_color[3] as f32 * l_op) as u8);
-            let offset = egui::vec2(layer.shadow_offset[0], layer.shadow_offset[1]);
+        if layer.shadow || s.shadow {
+            let (s_col_arr, s_off) = if s.shadow { (s.shadow_color, s.shadow_offset) } else { (layer.shadow_color, layer.shadow_offset) };
+            let mut s_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op * s.opacity) as u8);
+            s_col = crate::utils::apply_color_effects(s_col, s.grayscale, s.invert, s.sepia, s.glow, s.glow_strength);
+            let offset = egui::vec2(s_off[0], s_off[1]);
             draw_stroke(p, s, s_col, render_offset + offset, s.width, l_op);
         }
-        if layer.outline {
-            let o_col = egui::Color32::from_rgba_unmultiplied(layer.outline_color[0], layer.outline_color[1], layer.outline_color[2], (layer.outline_color[3] as f32 * l_op) as u8);
-            draw_stroke(p, s, o_col, render_offset, s.width + layer.outline_width, l_op);
+        if layer.outline || s.outline {
+            let (o_col_arr, o_width) = if s.outline { (s.outline_color, s.outline_width) } else { (layer.outline_color, layer.outline_width) };
+            let mut o_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op * s.opacity) as u8);
+            o_col = crate::utils::apply_color_effects(o_col, s.grayscale, s.invert, s.sepia, s.glow, s.glow_strength);
+            draw_stroke(p, s, o_col, render_offset, s.width + o_width * 2.0, l_op);
         }
         
         draw_stroke(p, s, stroke_c, render_offset, s.width, l_op);

@@ -39,6 +39,8 @@ pub struct Layer {
     pub blur: f32,
     #[serde(default)]
     pub blur_effect: crate::types::BlurEffect,
+    #[serde(default)]
+    pub locked: bool,
 }
 
 fn default_shadow_offset() -> [f32; 2] { [2.0, 2.0] }
@@ -71,6 +73,7 @@ impl Layer {
             glow_strength: 0.0,
             blur: 0.0,
             blur_effect: crate::types::BlurEffect::Gaussian,
+            locked: false,
         }
     }
 }
@@ -84,6 +87,8 @@ pub struct Project {
     pub selected_object: Option<SelectedObject>,
     #[serde(skip)]
     pub last_left_down: bool,
+    #[serde(skip)]
+    pub rasterize_request: Option<crate::types::RasterizeRequest>,
 }
 
 impl Project {
@@ -94,6 +99,7 @@ impl Project {
             active_layer: 0,
             selected_object: None,
             last_left_down: false,
+            rasterize_request: None,
         }
     }
 

@@ -59,10 +59,11 @@ impl<'a, 'b> ToolContext<'a, 'b> {
 
         // If we have a valid active layer and it's visible, check if we can reuse it
         if active_layer_idx < self.project.layers.len() && self.project.layers[active_layer_idx].visible {
+            let layer = &self.project.layers[active_layer_idx];
             let can_reuse = match self.last_tool_used {
                 Some(t) => {
                     // Reuse if same tool, or if switching from Move (neutral tool)
-                    *t == *self.active_tool || *t == Tool::Move
+                    *t == *self.active_tool || *t == Tool::Move || layer.locked
                 }
                 None => true, // App just started, use the active layer
             };

@@ -114,13 +114,11 @@ pub fn draw_layer_text(
             (c.a() as f32 * l_op * ann.opacity) as u8,
         );
 
-        let outline_col = if c.r() as u32 + c.g() as u32 + c.b() as u32 > 382 {
-            egui::Color32::from_black_alpha((255.0 * l_op * ann.opacity) as u8)
-        } else {
-            egui::Color32::from_white_alpha((255.0 * l_op * ann.opacity) as u8)
-        };
+        let (o_col_arr, o_width) = if ann.outline { (ann.outline_color, ann.outline_width) } else { (layer.outline_color, layer.outline_width) };
+        let outline_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op * ann.opacity) as u8);
 
-        let shadow_col = egui::Color32::from_black_alpha((150.0 * l_op * ann.opacity) as u8);
+        let (s_col_arr, s_off) = if ann.shadow { (ann.shadow_color, ann.shadow_offset) } else { (layer.shadow_color, layer.shadow_offset) };
+        let shadow_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op * ann.opacity) as u8);
 
         let is_gray = ann.grayscale || layer.grayscale;
         let is_inv = ann.invert || layer.invert;
@@ -142,10 +140,10 @@ pub fn draw_layer_text(
             };
 
             let mut shapes = Vec::new();
-            let sw = if ann.stroke_width > 0.0 { ann.stroke_width } else { 1.0 };
+            let sw = if o_width > 0.0 { o_width } else if ann.stroke_width > 0.0 { ann.stroke_width } else { 1.0 };
             
             if layer.shadow || ann.shadow || settings.text_shadow {
-                shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(shadow_col, egui::vec2(2.0, 2.0)) });
+                shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(shadow_col, egui::vec2(s_off[0], s_off[1])) });
             }
             if layer.outline || ann.outline || settings.text_outline {
                 for off in [egui::vec2(sw, sw), egui::vec2(-sw, -sw), egui::vec2(sw, -sw), egui::vec2(-sw, sw)] {
