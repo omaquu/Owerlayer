@@ -157,6 +157,8 @@ pub struct Stroke {
     pub shadow_color: [u8; 4],
     pub shadow_offset: [f32; 2],
     pub shadow_blur: f32,
+    #[serde(default)]
+    pub locked: bool,
 }
 
 impl Stroke {
@@ -215,6 +217,7 @@ impl Stroke {
             glow_strength: 0.0,
             blur: 0.0,
             blur_effect: BlurEffect::Gaussian,
+            locked: false,
         }
     }
 }
@@ -281,6 +284,8 @@ pub struct TextAnnotation {
     pub blur: f32,
     #[serde(default)]
     pub blur_effect: crate::overlay::BlurEffect,
+    #[serde(default)]
+    pub locked: bool,
 }
 
 impl TextAnnotation {
@@ -308,6 +313,7 @@ impl TextAnnotation {
             glow_strength: 0.0,
             blur: 0.0,
             blur_effect: crate::overlay::BlurEffect::Gaussian,
+            locked: false,
         }
     }
 }
@@ -399,6 +405,8 @@ pub struct PlacedImage {
     pub thumbnail_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     pub thumbnail_dirty: bool,
+    #[serde(default)]
+    pub locked: bool,
 }
 
 impl Clone for PlacedImage {
@@ -451,6 +459,7 @@ impl Clone for PlacedImage {
             sepia: self.sepia,
             glow: self.glow,
             glow_strength: self.glow_strength,
+            locked: self.locked,
         }
     }
 }
@@ -499,6 +508,7 @@ impl PlacedImage {
             sepia: false,
             glow: false,
             glow_strength: 0.0,
+            locked: false,
         }
     }
 }

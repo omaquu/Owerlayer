@@ -6,7 +6,15 @@ use crate::tools::ToolContext;
 
 pub fn update(ctx: &mut ToolContext) {
     if ctx.mouse.left_just_pressed {
+        if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
+            *ctx.layer_prompt_open = true;
+            return;
+        }
         ctx.auto_create_layer();
+    }
+    
+    if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
+        return;
     }
 
     let project = &mut *ctx.project;
@@ -61,7 +69,6 @@ pub fn update(ctx: &mut ToolContext) {
                         });
                     if !img_rect.contains(world_pos) {
                         project.selected_object = None;
-                        sel = None;
                         has_target_image = false;
                     }
                 }
@@ -117,7 +124,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 let color = settings.pen_color;
 
                                 // --- Canvas Expansion ---
-                                if img.rotation.abs() < 0.01 && img.skew.length() < 0.01 && img.perspective == [egui::Vec2::ZERO; 4] {
+                                if !img.locked && img.rotation.abs() < 0.01 && img.skew.length() < 0.01 && img.perspective == [egui::Vec2::ZERO; 4] {
                                     let mut min_tx = 0.0f32;
                                     let mut min_ty = 0.0f32;
                                     let mut max_tx = iw as f32;
@@ -210,12 +217,23 @@ pub fn update(ctx: &mut ToolContext) {
                                                         // Alpha-blend the brush color onto existing pixels
                                                         let src_a = color[3] as f32 / 255.0;
                                                         let dst_a = img.pixels[idx + 3] as f32 / 255.0;
-                                                        let out_a = src_a + dst_a * (1.0 - src_a);
-                                                        if out_a > 0.001 {
-                                                            img.pixels[idx]     = ((color[0] as f32 * src_a + img.pixels[idx] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
-                                                            img.pixels[idx + 1] = ((color[1] as f32 * src_a + img.pixels[idx + 1] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
-                                                            img.pixels[idx + 2] = ((color[2] as f32 * src_a + img.pixels[idx + 2] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
-                                                            img.pixels[idx + 3] = (out_a * 255.0) as u8;
+                                                        
+                                                        if img.locked {
+                                                            if dst_a > 0.001 {
+                                                                let blend_a = src_a;
+                                                                let inv_blend = 1.0 - blend_a;
+                                                                img.pixels[idx]     = (color[0] as f32 * blend_a + img.pixels[idx] as f32 * inv_blend) as u8;
+                                                                img.pixels[idx + 1] = (color[1] as f32 * blend_a + img.pixels[idx + 1] as f32 * inv_blend) as u8;
+                                                                img.pixels[idx + 2] = (color[2] as f32 * blend_a + img.pixels[idx + 2] as f32 * inv_blend) as u8;
+                                                            }
+                                                        } else {
+                                                            let out_a = src_a + dst_a * (1.0 - src_a);
+                                                            if out_a > 0.001 {
+                                                                img.pixels[idx]     = ((color[0] as f32 * src_a + img.pixels[idx] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                                                img.pixels[idx + 1] = ((color[1] as f32 * src_a + img.pixels[idx + 1] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                                                img.pixels[idx + 2] = ((color[2] as f32 * src_a + img.pixels[idx + 2] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                                                img.pixels[idx + 3] = (out_a * 255.0) as u8;
+                                                            }
                                                         }
                                                     }
                                                 }

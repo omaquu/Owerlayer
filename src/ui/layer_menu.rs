@@ -108,6 +108,12 @@ pub fn render_layers_window(
                                 ui.painter().rect_filled(drag_handle.rect.expand(2.0), 2.0, egui::Color32::from_rgba_premultiplied(200, 200, 200, 40));
                             }
 
+                            if ui.add(egui::Button::new(if layer.locked { "🔒" } else { "🔓" }).frame(false)).on_hover_text(if layer.locked { "Unlock Layer" } else { "Lock Layer" }).clicked() {
+                                layer.locked = !layer.locked;
+                                for img in &mut layer.placed_images { img.locked = layer.locked; }
+                                for s in &mut layer.strokes { s.locked = layer.locked; }
+                                for ann in &mut layer.text_annotations { ann.locked = layer.locked; }
+                            }
                             ui.checkbox(&mut layer.visible, "");
                             
                             let (thumb_rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 18.0), egui::Sense::hover());
@@ -131,9 +137,6 @@ pub fn render_layers_window(
                                     layer_to_remove = Some(i); 
                                 }
                                 if ui.button("fx").clicked() { *filters_open = Some(i); }
-                                if ui.add(egui::Button::new(egui::RichText::new(if layer.locked { "🔒" } else { "🔓" })).fill(egui::Color32::from_black_alpha(40))).on_hover_text(if layer.locked { "Unlock Layer" } else { "Lock Layer" }).clicked() {
-                                    layer.locked = !layer.locked;
-                                }
                                 if ui.button("📷").on_hover_text("Rasterize Layer").clicked() {
                                     layer_to_rasterize = Some(i);
                                 }
@@ -171,6 +174,7 @@ pub fn render_layers_window(
                                         let bg_color = if is_sel { egui::Color32::from_rgba_premultiplied(40, 80, 180, 180) } else { egui::Color32::TRANSPARENT };
                                         egui::Frame::NONE.fill(bg_color).inner_margin(egui::Margin::symmetric(4, 2)).corner_radius(4.0).show(ui, |ui| {
                                             ui.horizontal(|ui: &mut egui::Ui| {
+                                                if ui.add(egui::Button::new(if img.locked { "🔒" } else { "🔓" }).frame(false)).clicked() { img.locked = !img.locked; }
                                                 ui.checkbox(&mut img.visible, "");
                                                 let mut name = img.name.clone();
                                                 let name_resp = ui.add(egui::TextEdit::singleline(&mut name).frame(false).desired_width(100.0));
@@ -209,6 +213,7 @@ pub fn render_layers_window(
                                         let bg_color = if is_sel { egui::Color32::from_rgba_premultiplied(40, 80, 180, 180) } else { egui::Color32::TRANSPARENT };
                                         egui::Frame::NONE.fill(bg_color).inner_margin(egui::Margin::symmetric(4, 2)).corner_radius(4.0).show(ui, |ui| {
                                             ui.horizontal(|ui: &mut egui::Ui| {
+                                                if ui.add(egui::Button::new(if ann.locked { "🔒" } else { "🔓" }).frame(false)).clicked() { ann.locked = !ann.locked; }
                                                 ui.checkbox(&mut ann.visible, "");
                                                 let mut name = ann.text.clone();
                                                 let name_resp = ui.add(egui::TextEdit::singleline(&mut name).frame(false).desired_width(100.0));
@@ -253,6 +258,7 @@ pub fn render_layers_window(
                                         let bg_color = if is_sel { egui::Color32::from_rgba_premultiplied(40, 80, 180, 180) } else { egui::Color32::TRANSPARENT };
                                         egui::Frame::NONE.fill(bg_color).inner_margin(egui::Margin::symmetric(4, 2)).corner_radius(4.0).show(ui, |ui| {
                                             ui.horizontal(|ui: &mut egui::Ui| {
+                                                if ui.add(egui::Button::new(if s.locked { "🔒" } else { "🔓" }).frame(false)).clicked() { s.locked = !s.locked; }
                                                 ui.checkbox(&mut s.visible, "");
                                                 let mut name = s.name.clone();
                                                 let name_resp = ui.add(egui::TextEdit::singleline(&mut name).frame(false).desired_width(100.0));
@@ -288,6 +294,11 @@ pub fn render_layers_window(
                                     }
                                     if !freehand_indices.is_empty() {
                                         ui.horizontal(|ui: &mut egui::Ui| {
+                                            let mut all_locked = layer.strokes[freehand_indices[0]].locked;
+                                            if ui.add(egui::Button::new(if all_locked { "🔒" } else { "🔓" }).frame(false)).clicked() {
+                                                all_locked = !all_locked;
+                                                for &idx in &freehand_indices { layer.strokes[idx].locked = all_locked; }
+                                            }
                                             let is_sel = project.selected_object.map_or(false, |sel| sel.layer_idx == i && sel.object_type == ObjectType::Stroke && freehand_indices.contains(&sel.object_idx));
                                             let mut all_visible = layer.strokes[freehand_indices[0]].visible;
                                             if ui.checkbox(&mut all_visible, "").changed() {

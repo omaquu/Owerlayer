@@ -21,7 +21,15 @@ pub fn resolve_font(font: TextFont, size: f32) -> egui::FontId {
 
 pub fn update(ctx: &mut ToolContext) {
     if ctx.mouse.left_just_pressed {
+        if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
+            *ctx.layer_prompt_open = true;
+            return;
+        }
         ctx.auto_create_layer();
+    }
+    
+    if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
+        return;
     }
     if ctx.project.layers.is_empty() { return; }
     let project  = &mut *ctx.project;
