@@ -538,9 +538,9 @@ fn default_stroke_name() -> String { "Stroke".to_string() }
 fn default_text_name() -> String { "Text".to_string() }
 fn default_image_name() -> String { "Image".to_string() }
 
-fn default_outline_color() -> [u8; 4] { [0, 0, 0, 0] }
+fn default_outline_color() -> [u8; 4] { [0, 0, 0, 255] }
 fn default_outline_width() -> f32 { 1.0 }
-fn default_shadow_color() -> [u8; 4] { [0, 0, 0, 0] }
+fn default_shadow_color() -> [u8; 4] { [0, 0, 0, 255] }
 fn default_shadow_offset() -> [f32; 2] { [0.0, 0.0] }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

@@ -422,8 +422,6 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     ui.selectable_value(&mut settings.brush_mode, BrushMode::Real, "Real").on_hover_text("Real Brush Mode");
                 });
                 ui.horizontal(|ui| {
-                    ui.toggle_value(&mut settings.brush_shadow, " S ").on_hover_text("Shadow Toggle");
-                    ui.toggle_value(&mut settings.brush_outline, " O ").on_hover_text("Outline Toggle");
                     ui.toggle_value(&mut settings.brush_arrow, " > ").on_hover_text("Arrow at the end Toggle");
                 });
             }
@@ -437,8 +435,6 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
         Tool::Text => {
             ui.add(egui::DragValue::new(&mut settings.font_size).range(10.0..=200.0)).on_hover_text("Font Size");
             ui.horizontal_wrapped(|ui| {
-                ui.toggle_value(&mut settings.text_shadow, " S ").on_hover_text("Shadow");
-                ui.toggle_value(&mut settings.text_outline, " O ").on_hover_text("Outline");
                 ui.toggle_value(&mut settings.text_wave_warp, "〜").on_hover_text("Wave Warp");
             });
             ui.add(egui::Separator::default().vertical());

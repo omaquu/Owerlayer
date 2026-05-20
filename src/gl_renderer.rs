@@ -49,6 +49,13 @@ impl GLRenderer {
                     return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
                 }
 
+                vec4 sample_tex(sampler2D samp, vec2 coord) {
+                    if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0) {
+                        return vec4(0.0);
+                    }
+                    return texture(samp, coord);
+                }
+
                 void main() {
                     vec2 uv = v_uv;
                     vec4 color = vec4(0.0);
@@ -58,7 +65,7 @@ impl GLRenderer {
                         int samples = 2;
                         for(int x = -samples; x <= samples; x++) {
                             for(int y = -samples; y <= samples; y++) {
-                                color += texture(u_sampler, uv + vec2(x, y) * tex_offset);
+                                color += sample_tex(u_sampler, uv + vec2(float(x), float(y)) * tex_offset);
                             }
                         }
                         color /= pow(float(samples * 2 + 1), 2.0);
@@ -103,9 +110,7 @@ impl GLRenderer {
                         );
                     }
 
-                    if (a > 0.0) {
-                        color.rgb *= a;
-                    }
+                    color.rgb *= a;
 
                     if (u_glow) {
                         float glow_intensity = u_glow_strength * 0.05;
@@ -216,8 +221,14 @@ impl GLRenderer {
         glow_strength: f32,
         opacity: f32,
         vertex_count: i32,
+        vertices: &[f32],
     ) {
         unsafe {
+            // Bind our own VAO and VBO to avoid corrupting egui's state
+            gl.bind_vertex_array(Some(self.vertex_array));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vertex_buffer));
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(vertices), glow::DYNAMIC_DRAW);
+
             gl.use_program(Some(self.program));
             
             let u_sampler = gl.get_uniform_location(self.program, "u_sampler");
@@ -266,6 +277,10 @@ impl GLRenderer {
             gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, 16, 8);
 
             gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
+
+            // Clean up to be absolutely safe
+            gl.bind_vertex_array(None);
+            gl.use_program(None);
         }
     }
 

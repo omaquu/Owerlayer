@@ -119,24 +119,80 @@ pub fn finalize_rasterize(project: &mut Project, req: &RasterizeRequest, frame: 
 
     let w = frame.width as usize;
     let h = frame.height as usize;
+    // frame.bbox is in egui logical points; position must include render_offset for world coords
     let position = egui::pos2(frame.bbox[0], frame.bbox[1]) + render_offset;
+    // display_size is the logical size of the bbox
+    let display_w = frame.bbox[2] - frame.bbox[0];
+    let display_h = frame.bbox[3] - frame.bbox[1];
 
     let mut img = PlacedImage::new(id, position, [w, h], frame.pixels);
     img.name = "Rasterized".to_string();
-    img.display_size = Some([frame.bbox[2] - frame.bbox[0], frame.bbox[3] - frame.bbox[1]]);
+    // Physical pixels may differ from logical size due to ppp; always set display_size
+    img.display_size = Some([display_w, display_h]);
 
     let layer = &mut project.layers[req.layer_idx];
 
     match req.object_idx {
         Some((ObjectType::Stroke, idx)) => {
-            // Copy FX properties from the stroke before removing it
             if idx < layer.strokes.len() {
+                let s = &layer.strokes[idx];
+                img.name = s.name.clone();
+                img.shadow = s.shadow;
+                img.rotation = s.rotation;
+                img.flipped_h = s.flipped_h;
+                img.flipped_v = s.flipped_v;
+                img.perspective = s.perspective;
+                img.scale = s.scale;
+                img.skew = s.skew;
+                img.visible = s.visible;
+                img.opacity = s.opacity;
+                img.outline = s.outline;
+                img.outline_color = s.outline_color;
+                img.outline_width = s.outline_width;
+                img.shadow_color = s.shadow_color;
+                img.shadow_offset = s.shadow_offset;
+                img.shadow_blur = s.shadow_blur;
+                img.blur = s.blur;
+                img.blur_effect = s.blur_effect.clone();
+                img.grayscale = s.grayscale;
+                img.invert = s.invert;
+                img.sepia = s.sepia;
+                img.glow = s.glow;
+                img.glow_strength = s.glow_strength;
+                img.locked = s.locked;
+                
                 layer.strokes.remove(idx);
             }
             layer.placed_images.push(img);
         }
         Some((ObjectType::Text, idx)) => {
             if idx < layer.text_annotations.len() {
+                let t = &layer.text_annotations[idx];
+                img.name = t.name.clone();
+                img.shadow = t.shadow;
+                img.rotation = t.rotation;
+                img.flipped_h = t.flipped_h;
+                img.flipped_v = t.flipped_v;
+                img.perspective = t.perspective;
+                img.scale = t.scale;
+                img.skew = t.skew;
+                img.visible = t.visible;
+                img.opacity = t.opacity;
+                img.outline = t.outline;
+                img.outline_color = t.outline_color;
+                img.outline_width = t.outline_width;
+                img.shadow_color = t.shadow_color;
+                img.shadow_offset = t.shadow_offset;
+                img.shadow_blur = t.shadow_blur;
+                img.blur = t.blur;
+                img.blur_effect = unsafe { std::mem::transmute(t.blur_effect.clone()) }; // Transmute as they are identical layout
+                img.grayscale = t.grayscale;
+                img.invert = t.invert;
+                img.sepia = t.sepia;
+                img.glow = t.glow;
+                img.glow_strength = t.glow_strength;
+                img.locked = t.locked;
+
                 layer.text_annotations.remove(idx);
             }
             layer.placed_images.push(img);

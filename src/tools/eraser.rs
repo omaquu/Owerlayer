@@ -75,8 +75,9 @@ pub fn update(ctx: &mut ToolContext) {
                         
                         let old_strokes = std::mem::take(&mut layer.strokes);
                         for s in old_strokes {
-                            if s.kind != crate::overlay::StrokeKind::Freehand {
-                                // In pixel mode, preserve non-freehand strokes (shapes/lines)
+                            // Only split freehand strokes (solid or arrow); keep fixed shapes
+                            let is_splittable = s.kind == crate::overlay::StrokeKind::Freehand;
+                            if !is_splittable {
                                 keep_strokes.push(s);
                                 continue;
                             }

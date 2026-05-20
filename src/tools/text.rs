@@ -116,10 +116,9 @@ pub fn draw_layer_text(
 
         let font = resolve_font(ann.font, ann.font_size);
 
-        let mut c = color32(&ann.color);
-        c = egui::Color32::from_rgba_unmultiplied(
-            c.r(), c.g(), c.b(),
-            (c.a() as f32 * l_op * ann.opacity) as u8,
+        let c = egui::Color32::from_rgba_unmultiplied(
+            ann.color[0], ann.color[1], ann.color[2],
+            (ann.color[3] as f32 * l_op * ann.opacity) as u8,
         );
 
         let (o_col_arr, o_width) = if ann.outline { (ann.outline_color, ann.outline_width) } else { (layer.outline_color, layer.outline_width) };

@@ -1,6 +1,6 @@
 [package]
 name = "owerlayer"
-version = "0.6.5"
+version = "0.6.7"
 edition = "2021"
 description = "Lightweight transparent screen overlay for drawing and annotations"
 

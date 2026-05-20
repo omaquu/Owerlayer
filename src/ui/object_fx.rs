@@ -48,6 +48,9 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                             if ui.color_edit_button_srgba(&mut c).changed() {
                                 $obj.shadow_color = [c.r(), c.g(), c.b(), c.a()];
                             }
+                            ui.add_space(8.0);
+                            ui.label("Size:");
+                            ui.add(egui::Slider::new(&mut $obj.shadow_blur, 0.0..=50.0));
                         });
 
                         ui.add_space(8.0);
@@ -96,8 +99,11 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 if ui.checkbox(&mut bl, "Blur").changed() {
                                     $obj.blur = if bl { 10.0 } else { 0.0 };
                                 }
-                                if $obj.blur > 0.0 {
-                                    ui.add(egui::DragValue::new(&mut $obj.blur).range(0.0..=100.0));
+                                if bl {
+                                    let mut val = $obj.blur.max(0.2);
+                                    if ui.add(egui::DragValue::new(&mut val).range(0.2..=100.0)).changed() {
+                                        $obj.blur = val;
+                                    }
                                 }
                             });
                             if $obj.blur > 0.0 {

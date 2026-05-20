@@ -180,16 +180,6 @@ pub fn render_canvas(
         let l_op = layer.opacity;
         
         // Placed Images
-        // Shadows for images
-        for img in layer.placed_images.iter() {
-            if !img.visible { continue; }
-            if img.shadow || settings.snip_shadow {
-                let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                let shadow_rect = egui::Rect::from_min_size(img.position - render_offset + egui::vec2(6.0, 6.0), egui::vec2(disp_w, disp_h));
-                painter.rect_filled(shadow_rect, 0.0, egui::Color32::from_black_alpha((100.0 * l_op) as u8));
-            }
-        }
 
         for img in layer.placed_images.iter_mut() {
             if !img.visible { continue; }
@@ -365,43 +355,71 @@ pub fn render_canvas(
                 if img.flipped_h { final_scale.x *= -1.0; }
                 if img.flipped_v { final_scale.y *= -1.0; }
 
-                if layer.shadow || img.shadow {
+                let has_shadow = layer.shadow || img.shadow || settings.snip_shadow;
+                if has_shadow {
                     let mut s_mesh = egui::Mesh::with_texture(tex.id());
-                    let (s_col_arr, s_off) = if img.shadow { (img.shadow_color, img.shadow_offset) } else { (layer.shadow_color, layer.shadow_offset) };
-                    let s_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op) as u8);
-                    s_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, s_col);
-                    transform_mesh(&mut s_mesh, center + egui::vec2(s_off[0], s_off[1]), img.rotation, img.skew, img.perspective, final_scale);
+                    let (s_col_arr, s_off) = if img.shadow { 
+                        (img.shadow_color, img.shadow_offset) 
+                    } else if layer.shadow {
+                        (layer.shadow_color, layer.shadow_offset)
+                    } else {
+                        ([0, 0, 0, 100], [6.0, 6.0])
+                    };
+                    let s_blur = if img.shadow { img.shadow_blur } else { 0.0 };
+                    let fade = 1.0 / (1.0 + (s_blur / 10.0) * (s_blur / 10.0));
+                    let s_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op * img.opacity * fade) as u8);
+                    s_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x + s_off[0] - disp_w*0.5, center.y + s_off[1] - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, s_col);
+                    
+                    let s_scale = if s_blur > 0.0 {
+                        let scale_x = 1.0 + (s_blur / disp_w.max(1.0)) * 2.0;
+                        let scale_y = 1.0 + (s_blur / disp_h.max(1.0)) * 2.0;
+                        egui::vec2(final_scale.x * scale_x, final_scale.y * scale_y)
+                    } else {
+                        final_scale
+                    };
+                    
+                    transform_mesh(&mut s_mesh, center + egui::vec2(s_off[0], s_off[1]), img.rotation, img.skew, img.perspective, s_scale);
                     painter.add(egui::Shape::mesh(s_mesh));
                 }
 
                 if layer.outline || img.outline {
-                    let mut o_mesh = egui::Mesh::with_texture(tex.id());
                     let (o_col_arr, o_width) = if img.outline { (img.outline_color, img.outline_width) } else { (layer.outline_color, layer.outline_width) };
-                    let o_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op) as u8);
-                    o_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5 - o_width*0.5, center.y - disp_h*0.5 - o_width*0.5), egui::vec2(disp_w+o_width, disp_h+o_width)), uv, o_col);
-                    transform_mesh(&mut o_mesh, center, img.rotation, img.skew, img.perspective, final_scale);
-                    painter.add(egui::Shape::mesh(o_mesh));
+                    let o_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op * img.opacity) as u8);
+                    let steps = 8;
+                    for i in 0..steps {
+                        let angle = (i as f32) * std::f32::consts::TAU / (steps as f32);
+                        let off_x = angle.cos() * o_width;
+                        let off_y = angle.sin() * o_width;
+                        let mut o_mesh = egui::Mesh::with_texture(tex.id());
+                        o_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x + off_x - disp_w*0.5, center.y + off_y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, o_col);
+                        transform_mesh(&mut o_mesh, center + egui::vec2(off_x, off_y), img.rotation, img.skew, img.perspective, final_scale);
+                        painter.add(egui::Shape::mesh(o_mesh));
+                    }
                 }
 
-                let mut mesh = egui::Mesh::with_texture(tex.id());
+                                let mut mesh = egui::Mesh::with_texture(tex.id());
                 let color = egui::Color32::from_white_alpha((255.0 * l_op * img.opacity) as u8);
-                mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, color);
+
+                let effect_pad = if img.blur > 0.1 || img.glow { img.blur.max(img.glow_strength * 2.0).max(20.0) } else { 0.0 };
+
+                if effect_pad > 0.0 {
+                    let padded_w = disp_w + effect_pad * 2.0;
+                    let padded_h = disp_h + effect_pad * 2.0;
+                    let uv_width = uv.width();
+                    let uv_height = uv.height();
+                    let uv_min_x = uv.min.x - (effect_pad / disp_w.max(1.0)) * uv_width;
+                    let uv_min_y = uv.min.y - (effect_pad / disp_h.max(1.0)) * uv_height;
+                    let uv_max_x = uv.max.x + (effect_pad / disp_w.max(1.0)) * uv_width;
+                    let uv_max_y = uv.max.y + (effect_pad / disp_h.max(1.0)) * uv_height;
+                    let padded_uv = egui::Rect::from_min_max(egui::pos2(uv_min_x, uv_min_y), egui::pos2(uv_max_x, uv_max_y));
+                    mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - padded_w*0.5, center.y - padded_h*0.5), egui::vec2(padded_w, padded_h)), padded_uv, color);
+                } else {
+                    mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, color);
+                }
+
                 transform_mesh(&mut mesh, center, img.rotation, img.skew, img.perspective, final_scale);
 
-                // Fix: sample whole texture UVs correctly for live images
-                if img.is_live && img.source_rect.is_none() {
-                    let mut min = egui::pos2(f32::MAX, f32::MAX);
-                    let mut max = egui::pos2(f32::MIN, f32::MIN);
-                    for v in &mesh.vertices {
-                        min.x = min.x.min(v.pos.x); min.y = min.y.min(v.pos.y);
-                        max.x = max.x.max(v.pos.x); max.y = max.y.max(v.pos.y);
-                    }
-                    let aabb = egui::Rect::from_min_max(min, max);
-                    for v in &mut mesh.vertices {
-                        v.uv.x = if aabb.width() > 0.0 { (v.pos.x - aabb.min.x) / aabb.width() } else { 0.0 };
-                        v.uv.y = if aabb.height() > 0.0 { (v.pos.y - aabb.min.y) / aabb.height() } else { 0.0 };
-                    }
-                }
+                // Removed broken AABB UV fix that overwrote padded UVs
 
                 let has_gl_effect = img.blur > 0.1 || img.grayscale || img.invert || img.sepia || img.glow;
                 if has_gl_effect && gl_renderer.is_some() {
@@ -430,8 +448,7 @@ pub fn render_canvas(
                         vertices.push(v.uv.y);
                     }
 
-                    let paint_rect = mesh.calc_bounds();
-                    let effect = img.blur_effect as i32;
+                    let paint_rect = mesh.calc_bounds().expand(2.0); // Expand to prevent scissor clipping anti-aliasing
                     let strength = img.blur;
                     let grayscale = img.grayscale;
                     let invert = img.invert;
@@ -446,22 +463,15 @@ pub fn render_canvas(
                         callback: Arc::new(egui_glow::CallbackFn::new(move |_info, render_ctx: &egui_glow::Painter| {
                             let gl = render_ctx.gl();
                             
-                            // Get actual GL texture IDs
-                            let gl_tex = match tex_id {
-                                egui::TextureId::Managed(id) => glow::NativeTexture(std::num::NonZeroU32::new(id as u32).unwrap()),
-                                _ => return,
+                            // Get actual GL texture IDs via egui_glow's texture lookup
+                            let gl_tex = match render_ctx.texture(tex_id) {
+                                Some(t) => t,
+                                None => return,
                             };
-                            let gl_mask = mask_tex_id.and_then(|id| match id {
-                                egui::TextureId::Managed(mid) => Some(glow::NativeTexture(std::num::NonZeroU32::new(mid as u32).unwrap())),
-                                _ => None,
-                            });
+                            let gl_mask = mask_tex_id.and_then(|id| render_ctx.texture(id));
 
                             unsafe {
-                                // Update vertices for this specific quad
-                                gl.bind_buffer(glow::ARRAY_BUFFER, Some(renderer.vertex_buffer));
-                                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&vertices), glow::DYNAMIC_DRAW);
-
-                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia, glow, glow_strength, opacity, vertex_count);
+                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia, glow, glow_strength, opacity, vertex_count, &vertices);
                             }
                         })),
                     });
@@ -475,6 +485,36 @@ pub fn render_canvas(
         let skip_strokes = rasterize_phase == 1 && rasterize_req.map(|r| r.object_idx.is_some() && !matches!(r.object_idx, Some((crate::types::ObjectType::Stroke, _)))).unwrap_or(false);
         if !skip_strokes {
             crate::tools::brush::draw_layer_strokes(&painter, layer, -render_offset, l_op);
+
+            // Render Blur strokes as live blurred screen captures
+            for s in layer.strokes.iter() {
+                if !s.visible || s.kind != crate::types::StrokeKind::Blur || s.points.len() < 2 { continue; }
+                let rect_world = egui::Rect::from_two_pos(s.points[0], s.points[1]);
+                let rect_screen = rect_world.translate(-render_offset);
+                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                let (ox, oy) = if settings.use_absolute_screen_coords { (0, 0) } else { (wx, wy) };
+                let sx = (rect_screen.min.x * ppp).round() as i32 + ox;
+                let sy = (rect_screen.min.y * ppp).round() as i32 + oy;
+                let sw = (rect_screen.width() * ppp).round() as i32;
+                let sh = (rect_screen.height() * ppp).round() as i32;
+                if sw > 2 && sh > 2 {
+                    if let Some(mut pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh) {
+                        let blur_amt = (s.blur.max(8.0)) as usize;
+                        crate::ui::toolbar::apply_box_blur(&mut pixels, sw as usize, sh as usize, blur_amt);
+                        let color_img = egui::ColorImage::from_rgba_unmultiplied([sw as usize, sh as usize], &pixels);
+                        let tex = ui.ctx().load_texture(
+                            format!("blur_stroke_{}_{}", i, s.points[0].x as i32),
+                            color_img,
+                            egui::TextureOptions::LINEAR,
+                        );
+                        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                        let mut mesh = egui::Mesh::with_texture(tex.id());
+                        let opacity_col = egui::Color32::from_white_alpha((255.0 * l_op * s.opacity) as u8);
+                        mesh.add_rect_with_uv(rect_screen, uv, opacity_col);
+                        painter.add(egui::Shape::mesh(mesh));
+                    }
+                }
+            }
         }
 
         // Text annotations
