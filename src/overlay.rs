@@ -438,12 +438,8 @@ pub fn render_canvas(
                     let mut vertices = Vec::new();
                     for &idx in &mesh.indices {
                         let v = &mesh.vertices[idx as usize];
-                        // Map egui screen coords to GL coords (-1 to 1)
-                        let screen_size = ui.ctx().screen_rect().size();
-                        let gl_x = (v.pos.x / screen_size.x) * 2.0 - 1.0;
-                        let gl_y = 1.0 - (v.pos.y / screen_size.y) * 2.0;
-                        vertices.push(gl_x);
-                        vertices.push(gl_y);
+                        vertices.push(v.pos.x);
+                        vertices.push(v.pos.y);
                         vertices.push(v.uv.x);
                         vertices.push(v.uv.y);
                     }
@@ -463,6 +459,28 @@ pub fn render_canvas(
                         callback: Arc::new(egui_glow::CallbackFn::new(move |_info, render_ctx: &egui_glow::Painter| {
                             let gl = render_ctx.gl();
                             
+                            let ppp = _info.pixels_per_point;
+                            let screen_h_px = _info.screen_size_px[1] as f32;
+                            
+                            let x = (paint_rect.min.x * ppp).round() as i32;
+                            let y = (screen_h_px - paint_rect.max.y * ppp).round() as i32;
+                            let w = (paint_rect.width() * ppp).round() as i32;
+                            let h = (paint_rect.height() * ppp).round() as i32;
+                            
+                            if w <= 0 || h <= 0 { return; }
+                            
+                            let mut mapped_vertices = Vec::with_capacity(vertices.len());
+                            for i in (0..vertices.len()).step_by(4) {
+                                let vx = vertices[i];
+                                let vy = vertices[i+1];
+                                let gl_x = ((vx - paint_rect.min.x) / paint_rect.width().max(1.0)) * 2.0 - 1.0;
+                                let gl_y = 1.0 - ((vy - paint_rect.min.y) / paint_rect.height().max(1.0)) * 2.0;
+                                mapped_vertices.push(gl_x);
+                                mapped_vertices.push(gl_y);
+                                mapped_vertices.push(vertices[i+2]);
+                                mapped_vertices.push(vertices[i+3]);
+                            }
+                            
                             // Get actual GL texture IDs via egui_glow's texture lookup
                             let gl_tex = match render_ctx.texture(tex_id) {
                                 Some(t) => t,
@@ -470,8 +488,14 @@ pub fn render_canvas(
                             };
                             let gl_mask = mask_tex_id.and_then(|id| render_ctx.texture(id));
 
+                            let mut old_viewport = [0i32; 4];
                             unsafe {
-                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia, glow, glow_strength, opacity, vertex_count, &vertices);
+                                gl.get_parameter_i32_slice(glow::VIEWPORT, &mut old_viewport);
+                                gl.viewport(x, y, w, h);
+                                
+                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia, glow, glow_strength, opacity, vertex_count, &mapped_vertices);
+                                
+                                gl.viewport(old_viewport[0], old_viewport[1], old_viewport[2], old_viewport[3]);
                             }
                         })),
                     });
