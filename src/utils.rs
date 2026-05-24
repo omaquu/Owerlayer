@@ -447,12 +447,6 @@ pub fn apply_color_effects(mut color: egui::Color32, grayscale: bool, invert: bo
         let tb = (r * 0.272) + (g * 0.534) + (b * 0.131);
         r = tr.min(1.0); g = tg.min(1.0); b = tb.min(1.0);
     }
-    if glow {
-        let glow_mod = 1.0 + (glow_strength * 0.05);
-        r = (r * glow_mod).min(1.0);
-        g = (g * glow_mod).min(1.0);
-        b = (b * glow_mod).min(1.0);
-    }
     
     r = (r * a_f32).clamp(0.0, 1.0);
     g = (g * a_f32).clamp(0.0, 1.0);

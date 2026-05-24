@@ -136,7 +136,9 @@ pub fn render_layers_window(
                                 if ui.add(egui::Button::new(egui::RichText::new("🗑").color(egui::Color32::from_rgb(255, 60, 60))).fill(egui::Color32::from_black_alpha(40))).on_hover_text("Delete Layer").clicked() { 
                                     layer_to_remove = Some(i); 
                                 }
-                                if ui.button("fx").clicked() { *filters_open = Some(i); }
+                                let mut layer_fx_btn = egui::Button::new("fx");
+                                if layer.shadow || layer.glow || layer.outline || layer.blur > 0.0 || layer.grayscale || layer.invert || layer.sepia { layer_fx_btn = layer_fx_btn.fill(egui::Color32::from_rgb(100, 140, 200)); }
+                                if ui.add(layer_fx_btn).clicked() { *filters_open = Some(i); }
                                 if ui.button("📷").on_hover_text("Rasterize Layer").clicked() {
                                     layer_to_rasterize = Some(i);
                                 }
@@ -194,7 +196,10 @@ pub fn render_layers_window(
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Image, img_idx, -1)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Image, img_idx, 1)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone").clicked() { object_to_clone = Some((i, ObjectType::Image, img_idx)); }
-                                                    if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Image, object_idx: img_idx }))).clicked() {
+                                                    let is_open = settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Image, object_idx: img_idx });
+                                                    let mut btn = egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(is_open);
+                                                    if img.shadow || img.glow || img.outline || img.blur > 0.0 || img.grayscale || img.invert || img.sepia { btn = btn.fill(egui::Color32::from_rgb(100, 140, 200)); }
+                                                    if ui.add(btn).clicked() {
                                                         let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Image, object_idx: img_idx };
                                                         if settings.fx_open == Some(target) { settings.fx_open = None; }
                                                         else { settings.fx_open = Some(target); }
@@ -234,7 +239,10 @@ pub fn render_layers_window(
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Text, t_idx, -1)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Text, t_idx, 1)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("📷").size(10.0)).frame(false)).on_hover_text("Rasterize Object").clicked() { object_to_rasterize = Some((i, ObjectType::Text, t_idx)); object_to_select = Some((i, ObjectType::Text, t_idx)); }
-                                                    if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Text, object_idx: t_idx }))).clicked() {
+                                                    let is_open = settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Text, object_idx: t_idx });
+                                                    let mut btn = egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(is_open);
+                                                    if ann.shadow || ann.glow || ann.outline || ann.grayscale || ann.invert || ann.sepia { btn = btn.fill(egui::Color32::from_rgb(100, 140, 200)); }
+                                                    if ui.add(btn).clicked() {
                                                         let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Text, object_idx: t_idx };
                                                         if settings.fx_open == Some(target) { settings.fx_open = None; }
                                                         else { settings.fx_open = Some(target); }
@@ -278,7 +286,10 @@ pub fn render_layers_window(
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, s_idx, -1)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, s_idx, 1)); }
                                                     if ui.add(egui::Button::new(egui::RichText::new("📷").size(10.0)).frame(false)).on_hover_text("Rasterize Object").clicked() { object_to_rasterize = Some((i, ObjectType::Stroke, s_idx)); object_to_select = Some((i, ObjectType::Stroke, s_idx)); }
-                                                    if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: s_idx }))).clicked() {
+                                                    let is_open = settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: s_idx });
+                                                    let mut btn = egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(is_open);
+                                                    if s.shadow || s.glow || s.outline || s.grayscale || s.invert || s.sepia { btn = btn.fill(egui::Color32::from_rgb(100, 140, 200)); }
+                                                    if ui.add(btn).clicked() {
                                                         let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: s_idx };
                                                         if settings.fx_open == Some(target) { settings.fx_open = None; }
                                                         else { settings.fx_open = Some(target); }
@@ -314,7 +325,11 @@ pub fn render_layers_window(
                                                 if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone All").clicked() { object_to_clone = Some((i, ObjectType::Stroke, usize::MAX)); }
                                                 if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, freehand_indices[0], -1)); }
                                                 if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, freehand_indices[0], 1)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: freehand_indices[0] }))).clicked() {
+                                                let is_open = settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: freehand_indices[0] });
+                                                    let mut btn = egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(is_open);
+                                                    let first_stroke = &layer.strokes[freehand_indices[0]];
+                                                    if first_stroke.shadow || first_stroke.glow || first_stroke.outline || first_stroke.grayscale || first_stroke.invert || first_stroke.sepia { btn = btn.fill(egui::Color32::from_rgb(100, 140, 200)); }
+                                                    if ui.add(btn).clicked() {
                                                     let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: freehand_indices[0] };
                                                     if settings.fx_open == Some(target) { settings.fx_open = None; }
                                                     else { settings.fx_open = Some(target); }

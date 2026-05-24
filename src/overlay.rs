@@ -355,153 +355,202 @@ pub fn render_canvas(
                 if img.flipped_h { final_scale.x *= -1.0; }
                 if img.flipped_v { final_scale.y *= -1.0; }
 
+                let has_gl_effect = img.blur > 0.1 || img.grayscale || img.invert || img.sepia || img.glow || layer.grayscale || layer.invert || layer.sepia || layer.glow;
+                let effect_pad = if img.blur > 0.1 || layer.blur > 0.1 { img.blur.max(layer.blur).max(20.0) } else { 0.0 };
+
+                let is_gray = img.grayscale || layer.grayscale;
+                let is_inv = img.invert || layer.invert;
+                let is_sepia = img.sepia || layer.sepia;
+
+                let strength = img.blur.max(layer.blur) * 0.2;
+                let res = [img.size[0] as f32, img.size[1] as f32];
+                let time = ui.input(|i| i.time) as f32;
+                let tex_id = tex.id();
+                let mask_tex_id = img.mask_texture.as_ref().map(|t| t.id());
+                
+                let effect = match img.blur_effect {
+                    BlurEffect::Gaussian => 1,
+                    BlurEffect::Pixelate => 2,
+                    BlurEffect::Glitch => 3,
+                };
+                let layer_effect = match layer.blur_effect {
+                    BlurEffect::Gaussian => 1,
+                    BlurEffect::Pixelate => 2,
+                    BlurEffect::Glitch => 3,
+                };
+                let final_effect = if img.blur > 0.1 { effect } else if layer.blur > 0.1 { layer_effect } else { 0 };
+
+                // Draw helper closure
+                // apply_filters = true only for the main image pass, NOT for shadow/outline/glow silhouette passes
+                let draw_pass = |
+                    is_shadow: bool,
+                    apply_filters: bool,
+                    offset_x: f32, offset_y: f32,
+                    spread: f32,
+                    pass_blur_strength: f32,
+                    tint: [f32; 4],
+                    pass_opacity: f32
+                | {
+                    if pass_opacity <= 0.0 { return; }
+                    
+                    let mut mesh = egui::Mesh::with_texture(tex_id);
+                    let mut draw_scale = final_scale;
+                    
+                    let mut padded_w = disp_w;
+                    let mut padded_h = disp_h;
+                    // Only add effect_pad for the main pass (apply_filters=true)
+                    let mut pass_pad = if apply_filters { effect_pad } else if pass_blur_strength > 0.0 { pass_blur_strength.max(20.0) } else { 0.0 };
+                    
+                    if spread > 0.0 {
+                        pass_pad += spread;
+                        let scale_x = 1.0 + (spread / disp_w.max(1.0)) * 2.0;
+                        let scale_y = 1.0 + (spread / disp_h.max(1.0)) * 2.0;
+                        draw_scale.x *= scale_x;
+                        draw_scale.y *= scale_y;
+                    }
+                    
+                    if pass_pad > 0.0 {
+                        padded_w += pass_pad * 2.0;
+                        padded_h += pass_pad * 2.0;
+                        let uv_width = uv.width();
+                        let uv_height = uv.height();
+                        let uv_min_x = uv.min.x - (pass_pad / disp_w.max(1.0)) * uv_width;
+                        let uv_min_y = uv.min.y - (pass_pad / disp_h.max(1.0)) * uv_height;
+                        let uv_max_x = uv.max.x + (pass_pad / disp_w.max(1.0)) * uv_width;
+                        let uv_max_y = uv.max.y + (pass_pad / disp_h.max(1.0)) * uv_height;
+                        let padded_uv = egui::Rect::from_min_max(egui::pos2(uv_min_x, uv_min_y), egui::pos2(uv_max_x, uv_max_y));
+                        mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x + offset_x - padded_w*0.5, center.y + offset_y - padded_h*0.5), egui::vec2(padded_w, padded_h)), padded_uv, egui::Color32::WHITE);
+                    } else {
+                        mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x + offset_x - disp_w*0.5, center.y + offset_y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, egui::Color32::WHITE);
+                    }
+                    
+                    transform_mesh(&mut mesh, center + egui::vec2(offset_x, offset_y), img.rotation, img.skew, img.perspective, draw_scale);
+
+                    // For silhouette passes (shadow/outline/glow), only use GL when blur effect is active
+                    // so the blur kernel can spread the silhouette halo. Otherwise use fast software path.
+                    let use_gl = gl_renderer.is_some() && (apply_filters || final_effect > 0 || pass_blur_strength > 0.0 || spread > 0.0);
+
+                    if use_gl {
+                        let renderer = gl_renderer.as_ref().unwrap().clone();
+                        let mut vertices = Vec::new();
+                        for &idx in &mesh.indices {
+                            let v = &mesh.vertices[idx as usize];
+                            vertices.push(v.pos.x);
+                            vertices.push(v.pos.y);
+                            vertices.push(v.uv.x);
+                            vertices.push(v.uv.y);
+                        }
+                        let vertex_count = mesh.indices.len() as i32;
+                        let paint_rect = mesh.calc_bounds().expand(2.0);
+                        // Only apply color filters on the main image pass, not silhouettes
+                        let pass_gray = apply_filters && is_gray;
+                        let pass_inv  = apply_filters && is_inv;
+                        let pass_sepia = apply_filters && is_sepia;
+
+                        painter.add(egui::PaintCallback {
+                            rect: paint_rect,
+                            callback: std::sync::Arc::new(egui_glow::CallbackFn::new(move |_info, render_ctx: &egui_glow::Painter| {
+                                let gl = render_ctx.gl();
+                                let ppp = _info.pixels_per_point;
+                                let screen_h_px = _info.screen_size_px[1] as f32;
+                                
+                                let x = (paint_rect.min.x * ppp).round() as i32;
+                                let y = (screen_h_px - paint_rect.max.y * ppp).round() as i32;
+                                let w = (paint_rect.width() * ppp).round() as i32;
+                                let h = (paint_rect.height() * ppp).round() as i32;
+                                
+                                if w <= 0 || h <= 0 { return; }
+                                
+                                let mut mapped_vertices = Vec::with_capacity(vertices.len());
+                                for i in (0..vertices.len()).step_by(4) {
+                                    let vx = vertices[i];
+                                    let vy = vertices[i+1];
+                                    let gl_x = ((vx - paint_rect.min.x) / paint_rect.width().max(1.0)) * 2.0 - 1.0;
+                                    let gl_y = 1.0 - ((vy - paint_rect.min.y) / paint_rect.height().max(1.0)) * 2.0;
+                                    mapped_vertices.push(gl_x);
+                                    mapped_vertices.push(gl_y);
+                                    mapped_vertices.push(vertices[i+2]);
+                                    mapped_vertices.push(vertices[i+3]);
+                                }
+                                
+                                let gl_tex = match render_ctx.texture(tex_id) {
+                                    Some(t) => t, None => return,
+                                };
+                                let gl_mask = mask_tex_id.and_then(|id| render_ctx.texture(id));
+
+                                let mut old_viewport = [0i32; 4];
+                                unsafe {
+                                    gl.get_parameter_i32_slice(glow::VIEWPORT, &mut old_viewport);
+                                    gl.viewport(x, y, w, h);
+                                    
+                                    let actual_effect = if pass_blur_strength > 0.0 { 1 } else { final_effect };
+                                    let actual_strength = if pass_blur_strength > 0.0 { pass_blur_strength } else { strength };
+                                    renderer.render_effect(gl, gl_tex, gl_mask, actual_effect, actual_strength, res, time, pass_gray, pass_inv, pass_sepia, tint, is_shadow, pass_opacity, vertex_count, &mapped_vertices);
+                                    
+                                    gl.viewport(old_viewport[0], old_viewport[1], old_viewport[2], old_viewport[3]);
+                                }
+                            })),
+                        });
+                    } else {
+                        // Software rendering - flat tint color with texture alpha as mask
+                        // For silhouette passes, color filters applied to the tint itself (so grayscale outline becomes gray)
+                        let mut tint_col = if apply_filters {
+                            crate::utils::apply_color_effects(
+                                egui::Color32::from_rgba_unmultiplied((tint[0]*255.0) as u8, (tint[1]*255.0) as u8, (tint[2]*255.0) as u8, (tint[3]*255.0) as u8),
+                                is_gray, is_inv, is_sepia, false, 0.0
+                            )
+                        } else {
+                            egui::Color32::from_rgba_unmultiplied((tint[0]*255.0) as u8, (tint[1]*255.0) as u8, (tint[2]*255.0) as u8, (tint[3]*255.0) as u8)
+                        };
+                        let alpha = (tint_col.a() as f32 * pass_opacity).clamp(0.0, 255.0) as u8;
+                        tint_col = egui::Color32::from_rgba_unmultiplied(tint_col.r(), tint_col.g(), tint_col.b(), alpha);
+                        
+                        for v in &mut mesh.vertices {
+                            v.color = tint_col;
+                        }
+                        painter.add(egui::Shape::mesh(mesh));
+                    }
+                };
+
                 let has_shadow = layer.shadow || img.shadow || settings.snip_shadow;
                 if has_shadow {
-                    let mut s_mesh = egui::Mesh::with_texture(tex.id());
-                    let (s_col_arr, s_off) = if img.shadow { 
-                        (img.shadow_color, img.shadow_offset) 
+                    let (s_col_arr, s_off, s_spread) = if img.shadow { 
+                        (img.shadow_color, img.shadow_offset, img.shadow_spread) 
                     } else if layer.shadow {
-                        (layer.shadow_color, layer.shadow_offset)
+                        (layer.shadow_color, layer.shadow_offset, layer.shadow_spread)
                     } else {
-                        ([0, 0, 0, 100], [6.0, 6.0])
+                        ([0, 0, 0, 100], [6.0, 6.0], 0.0)
                     };
-                    let s_blur = if img.shadow { img.shadow_blur } else { 0.0 };
-                    let fade = 1.0 / (1.0 + (s_blur / 10.0) * (s_blur / 10.0));
-                    let s_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op * img.opacity * fade) as u8);
-                    s_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x + s_off[0] - disp_w*0.5, center.y + s_off[1] - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, s_col);
-                    
-                    let s_scale = if s_blur > 0.0 {
-                        let scale_x = 1.0 + (s_blur / disp_w.max(1.0)) * 2.0;
-                        let scale_y = 1.0 + (s_blur / disp_h.max(1.0)) * 2.0;
-                        egui::vec2(final_scale.x * scale_x, final_scale.y * scale_y)
-                    } else {
-                        final_scale
-                    };
-                    
-                    transform_mesh(&mut s_mesh, center + egui::vec2(s_off[0], s_off[1]), img.rotation, img.skew, img.perspective, s_scale);
-                    painter.add(egui::Shape::mesh(s_mesh));
+                    let tint = [s_col_arr[0] as f32 / 255.0, s_col_arr[1] as f32 / 255.0, s_col_arr[2] as f32 / 255.0, s_col_arr[3] as f32 / 255.0];
+                    draw_pass(true, true, s_off[0], s_off[1], s_spread, if img.shadow { img.shadow_blur } else { layer.shadow_blur }, tint, l_op * img.opacity);
                 }
 
                 if layer.outline || img.outline {
                     let (o_col_arr, o_width) = if img.outline { (img.outline_color, img.outline_width) } else { (layer.outline_color, layer.outline_width) };
-                    let o_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op * img.opacity) as u8);
+                    let tint = [o_col_arr[0] as f32 / 255.0, o_col_arr[1] as f32 / 255.0, o_col_arr[2] as f32 / 255.0, o_col_arr[3] as f32 / 255.0];
                     let steps = 8;
                     for i in 0..steps {
                         let angle = (i as f32) * std::f32::consts::TAU / (steps as f32);
                         let off_x = angle.cos() * o_width;
                         let off_y = angle.sin() * o_width;
-                        let mut o_mesh = egui::Mesh::with_texture(tex.id());
-                        o_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x + off_x - disp_w*0.5, center.y + off_y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, o_col);
-                        transform_mesh(&mut o_mesh, center + egui::vec2(off_x, off_y), img.rotation, img.skew, img.perspective, final_scale);
-                        painter.add(egui::Shape::mesh(o_mesh));
+                        draw_pass(true, true, off_x, off_y, 0.0, 0.0, tint, l_op * img.opacity);
                     }
                 }
 
-                                let mut mesh = egui::Mesh::with_texture(tex.id());
-                let color = egui::Color32::from_white_alpha((255.0 * l_op * img.opacity) as u8);
-
-                let effect_pad = if img.blur > 0.1 || img.glow { img.blur.max(img.glow_strength * 2.0).max(20.0) } else { 0.0 };
-
-                if effect_pad > 0.0 {
-                    let padded_w = disp_w + effect_pad * 2.0;
-                    let padded_h = disp_h + effect_pad * 2.0;
-                    let uv_width = uv.width();
-                    let uv_height = uv.height();
-                    let uv_min_x = uv.min.x - (effect_pad / disp_w.max(1.0)) * uv_width;
-                    let uv_min_y = uv.min.y - (effect_pad / disp_h.max(1.0)) * uv_height;
-                    let uv_max_x = uv.max.x + (effect_pad / disp_w.max(1.0)) * uv_width;
-                    let uv_max_y = uv.max.y + (effect_pad / disp_h.max(1.0)) * uv_height;
-                    let padded_uv = egui::Rect::from_min_max(egui::pos2(uv_min_x, uv_min_y), egui::pos2(uv_max_x, uv_max_y));
-                    mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - padded_w*0.5, center.y - padded_h*0.5), egui::vec2(padded_w, padded_h)), padded_uv, color);
-                } else {
-                    mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, color);
-                }
-
-                transform_mesh(&mut mesh, center, img.rotation, img.skew, img.perspective, final_scale);
-
-                // Removed broken AABB UV fix that overwrote padded UVs
-
-                let has_gl_effect = img.blur > 0.1 || img.grayscale || img.invert || img.sepia || img.glow;
-                if has_gl_effect && gl_renderer.is_some() {
-                    let renderer = gl_renderer.as_ref().unwrap().clone();
-                    let effect = match img.blur_effect {
-                        BlurEffect::Gaussian => 1,
-                        BlurEffect::Pixelate => 2,
-                        BlurEffect::Glitch => 3,
+                let has_glow = layer.glow || img.glow;
+                if has_glow {
+                    let (g_col_arr, g_str, g_spread) = if img.glow { 
+                        (img.glow_color, img.glow_strength, img.glow_spread) 
+                    } else {
+                        (layer.glow_color, layer.glow_strength, layer.glow_spread)
                     };
-                    let strength = img.blur;
-                    let res = [img.size[0] as f32, img.size[1] as f32];
-                    let time = ui.input(|i| i.time) as f32;
-                    let tex_id = tex.id();
-                    let mask_tex_id = img.mask_texture.as_ref().map(|t| t.id());
-                    
-                    let mut vertices = Vec::new();
-                    for &idx in &mesh.indices {
-                        let v = &mesh.vertices[idx as usize];
-                        vertices.push(v.pos.x);
-                        vertices.push(v.pos.y);
-                        vertices.push(v.uv.x);
-                        vertices.push(v.uv.y);
-                    }
-
-                    let paint_rect = mesh.calc_bounds().expand(2.0); // Expand to prevent scissor clipping anti-aliasing
-                    let strength = img.blur;
-                    let grayscale = img.grayscale;
-                    let invert = img.invert;
-                    let sepia = img.sepia;
-                    let glow = img.glow;
-                    let glow_strength = img.glow_strength;
-                    let opacity = l_op * img.opacity;
-                    let vertex_count = mesh.indices.len() as i32;
-
-                    painter.add(egui::PaintCallback {
-                        rect: paint_rect,
-                        callback: Arc::new(egui_glow::CallbackFn::new(move |_info, render_ctx: &egui_glow::Painter| {
-                            let gl = render_ctx.gl();
-                            
-                            let ppp = _info.pixels_per_point;
-                            let screen_h_px = _info.screen_size_px[1] as f32;
-                            
-                            let x = (paint_rect.min.x * ppp).round() as i32;
-                            let y = (screen_h_px - paint_rect.max.y * ppp).round() as i32;
-                            let w = (paint_rect.width() * ppp).round() as i32;
-                            let h = (paint_rect.height() * ppp).round() as i32;
-                            
-                            if w <= 0 || h <= 0 { return; }
-                            
-                            let mut mapped_vertices = Vec::with_capacity(vertices.len());
-                            for i in (0..vertices.len()).step_by(4) {
-                                let vx = vertices[i];
-                                let vy = vertices[i+1];
-                                let gl_x = ((vx - paint_rect.min.x) / paint_rect.width().max(1.0)) * 2.0 - 1.0;
-                                let gl_y = 1.0 - ((vy - paint_rect.min.y) / paint_rect.height().max(1.0)) * 2.0;
-                                mapped_vertices.push(gl_x);
-                                mapped_vertices.push(gl_y);
-                                mapped_vertices.push(vertices[i+2]);
-                                mapped_vertices.push(vertices[i+3]);
-                            }
-                            
-                            // Get actual GL texture IDs via egui_glow's texture lookup
-                            let gl_tex = match render_ctx.texture(tex_id) {
-                                Some(t) => t,
-                                None => return,
-                            };
-                            let gl_mask = mask_tex_id.and_then(|id| render_ctx.texture(id));
-
-                            let mut old_viewport = [0i32; 4];
-                            unsafe {
-                                gl.get_parameter_i32_slice(glow::VIEWPORT, &mut old_viewport);
-                                gl.viewport(x, y, w, h);
-                                
-                                renderer.render_effect(gl, gl_tex, gl_mask, effect, strength, res, time, grayscale, invert, sepia, glow, glow_strength, opacity, vertex_count, &mapped_vertices);
-                                
-                                gl.viewport(old_viewport[0], old_viewport[1], old_viewport[2], old_viewport[3]);
-                            }
-                        })),
-                    });
-                } else {
-                    painter.add(egui::Shape::mesh(mesh));
+                    let alpha = (g_str / 100.0).clamp(0.0, 1.0);
+                    let tint = [g_col_arr[0] as f32 / 255.0, g_col_arr[1] as f32 / 255.0, g_col_arr[2] as f32 / 255.0, g_col_arr[3] as f32 / 255.0 * alpha];
+                    // Render glow silhouette
+                    draw_pass(true, true, 0.0, 0.0, g_spread, 10.0, tint, l_op * img.opacity);
                 }
+
+                draw_pass(false, true, 0.0, 0.0, 0.0, 0.0, [1.0, 1.0, 1.0, 1.0], l_op * img.opacity);
             }
         }
 

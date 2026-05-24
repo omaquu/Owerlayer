@@ -116,29 +116,35 @@ pub fn draw_layer_text(
 
         let font = resolve_font(ann.font, ann.font_size);
 
-        let c = egui::Color32::from_rgba_unmultiplied(
+        let mut c = egui::Color32::from_rgba_unmultiplied(
             ann.color[0], ann.color[1], ann.color[2],
             (ann.color[3] as f32 * l_op * ann.opacity) as u8,
         );
 
         let (o_col_arr, o_width) = if ann.outline { (ann.outline_color, ann.outline_width) } else { (layer.outline_color, layer.outline_width) };
-        let outline_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op * ann.opacity) as u8);
+        let mut outline_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op * ann.opacity) as u8);
 
-        let (s_col_arr, s_off) = if ann.shadow { (ann.shadow_color, ann.shadow_offset) } else { (layer.shadow_color, layer.shadow_offset) };
-        let shadow_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op * ann.opacity) as u8);
+        let (s_col_arr, s_off, s_spread) = if ann.shadow { (ann.shadow_color, ann.shadow_offset, ann.shadow_spread) } else { (layer.shadow_color, layer.shadow_offset, layer.shadow_spread) };
+        let mut shadow_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op * ann.opacity) as u8);
+
+        let (g_col_arr, g_str, g_spread) = if ann.glow { (ann.glow_color, ann.glow_strength, ann.glow_spread) } else { (layer.glow_color, layer.glow_strength, layer.glow_spread) };
+        let glow_alpha = (g_col_arr[3] as f32 * l_op * ann.opacity * (g_str / 100.0).clamp(0.0, 1.0)) as u8;
+        let mut glow_col = egui::Color32::from_rgba_unmultiplied(g_col_arr[0], g_col_arr[1], g_col_arr[2], glow_alpha);
 
         let is_gray = ann.grayscale || layer.grayscale;
         let is_inv = ann.invert || layer.invert;
         let is_sepia = ann.sepia || layer.sepia;
         let is_glow = ann.glow || layer.glow;
         let glow_str = if ann.glow { ann.glow_strength } else { layer.glow_strength };
+        
+        c = crate::utils::apply_color_effects(c, is_gray, is_inv, is_sepia, false, 0.0);
+        outline_col = crate::utils::apply_color_effects(outline_col, is_gray, is_inv, is_sepia, false, 0.0);
+        shadow_col = crate::utils::apply_color_effects(shadow_col, is_gray, is_inv, is_sepia, false, 0.0);
+        glow_col = crate::utils::apply_color_effects(glow_col, is_gray, is_inv, is_sepia, false, 0.0);
 
         if ann.wave_warp {
             // ── Wave warp: render character-by-character with sinusoidal vertical offset ──
-            let wave_c = apply_color_effects(c, is_gray, is_inv, is_sepia, is_glow, glow_str);
-            let wave_out = apply_color_effects(outline_col, is_gray, is_inv, is_sepia, is_glow, glow_str);
-            let wave_shad = apply_color_effects(shadow_col, is_gray, is_inv, is_sepia, is_glow, glow_str);
-            draw_wave_text(p, ann, &font, wave_c, wave_out, wave_shad, render_offset, layer, settings, l_op, time);
+            draw_wave_text(p, ann, &font, c, outline_col, shadow_col, glow_col, s_off, s_spread, g_spread, render_offset, layer, settings, l_op, time);
         } else {
             // ── Normal rendering with proper mesh tessellation for transforms ──
             let text_shape = |color: egui::Color32, offset: egui::Vec2| {
@@ -150,11 +156,28 @@ pub fn draw_layer_text(
             let sw = if o_width > 0.0 { o_width } else if ann.stroke_width > 0.0 { ann.stroke_width } else { 1.0 };
             
             if layer.shadow || ann.shadow || settings.text_shadow {
-                shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(shadow_col, egui::vec2(s_off[0], s_off[1])) });
+                let s_size = sw + s_spread;
+                if s_spread > 0.0 {
+                    for off in [egui::vec2(s_size, s_size), egui::vec2(-s_size, -s_size), egui::vec2(s_size, -s_size), egui::vec2(-s_size, s_size)] {
+                        shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(shadow_col, egui::vec2(s_off[0], s_off[1]) + off) });
+                    }
+                } else {
+                    shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(shadow_col, egui::vec2(s_off[0], s_off[1])) });
+                }
             }
             if layer.outline || ann.outline || settings.text_outline {
                 for off in [egui::vec2(sw, sw), egui::vec2(-sw, -sw), egui::vec2(sw, -sw), egui::vec2(-sw, sw)] {
                     shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(outline_col, off) });
+                }
+            }
+            if layer.glow || ann.glow {
+                let gw = g_spread;
+                if gw > 0.0 {
+                    for off in [egui::vec2(gw, gw), egui::vec2(-gw, -gw), egui::vec2(gw, -gw), egui::vec2(-gw, gw)] {
+                        shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(glow_col, off) });
+                    }
+                } else {
+                    shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(glow_col, egui::vec2(0.0, 0.0)) });
                 }
             }
             shapes.push(egui::epaint::ClippedShape { clip_rect: egui::Rect::EVERYTHING, shape: text_shape(c, egui::vec2(0.0, 0.0)) });
@@ -199,6 +222,10 @@ fn draw_wave_text(
     c: egui::Color32,
     outline_col: egui::Color32,
     shadow_col: egui::Color32,
+    glow_col: egui::Color32,
+    s_off: [f32; 2],
+    s_spread: f32,
+    g_spread: f32,
     render_offset: egui::Vec2,
     layer: &crate::project::Layer,
     settings: &Settings,
@@ -207,7 +234,7 @@ fn draw_wave_text(
 ) {
     let wave_amplitude = ann.font_size * 0.25;
     let wave_frequency = std::f32::consts::TAU / (ann.font_size * 3.5);
-    // Approximate character width from font metrics (use ~0.55× font_size as monospace estimate)
+    // Approximate character width from font metrics (use ~0.55 * font_size as monospace estimate)
     let char_w = ann.font_size * 0.55;
     let sw = if ann.stroke_width > 0.0 { ann.stroke_width } else { 1.0 };
 
@@ -225,11 +252,29 @@ fn draw_wave_text(
         let char_pos = transformed_pos + render_offset;
 
         if layer.shadow || ann.shadow || settings.text_shadow {
-            p.add(egui::Shape::text(&p.fonts(|f| f.clone()), char_pos + egui::vec2(2.0, 2.0), egui::Align2::LEFT_TOP, &char_str, font.clone(), shadow_col));
+            let s_pos = char_pos + egui::vec2(s_off[0], s_off[1]);
+            let s_size = sw + s_spread;
+            if s_spread > 0.0 {
+                for off in [egui::vec2(s_size, s_size), egui::vec2(-s_size, -s_size), egui::vec2(s_size, -s_size), egui::vec2(-s_size, s_size)] {
+                    p.add(egui::Shape::text(&p.fonts(|f| f.clone()), s_pos + off, egui::Align2::LEFT_TOP, &char_str, font.clone(), shadow_col));
+                }
+            } else {
+                p.add(egui::Shape::text(&p.fonts(|f| f.clone()), s_pos, egui::Align2::LEFT_TOP, &char_str, font.clone(), shadow_col));
+            }
         }
         if layer.outline || ann.outline || settings.text_outline {
             for off in [egui::vec2(sw, sw), egui::vec2(-sw, -sw), egui::vec2(sw, -sw), egui::vec2(-sw, sw)] {
                 p.add(egui::Shape::text(&p.fonts(|f| f.clone()), char_pos + off, egui::Align2::LEFT_TOP, &char_str, font.clone(), outline_col));
+            }
+        }
+        if layer.glow || ann.glow {
+            let gw = g_spread;
+            if gw > 0.0 {
+                for off in [egui::vec2(gw, gw), egui::vec2(-gw, -gw), egui::vec2(gw, -gw), egui::vec2(-gw, gw)] {
+                    p.add(egui::Shape::text(&p.fonts(|f| f.clone()), char_pos + off, egui::Align2::LEFT_TOP, &char_str, font.clone(), glow_col));
+                }
+            } else {
+                p.add(egui::Shape::text(&p.fonts(|f| f.clone()), char_pos, egui::Align2::LEFT_TOP, &char_str, font.clone(), glow_col));
             }
         }
         p.add(egui::Shape::text(&p.fonts(|f| f.clone()), char_pos, egui::Align2::LEFT_TOP, &char_str, font.clone(), c));

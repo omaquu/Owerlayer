@@ -124,12 +124,18 @@ pub struct Stroke {
     pub glow: bool,
     #[serde(default)]
     pub glow_strength: f32,
+    #[serde(default = "default_glow_color")]
+    pub glow_color: [u8; 4],
+    #[serde(default)]
+    pub glow_spread: f32,
     #[serde(default)]
     pub blur: f32,
     #[serde(default)]
     pub blur_effect: crate::types::BlurEffect,
     #[serde(default)]
     pub shadow: bool,
+    #[serde(default)]
+    pub shadow_spread: f32,
     #[serde(default)]
     pub rotation: f32,
     #[serde(default)]
@@ -193,7 +199,7 @@ impl Stroke {
             kind,
             brush_mode,
             background_color,
-            shadow,
+            shadow, shadow_spread: 0.0,
             brush_shape,
             outline,
             arrow,
@@ -214,7 +220,7 @@ impl Stroke {
             invert: false,
             sepia: false,
             glow: false,
-            glow_strength: 0.0,
+            glow_strength: 0.0, glow_color: [255, 255, 255, 255], glow_spread: 0.0,
             blur: 0.0,
             blur_effect: BlurEffect::Gaussian,
             locked: false,
@@ -235,6 +241,8 @@ pub struct TextAnnotation {
     pub font_size: f32,
     pub monospace: bool,
     pub shadow: bool,
+    #[serde(default)]
+    pub shadow_spread: f32,
     pub outline: bool,
     #[serde(default = "default_outline_color")]
     pub outline_color: [u8; 4],
@@ -280,6 +288,10 @@ pub struct TextAnnotation {
     pub glow: bool,
     #[serde(default)]
     pub glow_strength: f32,
+    #[serde(default = "default_glow_color")]
+    pub glow_color: [u8; 4],
+    #[serde(default)]
+    pub glow_spread: f32,
     #[serde(default)]
     pub blur: f32,
     #[serde(default)]
@@ -295,7 +307,7 @@ impl TextAnnotation {
             position, text, color, font_size,
             monospace: false, shadow: false, outline: false,
             outline_color: [0, 0, 0, 0], outline_width: 1.0,
-            shadow_color: [0, 0, 0, 0], shadow_offset: [0.0, 0.0], shadow_blur: 0.0,
+            shadow_color: [0, 0, 0, 0], shadow_offset: [0.0, 0.0], shadow_blur: 0.0, shadow_spread: 0.0,
             stroke_width: 1.0,
             rotation: 0.0, flipped_h: false, flipped_v: false,
             perspective: [egui::Vec2::ZERO; 4],
@@ -310,7 +322,7 @@ impl TextAnnotation {
             invert: false,
             sepia: false,
             glow: false,
-            glow_strength: 0.0,
+            glow_strength: 0.0, glow_color: [255, 255, 255, 255], glow_spread: 0.0,
             blur: 0.0,
             blur_effect: crate::overlay::BlurEffect::Gaussian,
             locked: false,
@@ -336,6 +348,8 @@ pub struct PlacedImage {
     #[serde(skip)]
     pub texture: Option<egui::TextureHandle>,
     pub shadow: bool,
+    #[serde(default)]
+    pub shadow_spread: f32,
     pub rotation: f32,
     pub flipped_h: bool,
     pub flipped_v: bool,
@@ -378,6 +392,10 @@ pub struct PlacedImage {
     pub glow: bool,
     #[serde(default)]
     pub glow_strength: f32,
+    #[serde(default = "default_glow_color")]
+    pub glow_color: [u8; 4],
+    #[serde(default)]
+    pub glow_spread: f32,
     #[serde(skip)]
     pub mask: Option<Vec<u8>>,
     #[serde(skip)]
@@ -420,6 +438,14 @@ impl Clone for PlacedImage {
             pixels: self.pixels.clone(),
             texture: None,
             shadow: self.shadow,
+            shadow_spread: self.shadow_spread,
+            shadow_offset: self.shadow_offset,
+            shadow_color: self.shadow_color,
+            shadow_blur: self.shadow_blur,
+            glow: self.glow,
+            glow_strength: self.glow_strength,
+            glow_color: self.glow_color,
+            glow_spread: self.glow_spread,
             rotation: self.rotation,
             flipped_h: self.flipped_h,
             flipped_v: self.flipped_v,
@@ -432,9 +458,10 @@ impl Clone for PlacedImage {
             outline: self.outline,
             outline_color: self.outline_color,
             outline_width: self.outline_width,
-            shadow_color: self.shadow_color,
-            shadow_offset: self.shadow_offset,
-            shadow_blur: self.shadow_blur,
+            
+            
+            
+            
             source_rect: self.source_rect,
             url: self.url.clone(),
             blur: self.blur,
@@ -457,8 +484,8 @@ impl Clone for PlacedImage {
             grayscale: self.grayscale,
             invert: self.invert,
             sepia: self.sepia,
-            glow: self.glow,
-            glow_strength: self.glow_strength,
+            
+            
             locked: self.locked,
         }
     }
@@ -484,6 +511,7 @@ impl PlacedImage {
             shadow_color: [0, 0, 0, 0],
             shadow_offset: [0.0, 0.0],
             shadow_blur: 0.0,
+            shadow_spread: 0.0,
             source_rect: None,
             url: None,
             blur: 0.0,
@@ -508,6 +536,8 @@ impl PlacedImage {
             sepia: false,
             glow: false,
             glow_strength: 0.0,
+            glow_color: [255, 255, 255, 255],
+            glow_spread: 0.0,
             locked: false,
         }
     }
@@ -542,6 +572,7 @@ fn default_outline_color() -> [u8; 4] { [0, 0, 0, 255] }
 fn default_outline_width() -> f32 { 1.0 }
 fn default_shadow_color() -> [u8; 4] { [0, 0, 0, 255] }
 fn default_shadow_offset() -> [f32; 2] { [0.0, 0.0] }
+fn default_glow_color() -> [u8; 4] { [255, 255, 255, 255] }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EraserMode { Stroke, Pixel }

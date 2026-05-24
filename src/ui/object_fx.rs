@@ -1,4 +1,4 @@
-use eframe::egui;
+﻿use eframe::egui;
 use crate::project::Project;
 use crate::types::{Settings, ObjectType};
 use crate::utils::color32;
@@ -37,36 +37,40 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                     ($obj:expr, $is_vector:expr) => {
                         section_heading(ui, "Shadow / Glow", accent);
                         ui.checkbox(&mut $obj.shadow, "Enable Drop Shadow");
-                        ui.horizontal(|ui| {
-                            ui.label("Distance:");
-                            ui.add(egui::DragValue::new(&mut $obj.shadow_offset[0]).speed(0.1).prefix("X:"));
-                            ui.add(egui::DragValue::new(&mut $obj.shadow_offset[1]).speed(0.1).prefix("Y:"));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Color:");
-                            let mut c = egui::Color32::from_rgba_unmultiplied($obj.shadow_color[0], $obj.shadow_color[1], $obj.shadow_color[2], $obj.shadow_color[3]);
-                            if ui.color_edit_button_srgba(&mut c).changed() {
-                                $obj.shadow_color = [c.r(), c.g(), c.b(), c.a()];
-                            }
-                            ui.add_space(8.0);
-                            ui.label("Size:");
-                            ui.add(egui::Slider::new(&mut $obj.shadow_blur, 0.0..=50.0));
-                        });
+                        if $obj.shadow {
+                            ui.horizontal(|ui| {
+                                ui.label("Distance:");
+                                ui.add(egui::DragValue::new(&mut $obj.shadow_offset[0]).speed(0.1).prefix("X:"));
+                                ui.add(egui::DragValue::new(&mut $obj.shadow_offset[1]).speed(0.1).prefix("Y:"));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Color:");
+                                let mut c = egui::Color32::from_rgba_unmultiplied($obj.shadow_color[0], $obj.shadow_color[1], $obj.shadow_color[2], $obj.shadow_color[3]);
+                                if ui.color_edit_button_srgba(&mut c).changed() {
+                                    $obj.shadow_color = [c.r(), c.g(), c.b(), c.a()];
+                                }
+                                ui.add_space(8.0);
+                                ui.label("Spread:");
+                                ui.add(egui::Slider::new(&mut $obj.shadow_blur, 0.0..=50.0));
+                            });
+                        }
 
                         ui.add_space(8.0);
                         section_heading(ui, "Outline / Stroke", accent);
                         ui.checkbox(&mut $obj.outline, "Enable Outline");
-                        ui.horizontal(|ui| {
-                            ui.label("Thickness:");
-                            ui.add(egui::Slider::new(&mut $obj.outline_width, 0.5..=20.0));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Color:");
-                            let mut c = egui::Color32::from_rgba_unmultiplied($obj.outline_color[0], $obj.outline_color[1], $obj.outline_color[2], $obj.outline_color[3]);
-                            if ui.color_edit_button_srgba(&mut c).changed() {
-                                $obj.outline_color = [c.r(), c.g(), c.b(), c.a()];
-                            }
-                        });
+                        if $obj.outline {
+                            ui.horizontal(|ui| {
+                                ui.label("Thickness:");
+                                ui.add(egui::Slider::new(&mut $obj.outline_width, 0.5..=20.0));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Color:");
+                                let mut c = egui::Color32::from_rgba_unmultiplied($obj.outline_color[0], $obj.outline_color[1], $obj.outline_color[2], $obj.outline_color[3]);
+                                if ui.color_edit_button_srgba(&mut c).changed() {
+                                    $obj.outline_color = [c.r(), c.g(), c.b(), c.a()];
+                                }
+                            });
+                        }
 
                         ui.add_space(8.0);
                         section_heading(ui, "Opacity & Visibility", accent);
@@ -86,12 +90,23 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                             ui.checkbox(&mut $obj.invert, "Invert");
                             ui.checkbox(&mut $obj.sepia, "Sepia");
                         });
+                        
                         ui.horizontal(|ui| {
                             ui.checkbox(&mut $obj.glow, "Glow");
-                            if $obj.glow {
-                                ui.add(egui::DragValue::new(&mut $obj.glow_strength).range(0.0..=100.0).prefix("Glow: "));
-                            }
                         });
+                        if $obj.glow {
+                            ui.horizontal(|ui| {
+                                ui.label("Color:");
+                                let mut gc = egui::Color32::from_rgba_unmultiplied($obj.glow_color[0], $obj.glow_color[1], $obj.glow_color[2], $obj.glow_color[3]);
+                                if ui.color_edit_button_srgba(&mut gc).changed() {
+                                    $obj.glow_color = [gc.r(), gc.g(), gc.b(), gc.a()];
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Strength:");
+                                ui.add(egui::Slider::new(&mut $obj.glow_strength, 0.0..=100.0).suffix("%"));
+                            });
+                        }
                         
                         if !$is_vector {
                             ui.horizontal(|ui| {
@@ -100,9 +115,9 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                     $obj.blur = if bl { 10.0 } else { 0.0 };
                                 }
                                 if bl {
-                                    let mut val = $obj.blur.max(0.2);
-                                    if ui.add(egui::DragValue::new(&mut val).range(0.2..=100.0)).changed() {
-                                        $obj.blur = val;
+                                    let mut val = $obj.blur;
+                                    if ui.add(egui::Slider::new(&mut val, 0.0..=100.0)).changed() {
+                                        $obj.blur = if val < 0.01 { 0.01 } else { val };
                                     }
                                 }
                             });
@@ -114,7 +129,6 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 });
                             }
                         } else {
-                            // Unsupported FX
                             ui.label(egui::RichText::new("Blur FX requires rasterized image.").size(10.0).color(egui::Color32::from_gray(120)));
                             if ui.button("Rasterize Object").clicked() {
                                 request_rasterize = true;

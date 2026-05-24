@@ -38,8 +38,8 @@ impl GLRenderer {
                 uniform bool u_grayscale;
                 uniform bool u_invert;
                 uniform bool u_sepia;
-                uniform bool u_glow;
-                uniform float u_glow_strength;
+                uniform vec4 u_tint;
+                uniform bool u_shadow_mode;
                 uniform float u_opacity;
 
                 in vec2 v_uv;
@@ -73,20 +73,20 @@ impl GLRenderer {
                         float pixel_size = max(1.0, u_strength);
                         vec2 p = uv * u_resolution;
                         p = floor(p / pixel_size) * pixel_size;
-                        color = texture(u_sampler, p / u_resolution);
+                        color = sample_tex(u_sampler, p / u_resolution);
                     } else if (u_effect == 3) { // VHS Glitch
                         float strength = u_strength * 0.02;
                         float jitter = (rand(vec2(u_time, uv.y)) - 0.5) * strength;
                         vec2 jittered_uv = uv + vec2(jitter, 0.0);
                         
-                        float r = texture(u_sampler, jittered_uv + vec2(strength * 0.5, 0.0)).r;
-                        float g = texture(u_sampler, jittered_uv).g;
-                        float b = texture(u_sampler, jittered_uv - vec2(strength * 0.5, 0.0)).b;
+                        float r = sample_tex(u_sampler, jittered_uv + vec2(strength * 0.5, 0.0)).r;
+                        float g = sample_tex(u_sampler, jittered_uv).g;
+                        float b = sample_tex(u_sampler, jittered_uv - vec2(strength * 0.5, 0.0)).b;
                         
                         float scanline = sin(uv.y * u_resolution.y * 0.8) * 0.05;
-                        color = vec4(r - scanline, g - scanline, b - scanline, texture(u_sampler, jittered_uv).a);
+                        color = vec4(r - scanline, g - scanline, b - scanline, sample_tex(u_sampler, jittered_uv).a);
                     } else {
-                        color = texture(u_sampler, uv);
+                        color = sample_tex(u_sampler, uv);
                     }
 
                     // Apply secondary filters
@@ -112,18 +112,23 @@ impl GLRenderer {
 
                     color.rgb *= a;
 
-                    if (u_glow) {
-                        float glow_intensity = u_glow_strength * 0.05;
-                        color.rgb += vec3(glow_intensity) * color.a;
+                    if (u_shadow_mode) {
+                        color.rgb = u_tint.rgb * color.a * u_tint.a;
+                        color.a *= u_tint.a;
+                    } else {
+                        color.rgb *= u_tint.rgb;
+                        color.a *= u_tint.a;
                     }
-
-                    f_color = color;
 
                     if (u_has_mask) {
                         float m = texture(u_mask, v_uv).r;
-                        f_color.a *= m;
+                        color.rgb *= m;
+                        color.a *= m;
                     }
-                    f_color.a *= u_opacity;
+                    color.rgb *= u_opacity;
+                    color.a *= u_opacity;
+
+                    f_color = color;
                 }
             "#;
 
@@ -217,8 +222,8 @@ impl GLRenderer {
         grayscale: bool,
         invert: bool,
         sepia: bool,
-        glow: bool,
-        glow_strength: f32,
+        tint: [f32; 4],
+        shadow_mode: bool,
         opacity: f32,
         vertex_count: i32,
         vertices: &[f32],
@@ -260,15 +265,15 @@ impl GLRenderer {
             let u_gray = gl.get_uniform_location(self.program, "u_grayscale");
             let u_inv = gl.get_uniform_location(self.program, "u_invert");
             let u_sep = gl.get_uniform_location(self.program, "u_sepia");
-            let u_glow = gl.get_uniform_location(self.program, "u_glow");
-            let u_glow_str = gl.get_uniform_location(self.program, "u_glow_strength");
+            let u_tint = gl.get_uniform_location(self.program, "u_tint");
+            let u_shadow_mode = gl.get_uniform_location(self.program, "u_shadow_mode");
             let u_opacity = gl.get_uniform_location(self.program, "u_opacity");
 
             gl.uniform_1_i32(u_gray.as_ref(), grayscale as i32);
             gl.uniform_1_i32(u_inv.as_ref(), invert as i32);
             gl.uniform_1_i32(u_sep.as_ref(), sepia as i32);
-            gl.uniform_1_i32(u_glow.as_ref(), glow as i32);
-            gl.uniform_1_f32(u_glow_str.as_ref(), glow_strength);
+            gl.uniform_4_f32(u_tint.as_ref(), tint[0], tint[1], tint[2], tint[3]);
+            gl.uniform_1_i32(u_shadow_mode.as_ref(), shadow_mode as i32);
             gl.uniform_1_f32(u_opacity.as_ref(), opacity);
 
             gl.enable_vertex_attrib_array(0);

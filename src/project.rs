@@ -13,8 +13,12 @@ pub struct Layer {
     pub placed_images: Vec<PlacedImage>,
     #[serde(default)]
     pub shadow: bool,
+    #[serde(default)]
+    pub shadow_spread: f32,
     #[serde(default = "default_shadow_offset")]
     pub shadow_offset: [f32; 2],
+    #[serde(default)]
+    pub shadow_blur: f32,
     #[serde(default = "default_shadow_color")]
     pub shadow_color: [u8; 4],
     #[serde(default)]
@@ -35,6 +39,10 @@ pub struct Layer {
     pub glow: bool,
     #[serde(default)]
     pub glow_strength: f32,
+    #[serde(default = "default_glow_color")]
+    pub glow_color: [u8; 4],
+    #[serde(default)]
+    pub glow_spread: f32,
     #[serde(default)]
     pub blur: f32,
     #[serde(default)]
@@ -48,6 +56,7 @@ pub struct Layer {
 
 fn default_shadow_offset() -> [f32; 2] { [2.0, 2.0] }
 fn default_shadow_color() -> [u8; 4] { [0, 0, 0, 128] }
+fn default_glow_color() -> [u8; 4] { [255, 255, 255, 255] }
 fn default_outline_width() -> f32 { 1.0 }
 fn default_outline_color() -> [u8; 4] { [255, 255, 255, 255] }
 
@@ -63,7 +72,9 @@ impl Layer {
             text_annotations: Vec::new(),
             placed_images: Vec::new(),
             shadow: false,
+            shadow_spread: 0.0,
             shadow_offset: [2.0, 2.0],
+            shadow_blur: 0.0,
             shadow_color: [0, 0, 0, 128],
             outline: false,
             outline_width: 1.0,
@@ -74,6 +85,8 @@ impl Layer {
             sepia: false,
             glow: false,
             glow_strength: 0.0,
+            glow_color: default_glow_color(),
+            glow_spread: 0.0,
             blur: 0.0,
             blur_effect: crate::types::BlurEffect::Gaussian,
             locked: false,

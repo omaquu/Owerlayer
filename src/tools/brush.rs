@@ -757,23 +757,31 @@ pub fn draw_layer_strokes(p: &egui::Painter, layer: &crate::project::Layer, rend
     for s in layer.strokes.iter() {
         let mut stroke_c = color32(&s.color);
         stroke_c = egui::Color32::from_rgba_unmultiplied(stroke_c.r(), stroke_c.g(), stroke_c.b(), (stroke_c.a() as f32 * l_op * s.opacity) as u8);
-        stroke_c = crate::utils::apply_color_effects(stroke_c, s.grayscale, s.invert, s.sepia, s.glow, s.glow_strength);
+        stroke_c = crate::utils::apply_color_effects(stroke_c, s.grayscale, s.invert, s.sepia, false, 0.0);
 
         if layer.shadow || s.shadow {
-            let (s_col_arr, s_off) = if s.shadow { (s.shadow_color, s.shadow_offset) } else { (layer.shadow_color, layer.shadow_offset) };
+            let (s_col_arr, s_off, s_spread) = if s.shadow { (s.shadow_color, s.shadow_offset, s.shadow_spread) } else { (layer.shadow_color, layer.shadow_offset, layer.shadow_spread) };
             let mut s_col = egui::Color32::from_rgba_unmultiplied(s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * l_op * s.opacity) as u8);
-            s_col = crate::utils::apply_color_effects(s_col, s.grayscale, s.invert, s.sepia, s.glow, s.glow_strength);
+            s_col = crate::utils::apply_color_effects(s_col, s.grayscale, s.invert, s.sepia, false, 0.0);
             let offset = egui::vec2(s_off[0], s_off[1]);
-            draw_stroke(p, s, s_col, render_offset + offset, s.width, l_op);
+            draw_stroke(p, s, s_col, render_offset + offset, s.width + s_spread * 2.0, l_op);
         }
         if layer.outline || s.outline {
             let (o_col_arr, o_width) = if s.outline { (s.outline_color, s.outline_width) } else { (layer.outline_color, layer.outline_width) };
             let mut o_col = egui::Color32::from_rgba_unmultiplied(o_col_arr[0], o_col_arr[1], o_col_arr[2], (o_col_arr[3] as f32 * l_op * s.opacity) as u8);
-            o_col = crate::utils::apply_color_effects(o_col, s.grayscale, s.invert, s.sepia, s.glow, s.glow_strength);
+            o_col = crate::utils::apply_color_effects(o_col, s.grayscale, s.invert, s.sepia, false, 0.0);
             draw_stroke(p, s, o_col, render_offset, s.width + o_width * 2.0, l_op);
         }
         
         draw_stroke(p, s, stroke_c, render_offset, s.width, l_op);
+
+        if layer.glow || s.glow {
+            let (g_col_arr, g_str, g_spread) = if s.glow { (s.glow_color, s.glow_strength, s.glow_spread) } else { (layer.glow_color, layer.glow_strength, layer.glow_spread) };
+            let glow_alpha = (g_col_arr[3] as f32 * l_op * s.opacity * (g_str / 100.0).clamp(0.0, 1.0)) as u8;
+            let mut g_col = egui::Color32::from_rgba_unmultiplied(g_col_arr[0], g_col_arr[1], g_col_arr[2], glow_alpha);
+            g_col = crate::utils::apply_color_effects(g_col, s.grayscale, s.invert, s.sepia, false, 0.0);
+            draw_stroke(p, s, g_col, render_offset, s.width + g_spread * 2.0, l_op);
+        }
     }
 }
 
