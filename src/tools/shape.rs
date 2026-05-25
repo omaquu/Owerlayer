@@ -5,16 +5,9 @@ use crate::overlay::*;
 use crate::tools::ToolContext;
 
 pub fn update(ctx: &mut ToolContext) {
+    if *ctx.layer_prompt_open { return; }
     if ctx.mouse.left_just_pressed {
-        if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
-            *ctx.layer_prompt_open = true;
-            return;
-        }
         ctx.auto_create_layer();
-    }
-    
-    if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
-        return;
     }
 
     let project = &mut *ctx.project;
@@ -41,9 +34,17 @@ pub fn update(ctx: &mut ToolContext) {
                         let mut final_points = current_stroke.clone();
                         final_points.push(final_points[0]);
                         let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false);
-                        layer.strokes.push(s);
+                        let is_locked = layer.locked;
+                        let ask_mode = settings.auto_new_layer.is_none();
+                        if is_locked || ask_mode {
+                            *ctx.pending_stroke = Some(s);
+                            *ctx.layer_prompt_open = true;
+                        } else {
+                            layer.strokes.push(s);
+                            layer.expanded = true;
+                            *ctx.request_history_push = Some("Shape".into());
+                        }
                         current_stroke.clear();
-                        *ctx.request_history_push = Some("Shape".into());
                     }
                 } else {
                     if left_just_pressed { 
@@ -60,8 +61,16 @@ pub fn update(ctx: &mut ToolContext) {
                                 _ => StrokeKind::Rect,
                             };
                             let s = Stroke::new(vec![start, pos], settings.pen_color, settings.stroke_width, kind, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false);
-                            layer.strokes.push(s);
-                            *ctx.request_history_push = Some("Shape".into());
+                            let is_locked = layer.locked;
+                            let ask_mode = settings.auto_new_layer.is_none();
+                            if is_locked || ask_mode {
+                                *ctx.pending_stroke = Some(s);
+                                *ctx.layer_prompt_open = true;
+                            } else {
+                                layer.strokes.push(s);
+                                layer.expanded = true;
+                                *ctx.request_history_push = Some("Shape".into());
+                            }
                         }
                     }
                 }

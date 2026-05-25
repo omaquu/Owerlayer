@@ -77,6 +77,7 @@ pub fn render_canvas(
     drag_state: &mut usize,
     dragging_source_rect: &mut bool,
     pending_text: &mut Option<PendingText>,
+    pending_stroke: &mut Option<Stroke>,
     last_tool_used: &mut Option<Tool>,
     edit_mode: bool,
     layer_prompt_open: &mut bool,
@@ -180,6 +181,7 @@ pub fn render_canvas(
         let l_op = layer.opacity;
         
         // Placed Images
+        let live_count = layer.placed_images.iter().filter(|img| img.is_live).count();
 
         for img in layer.placed_images.iter_mut() {
             if !img.visible { continue; }
@@ -201,72 +203,51 @@ pub fn render_canvas(
                             img.texture = None; // force texture rebuild
                         }
                     }
-                } else {
-                // ── Screen-region live mode (blur/mirror) ──
-                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
-                let (ox, oy) = if settings.use_absolute_screen_coords { (0, 0) } else { (wx, wy) };
-                
-                let (sx, sy, sw, sh) = if let Some(src) = img.source_rect {
-                    // src is logical points. Convert to physical pixels for capture.
-                    (
-                        ((src[0] * ppp).round()) as i32 + ox,
-                        ((src[1] * ppp).round()) as i32 + oy,
-                        ((src[2] * ppp).round()) as i32,
-                        ((src[3] * ppp).round()) as i32
-                    )
-                } else {
-                    let mut dummy_mesh = egui::Mesh::default();
-                    dummy_mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)), egui::Rect::from_min_max(egui::pos2(0.0,0.0), egui::pos2(1.0,1.0)), egui::Color32::WHITE);
-                    transform_mesh(&mut dummy_mesh, center, img.rotation, img.skew, img.perspective, img.scale);
-                    let mut min = egui::pos2(f32::MAX, f32::MAX);
-                    let mut max = egui::pos2(f32::MIN, f32::MIN);
-                    for v in &dummy_mesh.vertices {
-                        min.x = min.x.min(v.pos.x); min.y = min.y.min(v.pos.y);
-                        max.x = max.x.max(v.pos.x); max.y = max.y.max(v.pos.y);
-                    }
-                    let aabb = egui::Rect::from_min_max(min, max);
-                    let p_w = (aabb.width() * ppp).round() as i32;
-                    let p_h = (aabb.height() * ppp).round() as i32;
-                    (((aabb.min.x * ppp).round()) as i32 + ox, ((aabb.min.y * ppp).round()) as i32 + oy, p_w, p_h)
-                };
-
-                if sw > 0 && sh > 0 {
-                    // Only capture every 3rd frame (or if empty) to reduce GPU/CPU load, especially with OBS
-                    if frame_count % 3 == 0 || img.pixels.is_empty() {
-                        // Temporarily exclude from capture to avoid feedback loop (white box)
-                        if !settings.exclude_from_capture {
-                            crate::winapi_utils::set_capture_exclusion(true);
+                } else if img.url.is_none() {
+                    let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                    let (ox, oy) = if settings.use_absolute_screen_coords { (0, 0) } else { (wx, wy) };
+                    
+                    let src_rect = if let Some(src) = img.source_rect {
+                        src
+                    } else {
+                        let mut dummy_mesh = egui::Mesh::default();
+                        dummy_mesh.add_rect_with_uv(
+                            egui::Rect::from_min_size(egui::pos2(center.x - disp_w*0.5, center.y - disp_h*0.5), egui::vec2(disp_w, disp_h)),
+                            egui::Rect::from_min_max(egui::pos2(0.0,0.0), egui::pos2(1.0,1.0)),
+                            egui::Color32::WHITE
+                        );
+                        transform_mesh(&mut dummy_mesh, center, img.rotation, img.skew, img.perspective, img.scale);
+                        let mut min = egui::pos2(f32::MAX, f32::MAX);
+                        let mut max = egui::pos2(f32::MIN, f32::MIN);
+                        for v in &dummy_mesh.vertices {
+                            min.x = min.x.min(v.pos.x); min.y = min.y.min(v.pos.y);
+                            max.x = max.x.max(v.pos.x); max.y = max.y.max(v.pos.y);
                         }
-                        
-                        if let Some(mut p) = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh) {
-                            if !settings.exclude_from_capture {
-                                crate::winapi_utils::set_capture_exclusion(false);
-                            }
-                            
-                            img.size = [sw as usize, sh as usize]; // Update physical size
-                            
-                            if img.pixels.is_empty() { img.thumbnail_dirty = true; }
+                        let aabb = egui::Rect::from_min_max(min, max);
+                        [aabb.min.x, aabb.min.y, aabb.width(), aabb.height()]
+                    };
 
-                            if img.blur > 0.1 && gl_renderer.is_some() {
-                                // We'll handle this on GPU during rendering
-                                img.pixels = p;
-                            } else if img.blur > 0.1 {
-                                match img.blur_effect {
-                                    BlurEffect::Gaussian => apply_box_blur(&mut p, sw as usize, sh as usize, img.blur as usize),
-                                    BlurEffect::Pixelate => apply_pixelate(&mut p, sw as usize, sh as usize, (img.blur * ppp) as usize),
-                                    BlurEffect::Glitch => apply_vhs_glitch(&mut p, sw as usize, sh as usize, img.blur as f32 / 100.0),
-                                }
-                                img.pixels = p;
-                            } else {
-                                img.pixels = p;
-                            }
-                        }
-                    } else if !settings.exclude_from_capture {
-                        crate::winapi_utils::set_capture_exclusion(false);
+                    let req = crate::capture_thread::CaptureRequest {
+                        id: img.id,
+                        source_rect: src_rect,
+                        ppp,
+                        blur: img.blur,
+                        blur_effect: img.blur_effect,
+                        window_offset: (ox, oy),
+                        use_absolute: settings.use_absolute_screen_coords,
+                        hwnd: img.hwnd,
+                    };
+                    
+                    _capture_thread.update_request(img.id, req);
+                    
+                    if let Some(res) = _capture_thread.get_frame(img.id) {
+                        img.size = res.size;
+                        img.pixels = res.pixels;
+                        img.texture = None;
+                        img.thumbnail_dirty = true;
                     }
                 }
             }
-        }
 
             // --- Thumbnail Update (Static Snip) ---
             if img.is_live && img.thumbnail_dirty && !img.pixels.is_empty() {
@@ -356,13 +337,13 @@ pub fn render_canvas(
                 if img.flipped_v { final_scale.y *= -1.0; }
 
                 let has_gl_effect = img.blur > 0.1 || img.grayscale || img.invert || img.sepia || img.glow || layer.grayscale || layer.invert || layer.sepia || layer.glow;
-                let effect_pad = if img.blur > 0.1 || layer.blur > 0.1 { img.blur.max(layer.blur).max(20.0) } else { 0.0 };
+                let effect_pad = 0.0;
 
                 let is_gray = img.grayscale || layer.grayscale;
                 let is_inv = img.invert || layer.invert;
                 let is_sepia = img.sepia || layer.sepia;
 
-                let strength = img.blur.max(layer.blur) * 0.2;
+                let strength = img.blur.max(0.0).max(layer.blur.max(0.0)) * 0.2;
                 let res = [img.size[0] as f32, img.size[1] as f32];
                 let time = ui.input(|i| i.time) as f32;
                 let tex_id = tex.id();
@@ -560,26 +541,74 @@ pub fn render_canvas(
             crate::tools::brush::draw_layer_strokes(&painter, layer, -render_offset, l_op);
 
             // Render Blur strokes as live blurred screen captures
-            for s in layer.strokes.iter() {
+            for (s_idx, s) in layer.strokes.iter_mut().enumerate() {
                 if !s.visible || s.kind != crate::types::StrokeKind::Blur || s.points.len() < 2 { continue; }
                 let rect_world = egui::Rect::from_two_pos(s.points[0], s.points[1]);
                 let rect_screen = rect_world.translate(-render_offset);
                 let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                 let (ox, oy) = if settings.use_absolute_screen_coords { (0, 0) } else { (wx, wy) };
-                let sx = (rect_screen.min.x * ppp).round() as i32 + ox;
-                let sy = (rect_screen.min.y * ppp).round() as i32 + oy;
                 let sw = (rect_screen.width() * ppp).round() as i32;
                 let sh = (rect_screen.height() * ppp).round() as i32;
                 if sw > 2 && sh > 2 {
-                    if let Some(mut pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh) {
-                        let blur_amt = (s.blur.max(8.0)) as usize;
-                        crate::ui::toolbar::apply_box_blur(&mut pixels, sw as usize, sh as usize, blur_amt);
-                        let color_img = egui::ColorImage::from_rgba_unmultiplied([sw as usize, sh as usize], &pixels);
-                        let tex = ui.ctx().load_texture(
-                            format!("blur_stroke_{}_{}", i, s.points[0].x as i32),
-                            color_img,
-                            egui::TextureOptions::LINEAR,
-                        );
+                    let req = crate::capture_thread::CaptureRequest {
+                        id: s.id,
+                        source_rect: [rect_screen.min.x, rect_screen.min.y, rect_screen.width(), rect_screen.height()],
+                        ppp,
+                        blur: s.blur.max(8.0),
+                        blur_effect: s.blur_effect,
+                        window_offset: (ox, oy),
+                        use_absolute: settings.use_absolute_screen_coords,
+                        hwnd: 0,
+                    };
+                    _capture_thread.update_request(s.id, req);
+
+                    if let Some(res) = _capture_thread.get_frame(s.id) {
+                        let color_img = egui::ColorImage::from_rgba_unmultiplied(res.size, &res.pixels);
+                        if let Some(ref mut tex) = s.cached_texture {
+                            tex.set(color_img, egui::TextureOptions::LINEAR);
+                        } else {
+                            s.cached_texture = Some(ui.ctx().load_texture(
+                                format!("blur_stroke_{}", s.id),
+                                color_img,
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        }
+                    }
+                    if let Some(ref tex) = s.cached_texture {
+                        // Draw shadow if enabled
+                        let has_shadow = layer.shadow || s.shadow;
+                        if has_shadow {
+                            let (s_col_arr, s_off, s_spread) = if s.shadow {
+                                (s.shadow_color, s.shadow_offset, s.shadow_spread)
+                            } else if layer.shadow {
+                                (layer.shadow_color, layer.shadow_offset, layer.shadow_spread)
+                            } else {
+                                ([0, 0, 0, 100], [6.0, 6.0], 0.0)
+                            };
+                            let alpha = (l_op * s.opacity).clamp(0.0, 1.0);
+                            let shadow_color = egui::Color32::from_rgba_unmultiplied(
+                                s_col_arr[0], s_col_arr[1], s_col_arr[2], (s_col_arr[3] as f32 * alpha) as u8
+                            );
+                            let shadow_rect = rect_screen.translate(egui::vec2(s_off[0], s_off[1])).expand(s_spread);
+                            painter.rect_filled(shadow_rect, 0.0, shadow_color);
+                        }
+
+                        // Draw glow if enabled
+                        let has_glow = layer.glow || s.glow;
+                        if has_glow {
+                            let (g_col_arr, g_str, g_spread) = if s.glow {
+                                (s.glow_color, s.glow_strength, s.glow_spread)
+                            } else {
+                                (layer.glow_color, layer.glow_strength, layer.glow_spread)
+                            };
+                            let alpha = ((g_str / 100.0) * l_op * s.opacity).clamp(0.0, 1.0);
+                            let glow_color = egui::Color32::from_rgba_unmultiplied(
+                                g_col_arr[0], g_col_arr[1], g_col_arr[2], (g_col_arr[3] as f32 * alpha) as u8
+                            );
+                            let glow_rect = rect_screen.expand(g_spread);
+                            painter.rect_filled(glow_rect, 0.0, glow_color);
+                        }
+
                         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                         let mut mesh = egui::Mesh::with_texture(tex.id());
                         let opacity_col = egui::Color32::from_white_alpha((255.0 * l_op * s.opacity) as u8);
@@ -596,6 +625,11 @@ pub fn render_canvas(
             crate::tools::text::draw_layer_text(&painter, layer, -render_offset, l_op, settings, ui.input(|i| i.time) as f32);
         }
 
+    }
+
+    if let Some(s) = pending_stroke.as_ref() {
+        let pen_c = color32(&s.color);
+        crate::tools::brush::draw_stroke(&painter, s, pen_c, -render_offset, s.width, 1.0);
     }
 
     // ── Rasterize capture callback ──
@@ -685,6 +719,7 @@ pub fn render_canvas(
         edit_mode,
         layer_prompt_open,
         request_history_push,
+        pending_stroke,
     };
 
     // ── Live preview (skip during rasterize) ──

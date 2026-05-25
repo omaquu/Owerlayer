@@ -16,13 +16,12 @@ pub fn render_settings_window(
     let accent = color32(&settings.accent_color);
     let frame = photoshop_frame(settings);
 
-    egui::Window::new(egui::RichText::new("Settings").color(accent).size(16.0))
+    let win_resp = egui::Window::new(egui::RichText::new("Settings").color(accent).size(16.0))
         .open(show)
         .resizable(false)
         .collapsible(true)
         .default_width(280.0)
-        .default_pos(egui::pos2(ctx.screen_rect().max.x - 380.0, 60.0))
-        .pivot(egui::Align2::RIGHT_TOP)
+        .default_pos(settings.settings_menu_pos)
         .frame(frame)
         .show(ctx, |ui| {
             ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::from_rgba_premultiplied(255, 255, 255, 8);
@@ -203,6 +202,15 @@ pub fn render_settings_window(
                 ctx.open_url(egui::OpenUrl::new_tab("https://ko-fi.com/owerlayer"));
             }
         });
+
+    if let Some(resp) = win_resp {
+        if resp.response.dragged() {
+            let id = resp.response.layer_id;
+            if let Some(rect) = ctx.memory(|m| m.area_rect(id.id)) {
+                settings.settings_menu_pos = rect.min;
+            }
+        }
+    }
 }
 
 pub fn section_heading(ui: &mut egui::Ui, text: &str, accent: egui::Color32) {

@@ -5,6 +5,7 @@ use crate::overlay::*;
 use crate::tools::ToolContext;
 
 pub fn update(ctx: &mut ToolContext) {
+    if *ctx.layer_prompt_open { return; }
     if ctx.mouse.left_just_pressed {
         ctx.auto_create_layer();
     }
@@ -73,29 +74,22 @@ pub fn update(ctx: &mut ToolContext) {
                 }
             }
         }
-    } else if mode == CutMode::RegularPolygon {
-        if left_just_pressed { *line_start = Some(pos); }
-        if let Some(start) = *line_start {
-            let radius = start.distance(pos);
-            let n = settings.polygon_sides.max(3) as usize;
-            let pts: Vec<egui::Pos2> = (0..=n).map(|i| {
-                let angle = i as f32 * std::f32::consts::PI * 2.0 / n as f32 - std::f32::consts::PI / 2.0;
-                start + egui::vec2(angle.cos() * radius, angle.sin() * radius)
-            }).collect();
-            painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, egui::Color32::WHITE)));
+    } else if mode == CutMode::Polygon {
+        if left_just_pressed {
+            current_stroke.push(pos);
         }
-        if left_just_released {
-            if let Some(start) = line_start.take() {
-                let radius = start.distance(pos);
-                if radius > 5.0 {
-                    let n = settings.polygon_sides.max(3) as usize;
-                    let pts: Vec<egui::Pos2> = (0..n).map(|i| {
-                        let angle = i as f32 * std::f32::consts::PI * 2.0 / n as f32 - std::f32::consts::PI / 2.0;
-                        start + egui::vec2(angle.cos() * radius, angle.sin() * radius)
-                    }).collect();
-                    cut_poly = Some(pts);
-                }
-            }
+        let right_clicked = ui.input(|i| i.pointer.secondary_pressed());
+        let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let close_to_start = current_stroke.len() > 2 && pos.distance(current_stroke[0]) < 15.0 && left_just_pressed;
+
+        if (right_clicked || enter_pressed || close_to_start) && !current_stroke.is_empty() {
+            cut_poly = Some(current_stroke.clone());
+            current_stroke.clear();
+        }
+        if !current_stroke.is_empty() {
+            let mut pts = current_stroke.clone();
+            pts.push(pos);
+            painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, egui::Color32::WHITE)));
         }
     } else if mode == CutMode::MagicWand {
         if left_just_pressed {

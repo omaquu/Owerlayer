@@ -58,28 +58,30 @@ pub fn update(ctx: &mut ToolContext) {
                             if sel.object_type == ObjectType::Image {
                             if sel.object_idx < layer.placed_images.len() {
                                 let img = &mut layer.placed_images[sel.object_idx];
-                                if let Some(widget) = &mut img.web_widget {
-                                    let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                                    let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                                    let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
-                                    
-                                    if img_rect.contains(pos) {
-                                        let rel_x = (pos.x - img.position.x) / disp_w * widget.width as f32;
-                                        let rel_y = (pos.y - img.position.y) / disp_h * widget.height as f32;
-                                        let is_move = !left_just_pressed && !left_just_released;
-                                        widget.inject_mouse_event(rel_x, rel_y, mouse.left_down, is_move);
-                                    }
-
-                                    // Key events
-                                    ui.input(|i| {
-                                        for event in &i.events {
-                                            match event {
-                                                egui::Event::Text(text) => { widget.inject_text_event(text); }
-                                                egui::Event::Key { key, pressed, .. } => { widget.inject_raw_key_event(*key, *pressed); }
-                                                _ => {}
-                                            }
+                                if let Some(widget_arc) = &img.web_widget {
+                                    if let Ok(mut widget) = widget_arc.lock() {
+                                        let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+                                        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+                                        let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
+                                        
+                                        if img_rect.contains(pos) {
+                                            let rel_x = (pos.x - img.position.x) / disp_w * widget.width as f32;
+                                            let rel_y = (pos.y - img.position.y) / disp_h * widget.height as f32;
+                                            let is_move = !left_just_pressed && !left_just_released;
+                                            widget.inject_mouse_event(rel_x, rel_y, mouse.left_down, is_move);
                                         }
-                                    });
+
+                                        // Key events
+                                        ui.input(|i| {
+                                            for event in &i.events {
+                                                match event {
+                                                    egui::Event::Text(text) => { widget.inject_text_event(text); }
+                                                    egui::Event::Key { key, pressed, .. } => { widget.inject_raw_key_event(*key, *pressed); }
+                                                    _ => {}
+                                                }
+                                            }
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -87,13 +89,20 @@ pub fn update(ctx: &mut ToolContext) {
                 
                 // --- Highlight Mirror Source Rect ---
                 for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
-                    if img.is_live && img.source_rect.is_some() {
+                    if img.source_rect.is_some() {
                         let is_selected = project.selected_object == Some(SelectedObject { layer_idx, object_type: ObjectType::Image, object_idx: img_idx });
                         
                         if is_selected && img.show_source_rect {
                             let src = img.source_rect.unwrap();
                             let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
-                            painter.rect_stroke(src_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
+                            
+                            if let Some(ref local_pts) = img.snip_points {
+                                let world_pts: Vec<egui::Pos2> = local_pts.iter().map(|p| egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y)).collect();
+                                painter.add(egui::Shape::line(world_pts, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
+                            } else {
+                                painter.rect_stroke(src_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
+                            }
+                            
                             painter.text(src_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
                             
                             // Handles for source rect
@@ -169,8 +178,10 @@ pub fn update(ctx: &mut ToolContext) {
                                         let edit_resp = ui.add(egui::TextEdit::singleline(url).desired_width(ui.available_width() - 10.0).hint_text("Enter URL..."));
                                         if edit_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                             #[cfg(feature = "webengine")]
-                                            if let Some(widget) = &mut img.web_widget {
-                                                crate::web_engine::navigate_widget(widget, url);
+                                            if let Some(widget_arc) = &img.web_widget {
+                                                if let Ok(mut widget) = widget_arc.lock() {
+                                                    crate::web_engine::navigate_widget(&mut widget, url);
+                                                }
                                             }
                                         }
                                     });
@@ -233,6 +244,29 @@ pub fn update(ctx: &mut ToolContext) {
                             layer.opacity = op_val / 100.0;
                         }
 
+                        // HUD Blur slider
+                        let mut bl_val = if let Some(sel) = project.selected_object {
+                            match sel.object_type {
+                                ObjectType::Image => layer.placed_images[sel.object_idx].blur,
+                                ObjectType::Stroke => layer.strokes[sel.object_idx].blur,
+                                ObjectType::Text => layer.text_annotations[sel.object_idx].blur,
+                            }
+                        } else {
+                            layer.blur
+                        };
+                        ui.separator();
+                        if ui.add(egui::DragValue::new(&mut bl_val).range(0.0..=300.0).prefix("Blur: ")).changed() {
+                            if let Some(sel) = project.selected_object {
+                                match sel.object_type {
+                                    ObjectType::Image => layer.placed_images[sel.object_idx].blur = bl_val,
+                                    ObjectType::Stroke => layer.strokes[sel.object_idx].blur = bl_val,
+                                    ObjectType::Text => layer.text_annotations[sel.object_idx].blur = bl_val,
+                                }
+                            } else {
+                                layer.blur = bl_val;
+                            }
+                        }
+
                         ui.separator();
                         
                         // Embed widget buttons — ONLY for embed objects with URLs
@@ -245,8 +279,10 @@ pub fn update(ctx: &mut ToolContext) {
                                         if let Some(text) = crate::winapi_utils::get_clipboard_text() {
                                             img.url = Some(text.clone());
                                             #[cfg(feature = "webengine")]
-                                            if let Some(widget) = &mut img.web_widget {
-                                                crate::web_engine::navigate_widget(widget, &text);
+                                            if let Some(widget_arc) = &img.web_widget {
+                                                if let Ok(mut widget) = widget_arc.lock() {
+                                                    crate::web_engine::navigate_widget(&mut widget, &text);
+                                                }
                                             }
                                         }
                                     }
@@ -254,16 +290,20 @@ pub fn update(ctx: &mut ToolContext) {
                                         let text = "https://www.google.com".to_string();
                                         img.url = Some(text.clone());
                                         #[cfg(feature = "webengine")]
-                                        if let Some(widget) = &mut img.web_widget {
-                                            crate::web_engine::navigate_widget(widget, &text);
+                                        if let Some(widget_arc) = &img.web_widget {
+                                            if let Ok(mut widget) = widget_arc.lock() {
+                                                crate::web_engine::navigate_widget(&mut widget, &text);
+                                            }
                                         }
                                     }
                                     if ui.button("📺 YT").on_hover_text("Open YouTube").clicked() {
                                         let text = "https://www.youtube.com".to_string();
                                         img.url = Some(text.clone());
                                         #[cfg(feature = "webengine")]
-                                        if let Some(widget) = &mut img.web_widget {
-                                            crate::web_engine::navigate_widget(widget, &text);
+                                        if let Some(widget_arc) = &img.web_widget {
+                                            if let Ok(mut widget) = widget_arc.lock() {
+                                                crate::web_engine::navigate_widget(&mut widget, &text);
+                                            }
                                         }
                                     }
                                 });
@@ -403,11 +443,11 @@ pub fn update(ctx: &mut ToolContext) {
                         let world_pos = pos + render_offset;
                         let world_start = start + render_offset;
                         if *dragging_source_rect {
-                            // Dragging Mirror Source Rect
+                            // Dragging Source Rect (works for both live and static snips)
                             if let Some(sel) = project.selected_object {
                                 if let ObjectType::Image = sel.object_type {
                                     let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
-                                    if img.is_live && img.source_rect.is_some() {
+                                    if img.source_rect.is_some() {
                                         if start.x == -4.0 {
                                             // Resize handle
                                             let idx = start.y as usize;
@@ -482,6 +522,17 @@ pub fn update(ctx: &mut ToolContext) {
                                                 img.display_size = Some(ds);
                                                 let rel = img.position - anchor;
                                                 img.position = anchor + egui::vec2(rel.x * scale.x, rel.y * scale.y);
+                                                
+                                                if let Some(ref mut src) = img.source_rect {
+                                                    let src_w = src[2] * scale.x;
+                                                    let src_h = src[3] * scale.y;
+                                                    let src_rel_x = src[0] - anchor.x;
+                                                    let src_rel_y = src[1] - anchor.y;
+                                                    src[0] = anchor.x + src_rel_x * scale.x;
+                                                    src[1] = anchor.y + src_rel_y * scale.y;
+                                                    src[2] = src_w;
+                                                    src[3] = src_h;
+                                                }
                                             }
                                             ObjectType::Stroke => {
                                                 let s = &mut layer.strokes[sel.object_idx];
@@ -541,6 +592,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         ObjectType::Image => {
                                             if let Some(img) = layer.placed_images.get_mut(sel.object_idx) {
                                                 img.position += delta;
+                                                // source_rect intentionally NOT moved — stays fixed so snip can be placed independently
                                                 img.thumbnail_dirty = true;
                                             }
                                         }
@@ -570,6 +622,40 @@ pub fn update(ctx: &mut ToolContext) {
                                 _ => "Transform",
                             };
                             *ctx.request_history_push = Some(name.into());
+                        }
+                    }
+                    // Re-capture for static snips when source rect drag ends
+                    if *dragging_source_rect {
+                        if let Some(sel) = project.selected_object {
+                            if sel.object_type == ObjectType::Image {
+                                let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                if !img.is_live {
+                                    if let Some(src) = img.source_rect {
+                                        let ppp = ui.ctx().pixels_per_point();
+                                        let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                                        let sx = (src[0] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                                        let sy = (src[1] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                                        let sw = (src[2] * ppp) as i32;
+                                        let sh = (src[3] * ppp) as i32;
+                                        if sw > 0 && sh > 0 {
+                                            if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, sw, sh) {
+                                                // Apply mask if present
+                                                if let Some(ref mask) = img.mask {
+                                                    for (i, &m) in mask.iter().enumerate() {
+                                                        if m == 0 && i * 4 + 3 < pixels.len() {
+                                                            pixels[i * 4 + 3] = 0;
+                                                        }
+                                                    }
+                                                }
+                                                img.size = [src[2].round() as usize, src[3].round() as usize];
+                                                img.pixels = pixels;
+                                                img.texture = None;
+                                                img.thumbnail_dirty = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     *line_start = None;

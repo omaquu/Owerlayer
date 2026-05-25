@@ -20,11 +20,8 @@ pub fn resolve_font(font: TextFont, size: f32) -> egui::FontId {
 }
 
 pub fn update(ctx: &mut ToolContext) {
+    if *ctx.layer_prompt_open { return; }
     if ctx.mouse.left_just_pressed {
-        if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
-            *ctx.layer_prompt_open = true;
-            return;
-        }
         ctx.auto_create_layer();
     }
     

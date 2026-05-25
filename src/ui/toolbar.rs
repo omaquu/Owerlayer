@@ -4,16 +4,17 @@ use crate::types::*;
 use rayon::prelude::*;
 
 pub fn photoshop_frame(settings: &Settings) -> egui::Frame {
-    egui::Frame::window(&egui::Style::default())
+    egui::Frame::none()
         .fill(color32(&settings.toolbar_bg_color))
         .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(60)))
         .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(6, 6))
 }
 
 use crate::utils::color32;
 
 pub fn apply_box_blur(pixels: &mut [u8], width: usize, height: usize, radius: usize) {
-    let radius = radius.min(32).max(1);
+    let radius = radius.min(100).max(1);
     let copy = pixels.to_vec();
     for y in 0..height {
         for x in 0..width {
@@ -408,7 +409,9 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
 
     match active_tool {
         Tool::Brush | Tool::Eraser => {
-            ui.add(egui::DragValue::new(&mut settings.pen_width).range(1.0..=100.0)).on_hover_text("Pen Width");
+            if ui.add(egui::DragValue::new(&mut settings.pen_width).range(1.0..=100.0)).on_hover_text("Pen Width").changed() {
+                settings.save();
+            }
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut settings.brush_shape, BrushShape::Round, "○").on_hover_text("Round Brush");
                 ui.selectable_value(&mut settings.brush_shape, BrushShape::Square, "□").on_hover_text("Square Brush");
@@ -470,13 +473,9 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Circle, "Circ");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Lasso, "Lasso");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::RegularPolygon, "RegPoly");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Window, "Win").on_hover_text("Capture a specific window");
-                if settings.snip_mode == SnipMode::RegularPolygon {
-                    ui.add(egui::Slider::new(&mut settings.polygon_sides, 3..=20).text("Sides").clamping(egui::SliderClamping::Always));
-                }
                 ui.add(egui::Separator::default().vertical());
                 let static_sel = !settings.snip_live;
                 let live_sel = settings.snip_live;
@@ -491,11 +490,8 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Rect, "Rect");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Circle, "Circ");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Lasso, "Lasso");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::RegularPolygon, "Poly");
+                ui.selectable_value(&mut settings.cut_mode, CutMode::Polygon, "Poly");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::MagicWand, "Wand");
-                if settings.cut_mode == CutMode::RegularPolygon {
-                    ui.add(egui::Slider::new(&mut settings.polygon_sides, 3..=20).text("Sides").clamping(egui::SliderClamping::Always));
-                }
                 ui.add(egui::Separator::default().vertical());
                 ui.checkbox(&mut settings.inverted_cut, "Invert");
                 if settings.cut_mode == CutMode::MagicWand {
@@ -504,7 +500,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Blur => {
-            ui.add(egui::DragValue::new(&mut settings.blur_strength).range(1.0..=100.0).prefix("Blur: "));
+            ui.add(egui::DragValue::new(&mut settings.blur_strength).range(1.0..=300.0).prefix("Blur: "));
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
@@ -512,7 +508,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Move => {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if let Some(sel) = project.selected_object {
                     if ui.button(egui::RichText::new("✖").color(egui::Color32::RED)).on_hover_text("Delete Selected (X)").clicked() {
                         let layer = &mut project.layers[sel.layer_idx];
@@ -570,6 +566,34 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         }
                     }
                     ui.separator();
+
+                    // Blur strength
+                    // ui.label("Blur:");
+                    let mut bl = match sel.object_type {
+                        ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur,
+                        ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur,
+                        ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur,
+                    };
+                    let mut bl_slider = bl.max(0.0);
+                    if ui.add(egui::DragValue::new(&mut bl_slider).range(0.0..=300.0).prefix("Blur: ")).changed() {
+                        match sel.object_type {
+                            ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur = bl_slider,
+                            ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur = bl_slider,
+                            ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur = bl_slider,
+                        }
+                    }
+                    
+                    // Blur styles when image is selected and has blur:
+                    if let ObjectType::Image = sel.object_type {
+                        let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                        if img.blur > 0.1 {
+                            ui.separator();
+                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Gaussian, "Gaus");
+                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Pixelate, "Pix");
+                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Glitch, "VHS");
+                        }
+                    }
+                    ui.separator();
                     
                     if let ObjectType::Image = sel.object_type {
                         let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
@@ -611,8 +635,72 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Embed => {
-            ui.add(egui::TextEdit::singleline(embed_url).hint_text("URL..."));
-            if ui.button("Load").clicked() { *embed_trigger = true; }
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("?? YouTube").clicked() {
+                        *embed_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string();
+                        *embed_trigger = true;
+                    }
+                    if ui.button("?? Browser").clicked() {
+                        *embed_url = "https://www.google.com".to_string();
+                        *embed_trigger = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Program:");
+                    let mut selected_hwnd = None;
+                    egui::ComboBox::from_id_salt("running_programs")
+                        .selected_text("Select Program...")
+                        .show_ui(ui, |ui| {
+                            let windows = crate::winapi_utils::list_visible_windows();
+                            for (hwnd, title) in windows {
+                                if ui.selectable_label(false, &title).clicked() {
+                                    selected_hwnd = Some(hwnd);
+                                }
+                            }
+                        });
+                    if let Some(hwnd) = selected_hwnd {
+                        *embed_url = format!("window://{}", hwnd);
+                        *embed_trigger = true;
+                    }
+                });
+
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(embed_url).hint_text("URL...").desired_width(120.0));
+                    if ui.button("Load").clicked() {
+                        *embed_trigger = true;
+                    }
+                    if ui.button("+").on_hover_text("Save URL shortcut").clicked() {
+                        if !embed_url.is_empty() {
+                            let label = embed_url.chars().take(15).collect::<String>();
+                            settings.saved_embed_urls.push((label, embed_url.clone()));
+                            settings.save();
+                        }
+                    }
+                });
+
+                if !settings.saved_embed_urls.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        let mut to_remove = None;
+                        for (idx, (label, url)) in settings.saved_embed_urls.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui.button(label).clicked() {
+                                    *embed_url = url.clone();
+                                    *embed_trigger = true;
+                                }
+                                if ui.small_button("x").clicked() {
+                                    to_remove = Some(idx);
+                                }
+                            });
+                        }
+                        if let Some(idx) = to_remove {
+                            settings.saved_embed_urls.remove(idx);
+                            settings.save();
+                        }
+                    });
+                }
+            });
         }
         Tool::Mirror => {
             ui.horizontal(|ui| {

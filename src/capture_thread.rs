@@ -203,7 +203,7 @@ impl Drop for CaptureThread {
 use rayon::prelude::*;
 
 pub fn apply_box_blur(pixels: &mut [u8], width: usize, height: usize, radius: usize) {
-    let radius = radius.min(64).min(width / 2).min(height / 2);
+    let radius = radius.min(100).min(width / 2).min(height / 2);
     if radius == 0 || width == 0 || height == 0 { return; }
 
     let pixels_per_row = width * 4;

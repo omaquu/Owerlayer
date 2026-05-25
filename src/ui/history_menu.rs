@@ -10,7 +10,7 @@ pub fn render_history_window(
     ctx: &egui::Context,
     history: &mut History,
     open: &mut bool,
-    settings: &Settings,
+    settings: &mut Settings,
 ) -> Option<Project> {
     if !*open { return None; }
 
@@ -24,7 +24,7 @@ pub fn render_history_window(
         .title_bar(false)
         .resizable(true)
         .default_width(240.0)
-        .default_pos(egui::pos2(300.0, 60.0))
+        .default_pos(settings.history_menu_pos)
         .frame(frame)
         .show(ctx, |ui| {
             // ── Header ──
@@ -121,7 +121,12 @@ pub fn render_history_window(
 
     // Persist window position.
     if let Some(resp) = win_resp {
-        let _ = resp; // position persistence not needed here (no settings field)
+        if resp.response.dragged() {
+            let id = resp.response.layer_id;
+            if let Some(rect) = ctx.memory(|m| m.area_rect(id.id)) {
+                settings.history_menu_pos = rect.min;
+            }
+        }
     }
 
     if close_window {

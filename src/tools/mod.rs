@@ -31,6 +31,7 @@ pub struct ToolContext<'a, 'b> {
     pub switch_to_move: &'a mut bool,
     pub embed_trigger: &'a mut bool,
     pub pending_text: &'a mut Option<PendingText>,
+    pub pending_stroke: &'a mut Option<Stroke>,
     pub initial_bounds: &'a mut Option<egui::Rect>,
     pub initial_center: &'a mut Option<egui::Pos2>,
     pub initial_layer: &'a mut Option<crate::project::Layer>,
@@ -90,7 +91,7 @@ impl<'a, 'b> ToolContext<'a, 'b> {
                     *self.last_tool_used = Some(*self.active_tool);
                 }
                 None => {
-                    *self.layer_prompt_open = true;
+                    *self.last_tool_used = Some(*self.active_tool);
                 }
             }
         }

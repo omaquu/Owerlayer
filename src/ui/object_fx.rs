@@ -11,12 +11,12 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
         
         let mut request_rasterize = false;
         
-        egui::Window::new("Object Effects")
+        let win_resp = egui::Window::new("Object Effects")
             .title_bar(false)
             .resizable(true)
             .collapsible(false)
             .frame(frame)
-            .default_pos(settings.layer_menu_pos + egui::vec2(-260.0, 0.0))
+            .default_pos(settings.object_fx_menu_pos)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Object FX").strong().color(accent));
@@ -110,18 +110,18 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                         
                         if !$is_vector {
                             ui.horizontal(|ui| {
-                                let mut bl = $obj.blur > 0.0;
+                                let mut bl = $obj.blur >= 0.0;
                                 if ui.checkbox(&mut bl, "Blur").changed() {
-                                    $obj.blur = if bl { 10.0 } else { 0.0 };
+                                    $obj.blur = if bl { 10.0 } else { -1.0 };
                                 }
                                 if bl {
                                     let mut val = $obj.blur;
-                                    if ui.add(egui::Slider::new(&mut val, 0.0..=100.0)).changed() {
-                                        $obj.blur = if val < 0.01 { 0.01 } else { val };
+                                    if ui.add(egui::DragValue::new(&mut val).range(0.0..=300.0)).changed() {
+                                        $obj.blur = val;
                                     }
                                 }
                             });
-                            if $obj.blur > 0.0 {
+                            if $obj.blur >= 0.0 {
                                 ui.horizontal(|ui| {
                                     ui.selectable_value(&mut $obj.blur_effect, crate::types::BlurEffect::Gaussian, "Gaus");
                                     ui.selectable_value(&mut $obj.blur_effect, crate::types::BlurEffect::Pixelate, "Pix");
@@ -159,6 +159,15 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                 }
             });
             
+        if let Some(resp) = win_resp {
+            if resp.response.dragged() {
+                let id = resp.response.layer_id;
+                if let Some(rect) = ctx.memory(|m| m.area_rect(id.id)) {
+                    settings.object_fx_menu_pos = rect.min;
+                }
+            }
+        }
+
         if request_rasterize {
             project.rasterize_request = Some(crate::types::RasterizeRequest {
                 layer_idx: sel.layer_idx,

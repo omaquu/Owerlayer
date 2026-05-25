@@ -105,6 +105,8 @@ impl Default for MirrorMode { fn default() -> Self { Self::Rect } }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Stroke {
+    #[serde(default = "default_stroke_id")]
+    pub id: usize,
     #[serde(default = "default_stroke_name")]
     pub name: String,
     pub points: Vec<egui::Pos2>,
@@ -165,6 +167,10 @@ pub struct Stroke {
     pub shadow_blur: f32,
     #[serde(default)]
     pub locked: bool,
+    #[serde(skip)]
+    pub cached_texture: Option<egui::TextureHandle>,
+    #[serde(skip)]
+    pub cached_rect: Option<egui::Rect>,
 }
 
 impl Stroke {
@@ -192,6 +198,7 @@ impl Stroke {
             _ => "Stroke".to_string(),
         };
         Self {
+            id: default_stroke_id(),
             name,
             points,
             color,
@@ -224,6 +231,8 @@ impl Stroke {
             blur: 0.0,
             blur_effect: BlurEffect::Gaussian,
             locked: false,
+            cached_texture: None,
+            cached_rect: None,
         }
     }
 }
@@ -298,6 +307,10 @@ pub struct TextAnnotation {
     pub blur_effect: crate::overlay::BlurEffect,
     #[serde(default)]
     pub locked: bool,
+    #[serde(skip)]
+    pub cached_texture: Option<egui::TextureHandle>,
+    #[serde(skip)]
+    pub cached_rect: Option<egui::Rect>,
 }
 
 impl TextAnnotation {
@@ -326,6 +339,8 @@ impl TextAnnotation {
             blur: 0.0,
             blur_effect: crate::overlay::BlurEffect::Gaussian,
             locked: false,
+            cached_texture: None,
+            cached_rect: None,
         }
     }
 }
@@ -414,7 +429,7 @@ pub struct PlacedImage {
     pub hwnd: usize,
     #[cfg(feature = "webengine")]
     #[serde(skip)]
-    pub web_widget: Option<crate::web_engine::WebWidget>,
+    pub web_widget: Option<std::sync::Arc<std::sync::Mutex<crate::web_engine::WebWidget>>>,
     #[serde(skip)]
     pub tight_bounds: Option<egui::Rect>,
     #[serde(skip)]
@@ -425,6 +440,12 @@ pub struct PlacedImage {
     pub thumbnail_dirty: bool,
     #[serde(default)]
     pub locked: bool,
+    #[serde(default)]
+    pub snip_points: Option<Vec<egui::Pos2>>,
+    #[serde(skip)]
+    pub cached_texture: Option<egui::TextureHandle>,
+    #[serde(skip)]
+    pub cached_rect: Option<egui::Rect>,
 }
 
 impl Clone for PlacedImage {
@@ -475,7 +496,7 @@ impl Clone for PlacedImage {
             last_frame_time: self.last_frame_time,
             hwnd: self.hwnd,
             #[cfg(feature = "webengine")]
-            web_widget: None,
+            web_widget: self.web_widget.clone(),
             tight_bounds: self.tight_bounds,
             tight_bounds_dirty: self.tight_bounds_dirty,
             thumbnail_texture: None,
@@ -487,6 +508,9 @@ impl Clone for PlacedImage {
             
             
             locked: self.locked,
+            snip_points: self.snip_points.clone(),
+            cached_texture: None,
+            cached_rect: None,
         }
     }
 }
@@ -539,12 +563,15 @@ impl PlacedImage {
             glow_color: [255, 255, 255, 255],
             glow_spread: 0.0,
             locked: false,
+            snip_points: None,
+            cached_texture: None,
+            cached_rect: None,
         }
     }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SnipMode { Rect, Circle, Lasso, Polygon, RegularPolygon, Star, Heart, Window }
+pub enum SnipMode { Rect, Circle, Lasso, Polygon, Star, Heart, Window }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BrushShape { Round, Square }
@@ -564,6 +591,14 @@ fn default_opacity() -> f32 { 1.0 }
 fn default_visible() -> bool { true }
 fn default_scale() -> egui::Vec2 { egui::vec2(1.0, 1.0) }
 
+static STROKE_ID_GEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+fn default_stroke_id() -> usize {
+    use std::sync::atomic::Ordering;
+    use std::time::SystemTime;
+    let base = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+    base + STROKE_ID_GEN.fetch_add(1, Ordering::Relaxed)
+}
+
 fn default_stroke_name() -> String { "Stroke".to_string() }
 fn default_text_name() -> String { "Text".to_string() }
 fn default_image_name() -> String { "Image".to_string() }
@@ -578,7 +613,7 @@ fn default_glow_color() -> [u8; 4] { [255, 255, 255, 255] }
 pub enum EraserMode { Stroke, Pixel }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum CutMode { Rect, Circle, Lasso, RegularPolygon, MagicWand }
+pub enum CutMode { Rect, Circle, Lasso, Polygon, MagicWand }
 
 impl Default for CutMode { fn default() -> Self { Self::Rect } }
 
@@ -705,6 +740,18 @@ pub struct Settings {
     pub auto_new_layer: Option<bool>,
     #[serde(default = "default_prompt_delete")]
     pub prompt_delete_layer: bool,
+    #[serde(default = "default_settings_menu_pos")]
+    pub settings_menu_pos: egui::Pos2,
+    #[serde(default = "default_filter_menu_pos")]
+    pub filter_menu_pos: egui::Pos2,
+    #[serde(default = "default_history_menu_pos")]
+    pub history_menu_pos: egui::Pos2,
+    #[serde(default = "default_object_fx_menu_pos")]
+    pub object_fx_menu_pos: egui::Pos2,
+    #[serde(default = "default_creation_prompt_pos")]
+    pub creation_prompt_pos: egui::Pos2,
+    #[serde(default)]
+    pub saved_embed_urls: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -721,6 +768,11 @@ fn default_polygon_sides() -> u32 { 5 }
 fn default_toolbar_pos() -> egui::Pos2 { egui::pos2(40.0, 60.0) }
 fn default_layer_menu_pos() -> egui::Pos2 { egui::pos2(200.0, 60.0) }
 fn default_prompt_delete() -> bool { true }
+fn default_settings_menu_pos() -> egui::Pos2 { egui::pos2(360.0, 60.0) }
+fn default_filter_menu_pos() -> egui::Pos2 { egui::pos2(520.0, 60.0) }
+fn default_history_menu_pos() -> egui::Pos2 { egui::pos2(680.0, 60.0) }
+fn default_object_fx_menu_pos() -> egui::Pos2 { egui::pos2(840.0, 60.0) }
+fn default_creation_prompt_pos() -> egui::Pos2 { egui::pos2(500.0, 300.0) }
 
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
@@ -802,6 +854,12 @@ impl Default for Settings {
             layer_menu_pos: default_layer_menu_pos(),
             auto_new_layer: None,
             prompt_delete_layer: true,
+            settings_menu_pos: default_settings_menu_pos(),
+            filter_menu_pos: default_filter_menu_pos(),
+            history_menu_pos: default_history_menu_pos(),
+            object_fx_menu_pos: default_object_fx_menu_pos(),
+            creation_prompt_pos: default_creation_prompt_pos(),
+            saved_embed_urls: Vec::new(),
         }
     }
 }

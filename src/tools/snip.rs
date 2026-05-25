@@ -4,7 +4,21 @@ use crate::overlay::*;
 
 use crate::tools::ToolContext;
 
+pub fn capture_screen_rect_safe(settings: &crate::types::Settings, sx: i32, sy: i32, w: i32, h: i32) -> Option<Vec<u8>> {
+    let was_excluded = settings.exclude_from_capture;
+    if !was_excluded {
+        crate::winapi_utils::set_capture_exclusion(true);
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    let res = crate::winapi_utils::capture_screen_rect(sx, sy, w, h);
+    if !was_excluded {
+        crate::winapi_utils::set_capture_exclusion(false);
+    }
+    res
+}
+
 pub fn update(ctx: &mut ToolContext) {
+    if *ctx.layer_prompt_open { return; }
     if ctx.mouse.left_just_pressed {
         ctx.auto_create_layer();
     }
@@ -44,27 +58,44 @@ pub fn update(ctx: &mut ToolContext) {
                         let h = rect.height();
                         if w > 5.0 && h > 5.0 {
                             let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                            if settings.snip_live {
-                                *snip_created = true;
-                                let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], Vec::new());
-                                img.is_live = true;
-                                img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
-                                img.blur = settings.blur_strength;
-                                img.blur_effect = settings.blur_effect;
-                                img.show_source_rect = true;
-                                layer.placed_images.push(img);
-                            } else {
-                                let ppp = ui.ctx().pixels_per_point();
-                                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
-                                let sx = (rect.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
-                                let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                if let Some(pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, (w * ppp) as i32, (h * ppp) as i32) {
-                                    *snip_created = true;
-                                    let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], pixels);
-                                    img.shadow = settings.snip_shadow;
-                                    layer.placed_images.push(img);
-                                }
-                            }
+                             if settings.snip_live {
+                                 *snip_created = true;
+                                 let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], Vec::new());
+                                 img.is_live = true;
+                                 img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                                 img.blur = settings.blur_strength;
+                                 img.blur_effect = settings.blur_effect;
+                                 img.show_source_rect = true;
+                                 img.shadow = settings.snip_shadow;
+                                 img.snip_points = Some(vec![
+                                     egui::pos2(0.0, 0.0),
+                                     egui::pos2(w, 0.0),
+                                     egui::pos2(w, h),
+                                     egui::pos2(0.0, h),
+                                     egui::pos2(0.0, 0.0),
+                                 ]);
+                                 layer.placed_images.push(img);
+                             } else {
+                                 let ppp = ui.ctx().pixels_per_point();
+                                 let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                                 let sx = (rect.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                                 let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                                 if let Some(pixels) = capture_screen_rect_safe(settings, sx, sy, (w * ppp) as i32, (h * ppp) as i32) {
+                                     *snip_created = true;
+                                     let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], pixels);
+                                     img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                                     img.show_source_rect = true;
+                                     img.shadow = settings.snip_shadow;
+                                     img.snip_points = Some(vec![
+                                         egui::pos2(0.0, 0.0),
+                                         egui::pos2(w, 0.0),
+                                         egui::pos2(w, h),
+                                         egui::pos2(0.0, h),
+                                         egui::pos2(0.0, 0.0),
+                                     ]);
+                                     layer.placed_images.push(img);
+                                 }
+                             }
                         }
                     }
                 }
@@ -93,6 +124,17 @@ pub fn update(ctx: &mut ToolContext) {
                                 }
                             }
 
+                            let mut local_pts = Vec::new();
+                            let segments = 64;
+                            let c_center = egui::pos2(w * 0.5, h * 0.5);
+                            let c_radius = w.min(h) * 0.5;
+                            for idx in 0..=segments {
+                                let angle = (idx as f32 / segments as f32) * std::f32::consts::TAU;
+                                let px = c_center.x + c_radius * angle.cos();
+                                let py = c_center.y + c_radius * angle.sin();
+                                local_pts.push(egui::pos2(px, py));
+                            }
+
                             if settings.snip_live {
                                 *snip_created = true;
                                 let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], Vec::new());
@@ -102,16 +144,22 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.blur = settings.blur_strength;
                                 img.blur_effect = settings.blur_effect;
                                 img.show_source_rect = true;
+                                img.shadow = settings.snip_shadow;
+                                img.snip_points = Some(local_pts);
                                 layer.placed_images.push(img);
                             } else {
                                 let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                 let sx = (rect.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                 let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                if let Some(mut pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, (w * ppp) as i32, (h * ppp) as i32) {
+                                if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, (w * ppp) as i32, (h * ppp) as i32) {
                                     *snip_created = true;
                                     for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                     let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], pixels);
+                                    img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                                    img.show_source_rect = true;
+                                    img.mask = Some(mask);
                                     img.shadow = settings.snip_shadow;
+                                    img.snip_points = Some(local_pts);
                                     layer.placed_images.push(img);
                                 }
                             }
@@ -151,16 +199,23 @@ pub fn update(ctx: &mut ToolContext) {
                             img.mask = Some(mask);
                             img.blur = settings.blur_strength;
                             img.blur_effect = settings.blur_effect;
+                            img.show_source_rect = true;
+                            img.shadow = settings.snip_shadow;
+                            img.snip_points = Some(poly.clone());
                             layer.placed_images.push(img);
                         } else {
                             let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                             let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                             let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                            if let Some(mut pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh) {
+                            if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw, sh) {
                                 *snip_created = true;
                                 for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                 let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], pixels);
+                                img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                img.show_source_rect = true;
+                                img.mask = Some(mask);
                                 img.shadow = settings.snip_shadow;
+                                img.snip_points = Some(poly.clone());
                                 layer.placed_images.push(img);
                             }
                         }
@@ -203,16 +258,22 @@ pub fn update(ctx: &mut ToolContext) {
                             img.blur = settings.blur_strength;
                             img.blur_effect = settings.blur_effect;
                             img.show_source_rect = true;
+                            img.shadow = settings.snip_shadow;
+                            img.snip_points = Some(poly.clone());
                             layer.placed_images.push(img);
                         } else {
                             let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                             let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                             let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                            if let Some(mut pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh) {
+                            if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw, sh) {
                                 *snip_created = true;
                                 for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                 let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], pixels);
+                                img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                img.show_source_rect = true;
+                                img.mask = Some(mask);
                                 img.shadow = settings.snip_shadow;
+                                img.snip_points = Some(poly.clone());
                                 layer.placed_images.push(img);
                             }
                         }
@@ -223,66 +284,6 @@ pub fn update(ctx: &mut ToolContext) {
                     let mut pts = current_stroke.clone();
                     pts.push(pos);
                     painter.add(egui::Shape::line(pts, egui::Stroke::new(1.0, egui::Color32::WHITE)));
-                }
-            } else if mode == SnipMode::RegularPolygon {
-                if left_just_pressed { *line_start = Some(pos); }
-                if let Some(start) = *line_start {
-                    let radius = start.distance(pos);
-                    let n = settings.polygon_sides.max(3) as usize;
-                    let pts: Vec<egui::Pos2> = (0..=n).map(|i| {
-                        let angle = i as f32 * std::f32::consts::PI * 2.0 / n as f32 - std::f32::consts::PI / 2.0;
-                        start + egui::vec2(angle.cos() * radius, angle.sin() * radius)
-                    }).collect();
-                    painter.add(egui::Shape::line(pts, egui::Stroke::new(1.0, egui::Color32::WHITE)));
-                }
-                if left_just_released {
-                    if let Some(start) = line_start.take() {
-                        let radius = start.distance(pos);
-                        if radius > 5.0 {
-                            let n = settings.polygon_sides.max(3) as usize;
-                            let pts: Vec<egui::Pos2> = (0..n).map(|i| {
-                                let angle = i as f32 * std::f32::consts::PI * 2.0 / n as f32 - std::f32::consts::PI / 2.0;
-                                start + egui::vec2(angle.cos() * radius, angle.sin() * radius)
-                            }).collect();
-                            let bounds = egui::Rect::from_points(&pts);
-                            let ppp = ui.ctx().pixels_per_point();
-                            let sw = (bounds.width() * ppp) as i32;
-                            let sh = (bounds.height() * ppp) as i32;
-                            if sw > 5 && sh > 5 {
-                                let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                                let poly: Vec<egui::Pos2> = pts.iter().map(|p| egui::pos2(p.x - bounds.min.x, p.y - bounds.min.y)).collect();
-                                let mut mask = vec![255u8; sw as usize * sh as usize];
-                                for py in 0..sh as usize {
-                                    for px in 0..sw as usize {
-                                        let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
-                                        if !is_inside_poly(&poly, lp) { mask[py * sw as usize + px] = 0; }
-                                    }
-                                }
-                                if settings.snip_live {
-                                    *snip_created = true;
-                                    let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], Vec::new());
-                                    img.is_live = true;
-                                    img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
-                                    img.mask = Some(mask);
-                                    img.blur = settings.blur_strength;
-                                    img.blur_effect = settings.blur_effect;
-                                    img.show_source_rect = true;
-                                    layer.placed_images.push(img);
-                                } else {
-                                    let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
-                                    let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
-                                    let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                    if let Some(mut pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh) {
-                                        *snip_created = true;
-                                        for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
-                                        let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], pixels);
-                                        img.shadow = settings.snip_shadow;
-                                        layer.placed_images.push(img);
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             } else if mode == SnipMode::Star || mode == SnipMode::Heart {
 
@@ -323,16 +324,23 @@ pub fn update(ctx: &mut ToolContext) {
                                     img.is_live = true;
                                     img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                     img.mask = Some(mask);
+                                    img.show_source_rect = true;
+                                    img.shadow = settings.snip_shadow;
+                                    img.snip_points = Some(poly.clone());
                                     layer.placed_images.push(img);
                                 } else {
                                     let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                     let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                     let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                    if let Some(mut pixels) = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh) {
+                                    if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw, sh) {
                                         *snip_created = true;
                                         for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                         let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], pixels);
+                                        img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                        img.show_source_rect = true;
+                                        img.mask = Some(mask);
                                         img.shadow = settings.snip_shadow;
+                                        img.snip_points = Some(poly.clone());
                                         layer.placed_images.push(img);
                                     }
                                 }
@@ -360,6 +368,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.is_live = true;
                             img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                             img.show_source_rect = true;
+                            img.shadow = settings.snip_shadow;
                             layer.placed_images.push(img);
                         }
                     }
@@ -367,29 +376,80 @@ pub fn update(ctx: &mut ToolContext) {
             }
 
             if *snip_created {
-                project.layers.push(crate::project::Layer::new(&format!("Snip {}", project.layers.len() + 1)));
-                project.active_layer = project.layers.len() - 1;
-                let prev_idx = project.active_layer - 1;
-                if let Some(snip) = project.layers[prev_idx].placed_images.pop() {
-                    let snip_clone = snip.clone();
-                    std::thread::spawn(move || {
-                        if let Some(mut pics) = directories::UserDirs::new().and_then(|d| d.picture_dir().map(|p| p.to_path_buf())) {
-                            pics.push("Owerlayer");
-                            pics.push("Snips");
-                            let _ = std::fs::create_dir_all(&pics);
-                            let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                            let path = pics.join(format!("snip_{}.png", time_str));
-                            if !snip_clone.pixels.is_empty() {
-                                let mut img_buf = image::RgbaImage::new(snip_clone.size[0] as u32, snip_clone.size[1] as u32);
-                                img_buf.copy_from_slice(&snip_clone.pixels);
-                                let _ = img_buf.save(path);
+                match settings.auto_new_layer {
+                    Some(true) => {
+                        project.layers.push(crate::project::Layer::new(&format!("Snip {}", project.layers.len() + 1)));
+                        project.active_layer = project.layers.len() - 1;
+                        let prev_idx = project.active_layer - 1;
+                        if let Some(snip) = project.layers[prev_idx].placed_images.pop() {
+                            let snip_clone = snip.clone();
+                            std::thread::spawn(move || {
+                                if let Some(mut pics) = directories::UserDirs::new().and_then(|d| d.picture_dir().map(|p| p.to_path_buf())) {
+                                    pics.push("Owerlayer");
+                                    pics.push("Snips");
+                                    let _ = std::fs::create_dir_all(&pics);
+                                    let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                                    let path = pics.join(format!("snip_{}.png", time_str));
+                                    if !snip_clone.pixels.is_empty() {
+                                        let mut img_buf = image::RgbaImage::new(snip_clone.size[0] as u32, snip_clone.size[1] as u32);
+                                        img_buf.copy_from_slice(&snip_clone.pixels);
+                                        let _ = img_buf.save(path);
+                                    }
+                                }
+                            });
+                            project.layers.last_mut().unwrap().placed_images.push(snip);
+                            project.layers.last_mut().unwrap().expanded = true;
+                        }
+                        *ctx.request_history_push = Some("Snip".into());
+                    }
+                    Some(false) => {
+                        if let Some(layer) = project.get_active_layer_mut() {
+                            if let Some(snip) = layer.placed_images.last() {
+                                let snip_clone = snip.clone();
+                                std::thread::spawn(move || {
+                                    if let Some(mut pics) = directories::UserDirs::new().and_then(|d| d.picture_dir().map(|p| p.to_path_buf())) {
+                                        pics.push("Owerlayer");
+                                        pics.push("Snips");
+                                        let _ = std::fs::create_dir_all(&pics);
+                                        let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                                        let path = pics.join(format!("snip_{}.png", time_str));
+                                        if !snip_clone.pixels.is_empty() {
+                                            let mut img_buf = image::RgbaImage::new(snip_clone.size[0] as u32, snip_clone.size[1] as u32);
+                                            img_buf.copy_from_slice(&snip_clone.pixels);
+                                            let _ = img_buf.save(path);
+                                        }
+                                    }
+                                });
                             }
                         }
-                    });
-                    project.layers.last_mut().unwrap().placed_images.push(snip);
+                        if let Some(layer) = project.get_active_layer_mut() { layer.expanded = true; }
+                        *ctx.request_history_push = Some("Snip".into());
+                    }
+                    None => {
+                        if let Some(layer) = project.get_active_layer_mut() {
+                            if let Some(snip) = layer.placed_images.last() {
+                                let snip_clone = snip.clone();
+                                std::thread::spawn(move || {
+                                    if let Some(mut pics) = directories::UserDirs::new().and_then(|d| d.picture_dir().map(|p| p.to_path_buf())) {
+                                        pics.push("Owerlayer");
+                                        pics.push("Snips");
+                                        let _ = std::fs::create_dir_all(&pics);
+                                        let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                                        let path = pics.join(format!("snip_{}.png", time_str));
+                                        if !snip_clone.pixels.is_empty() {
+                                            let mut img_buf = image::RgbaImage::new(snip_clone.size[0] as u32, snip_clone.size[1] as u32);
+                                            img_buf.copy_from_slice(&snip_clone.pixels);
+                                            let _ = img_buf.save(path);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        if let Some(layer) = project.get_active_layer_mut() { layer.expanded = true; }
+                        *ctx.layer_prompt_open = true;
+                    }
                 }
                 *snip_created = false;
-                *ctx.request_history_push = Some("Snip".into());
             }
 }
 
@@ -401,6 +461,6 @@ pub fn render_preview(ctx: &mut ToolContext) {
     
     let rect = egui::Rect::from_two_pos(start, pos).translate(-render_offset);
     painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Middle);
-    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(40));
+    painter.rect_filled(rect, 0.0, egui::Color32::TRANSPARENT);
 }
 

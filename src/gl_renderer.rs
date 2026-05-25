@@ -5,6 +5,21 @@ pub struct GLRenderer {
     pub program: glow::Program,
     pub vertex_array: glow::VertexArray,
     pub vertex_buffer: glow::Buffer,
+    // Caches
+    pub u_sampler: Option<glow::UniformLocation>,
+    pub u_mask: Option<glow::UniformLocation>,
+    pub u_has_mask: Option<glow::UniformLocation>,
+    pub u_effect: Option<glow::UniformLocation>,
+    pub u_strength: Option<glow::UniformLocation>,
+    pub u_resolution: Option<glow::UniformLocation>,
+    pub u_time: Option<glow::UniformLocation>,
+    pub u_gray: Option<glow::UniformLocation>,
+    pub u_inv: Option<glow::UniformLocation>,
+    pub u_sep: Option<glow::UniformLocation>,
+    pub u_tint: Option<glow::UniformLocation>,
+    pub u_shadow_mode: Option<glow::UniformLocation>,
+    pub u_opacity: Option<glow::UniformLocation>,
+    pub u_srgb_enabled: Option<glow::UniformLocation>,
 }
 
 impl GLRenderer {
@@ -28,19 +43,20 @@ impl GLRenderer {
                 precision mediump float;
                 uniform sampler2D u_sampler;
                 uniform sampler2D u_mask;
-                uniform bool u_has_mask;
+                uniform int u_has_mask;
                 uniform int u_effect; // 0: None, 1: Blur, 2: Pixelate, 3: VHS, 4: Grayscale, 5: Invert, 6: Sepia
                 uniform float u_strength;
                 uniform vec2 u_resolution;
                 uniform float u_time;
                 
                 // Extra filter toggles
-                uniform bool u_grayscale;
-                uniform bool u_invert;
-                uniform bool u_sepia;
+                uniform int u_grayscale;
+                uniform int u_invert;
+                uniform int u_sepia;
                 uniform vec4 u_tint;
-                uniform bool u_shadow_mode;
+                uniform int u_shadow_mode;
                 uniform float u_opacity;
+                uniform int u_srgb_enabled;
 
                 in vec2 v_uv;
                 out vec4 f_color;
@@ -50,10 +66,8 @@ impl GLRenderer {
                 }
 
                 vec4 sample_tex(sampler2D samp, vec2 coord) {
-                    if (coord.x < 0.0 || coord.x > 1.0 || coord.y < 0.0 || coord.y > 1.0) {
-                        return vec4(0.0);
-                    }
-                    return texture(samp, coord);
+                    vec2 clamped = clamp(coord, vec2(0.0), vec2(1.0));
+                    return texture(samp, clamped);
                 }
 
                 void main() {
@@ -61,14 +75,14 @@ impl GLRenderer {
                     vec4 color = vec4(0.0);
 
                     if (u_effect == 1) { // Blur (Box blur approximation)
-                        vec2 tex_offset = 1.0 / u_resolution * u_strength;
-                        int samples = 2;
+                        int samples = 4;
+                        vec2 tex_offset = 1.0 / u_resolution * (u_strength / 4.0);
                         for(int x = -samples; x <= samples; x++) {
                             for(int y = -samples; y <= samples; y++) {
                                 color += sample_tex(u_sampler, uv + vec2(float(x), float(y)) * tex_offset);
                             }
                         }
-                        color /= pow(float(samples * 2 + 1), 2.0);
+                        color /= 81.0;
                     } else if (u_effect == 2) { // Pixelate
                         float pixel_size = max(1.0, u_strength);
                         vec2 p = uv * u_resolution;
@@ -95,14 +109,14 @@ impl GLRenderer {
                         color.rgb /= a;
                     }
 
-                    if (u_grayscale) {
+                    if (u_grayscale != 0) {
                         float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
                         color.rgb = vec3(gray);
                     }
-                    if (u_invert) {
+                    if (u_invert != 0) {
                         color.rgb = 1.0 - color.rgb;
                     }
-                    if (u_sepia) {
+                    if (u_sepia != 0) {
                         color.rgb = vec3(
                             dot(color.rgb, vec3(0.393, 0.769, 0.189)),
                             dot(color.rgb, vec3(0.349, 0.686, 0.168)),
@@ -112,7 +126,7 @@ impl GLRenderer {
 
                     color.rgb *= a;
 
-                    if (u_shadow_mode) {
+                    if (u_shadow_mode != 0) {
                         color.rgb = u_tint.rgb * color.a * u_tint.a;
                         color.a *= u_tint.a;
                     } else {
@@ -120,13 +134,21 @@ impl GLRenderer {
                         color.a *= u_tint.a;
                     }
 
-                    if (u_has_mask) {
+                    if (u_has_mask != 0) {
                         float m = texture(u_mask, v_uv).r;
                         color.rgb *= m;
                         color.a *= m;
                     }
                     color.rgb *= u_opacity;
                     color.a *= u_opacity;
+
+                    if (u_srgb_enabled == 0) {
+                        color.rgb = mix(
+                            color.rgb * 12.92,
+                            1.055 * pow(clamp(color.rgb, 0.0, 1.0), vec3(1.0 / 2.4)) - 0.055,
+                            step(0.0031308, color.rgb)
+                        );
+                    }
 
                     f_color = color;
                 }
@@ -179,10 +201,39 @@ impl GLRenderer {
             gl.enable_vertex_attrib_array(1);
             gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, 4 * 4, 2 * 4);
 
+            let u_sampler = gl.get_uniform_location(program, "u_sampler");
+            let u_mask = gl.get_uniform_location(program, "u_mask");
+            let u_has_mask = gl.get_uniform_location(program, "u_has_mask");
+            let u_effect = gl.get_uniform_location(program, "u_effect");
+            let u_strength = gl.get_uniform_location(program, "u_strength");
+            let u_resolution = gl.get_uniform_location(program, "u_resolution");
+            let u_time = gl.get_uniform_location(program, "u_time");
+            let u_gray = gl.get_uniform_location(program, "u_grayscale");
+            let u_inv = gl.get_uniform_location(program, "u_invert");
+            let u_sep = gl.get_uniform_location(program, "u_sepia");
+            let u_tint = gl.get_uniform_location(program, "u_tint");
+            let u_shadow_mode = gl.get_uniform_location(program, "u_shadow_mode");
+            let u_opacity = gl.get_uniform_location(program, "u_opacity");
+            let u_srgb_enabled = gl.get_uniform_location(program, "u_srgb_enabled");
+
             Self {
                 program,
                 vertex_array,
                 vertex_buffer,
+                u_sampler,
+                u_mask,
+                u_has_mask,
+                u_effect,
+                u_strength,
+                u_resolution,
+                u_time,
+                u_gray,
+                u_inv,
+                u_sep,
+                u_tint,
+                u_shadow_mode,
+                u_opacity,
+                u_srgb_enabled,
             }
         }
     }
@@ -235,46 +286,34 @@ impl GLRenderer {
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(vertices), glow::DYNAMIC_DRAW);
 
             gl.use_program(Some(self.program));
-            
-            let u_sampler = gl.get_uniform_location(self.program, "u_sampler");
-            let u_mask = gl.get_uniform_location(self.program, "u_mask");
-            let u_has_mask = gl.get_uniform_location(self.program, "u_has_mask");
-            let u_effect = gl.get_uniform_location(self.program, "u_effect");
-            let u_strength = gl.get_uniform_location(self.program, "u_strength");
-            let u_resolution = gl.get_uniform_location(self.program, "u_resolution");
-            let u_time = gl.get_uniform_location(self.program, "u_time");
 
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-            gl.uniform_1_i32(u_sampler.as_ref(), 0);
+            gl.uniform_1_i32(self.u_sampler.as_ref(), 0);
 
             if let Some(mask) = mask_texture {
                 gl.active_texture(glow::TEXTURE1);
                 gl.bind_texture(glow::TEXTURE_2D, Some(mask));
-                gl.uniform_1_i32(u_mask.as_ref(), 1);
-                gl.uniform_1_i32(u_has_mask.as_ref(), 1);
+                gl.uniform_1_i32(self.u_mask.as_ref(), 1);
+                gl.uniform_1_i32(self.u_has_mask.as_ref(), 1);
             } else {
-                gl.uniform_1_i32(u_has_mask.as_ref(), 0);
+                gl.uniform_1_i32(self.u_has_mask.as_ref(), 0);
             }
 
-            gl.uniform_1_i32(u_effect.as_ref(), effect_type);
-            gl.uniform_1_f32(u_strength.as_ref(), strength);
-            gl.uniform_2_f32(u_resolution.as_ref(), resolution[0], resolution[1]);
-            gl.uniform_1_f32(u_time.as_ref(), time);
+            gl.uniform_1_i32(self.u_effect.as_ref(), effect_type);
+            gl.uniform_1_f32(self.u_strength.as_ref(), strength);
+            gl.uniform_2_f32(self.u_resolution.as_ref(), resolution[0], resolution[1]);
+            gl.uniform_1_f32(self.u_time.as_ref(), time);
 
-            let u_gray = gl.get_uniform_location(self.program, "u_grayscale");
-            let u_inv = gl.get_uniform_location(self.program, "u_invert");
-            let u_sep = gl.get_uniform_location(self.program, "u_sepia");
-            let u_tint = gl.get_uniform_location(self.program, "u_tint");
-            let u_shadow_mode = gl.get_uniform_location(self.program, "u_shadow_mode");
-            let u_opacity = gl.get_uniform_location(self.program, "u_opacity");
+            gl.uniform_1_i32(self.u_gray.as_ref(), grayscale as i32);
+            gl.uniform_1_i32(self.u_inv.as_ref(), invert as i32);
+            gl.uniform_1_i32(self.u_sep.as_ref(), sepia as i32);
+            gl.uniform_4_f32(self.u_tint.as_ref(), tint[0], tint[1], tint[2], tint[3]);
+            gl.uniform_1_i32(self.u_shadow_mode.as_ref(), shadow_mode as i32);
+            gl.uniform_1_f32(self.u_opacity.as_ref(), opacity);
 
-            gl.uniform_1_i32(u_gray.as_ref(), grayscale as i32);
-            gl.uniform_1_i32(u_inv.as_ref(), invert as i32);
-            gl.uniform_1_i32(u_sep.as_ref(), sepia as i32);
-            gl.uniform_4_f32(u_tint.as_ref(), tint[0], tint[1], tint[2], tint[3]);
-            gl.uniform_1_i32(u_shadow_mode.as_ref(), shadow_mode as i32);
-            gl.uniform_1_f32(u_opacity.as_ref(), opacity);
+            let srgb_enabled = gl.is_enabled(glow::FRAMEBUFFER_SRGB);
+            gl.uniform_1_i32(self.u_srgb_enabled.as_ref(), srgb_enabled as i32);
 
             gl.enable_vertex_attrib_array(0);
             gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 16, 0);

@@ -4,6 +4,7 @@ use crate::overlay::*;
 use crate::tools::ToolContext;
 
 pub fn update(ctx: &mut ToolContext) {
+    if *ctx.layer_prompt_open { return; }
     let project = &mut *ctx.project;
     let settings = &mut *ctx.settings;
     let mouse = ctx.mouse;
@@ -121,8 +122,16 @@ pub fn update(ctx: &mut ToolContext) {
                                     img.mask = Some(vec![255; img.size[0] * img.size[1]]);
                                 }
                                 
-                                for py in 0..img.size[1] {
-                                    for px in 0..img.size[0] {
+                                let scale_x = img.size[0] as f32 / disp_w;
+                                let scale_y = img.size[1] as f32 / disp_h;
+                                
+                                let min_px = (((pos.x - r - img.position.x) * scale_x).floor() as i32).max(0) as usize;
+                                let max_px = (((pos.x + r - img.position.x) * scale_x).ceil() as i32).min(img.size[0] as i32) as usize;
+                                let min_py = (((pos.y - r - img.position.y) * scale_y).floor() as i32).max(0) as usize;
+                                let max_py = (((pos.y + r - img.position.y) * scale_y).ceil() as i32).min(img.size[1] as i32) as usize;
+
+                                for py in min_py..max_py {
+                                    for px in min_px..max_px {
                                         let local_pos = img.position + egui::vec2(
                                             px as f32 * (disp_w / img.size[0] as f32),
                                             py as f32 * (disp_h / img.size[1] as f32)
@@ -160,6 +169,11 @@ pub fn update(ctx: &mut ToolContext) {
                 }
 
                 if ctx.mouse.left_just_released {
+                    for img in &mut project.layers[active_layer_idx].placed_images {
+                        if !img.is_live {
+                            crate::tools::brush::crop_to_content(img);
+                        }
+                    }
                     *ctx.request_history_push = Some("Erase".into());
                 }
 

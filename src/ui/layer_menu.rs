@@ -70,7 +70,7 @@ pub fn render_layers_window(
 
                     let row_frame = egui::Frame::default().fill(bg_color).inner_margin(egui::Margin::symmetric(4, 2)).corner_radius(egui::CornerRadius::same(4));
                     
-                    row_frame.show(ui, |ui: &mut egui::Ui| {
+                    let row_inner = row_frame.show(ui, |ui: &mut egui::Ui| {
                         ui.horizontal(|ui: &mut egui::Ui| {
                             let obj_count = layer.placed_images.len() + layer.text_annotations.len() + layer.strokes.len();
                             if obj_count > 0 {
@@ -116,7 +116,26 @@ pub fn render_layers_window(
                             }
                             ui.checkbox(&mut layer.visible, "");
                             
-                            let (thumb_rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 18.0), egui::Sense::hover());
+                            let (thumb_rect, thumb_resp) = ui.allocate_exact_size(egui::vec2(24.0, 18.0), egui::Sense::click());
+                            if thumb_resp.clicked() || thumb_resp.double_clicked() {
+                                project.active_layer = i;
+                            }
+                            if thumb_resp.double_clicked() {
+                                // Focus first child object and switch to Move
+                                if !layer.placed_images.is_empty() {
+                                    object_to_select = Some((i, ObjectType::Image, 0));
+                                    *active_tool = crate::overlay::Tool::Move;
+                                    layer.expanded = true;
+                                } else if !layer.text_annotations.is_empty() {
+                                    object_to_select = Some((i, ObjectType::Text, 0));
+                                    *active_tool = crate::overlay::Tool::Move;
+                                    layer.expanded = true;
+                                } else if !layer.strokes.is_empty() {
+                                    object_to_select = Some((i, ObjectType::Stroke, 0));
+                                    *active_tool = crate::overlay::Tool::Move;
+                                    layer.expanded = true;
+                                }
+                            }
                             ui.painter().rect_filled(thumb_rect, 2.0, egui::Color32::from_gray(40));
                             ui.painter().rect_stroke(thumb_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::from_gray(60)), egui::StrokeKind::Middle);
                             
@@ -128,8 +147,24 @@ pub fn render_layers_window(
                             }
                             
                             let name_resp = ui.add(egui::TextEdit::singleline(&mut layer.name).frame(is_active).desired_width(100.0));
-                            if name_resp.gained_focus() || name_resp.clicked() {
+                            if name_resp.gained_focus() || name_resp.clicked() || name_resp.double_clicked() {
                                 project.active_layer = i;
+                            }
+                            if name_resp.double_clicked() {
+                                // Focus first child object and switch to Move
+                                if !layer.placed_images.is_empty() {
+                                    object_to_select = Some((i, ObjectType::Image, 0));
+                                    *active_tool = crate::overlay::Tool::Move;
+                                    layer.expanded = true;
+                                } else if !layer.text_annotations.is_empty() {
+                                    object_to_select = Some((i, ObjectType::Text, 0));
+                                    *active_tool = crate::overlay::Tool::Move;
+                                    layer.expanded = true;
+                                } else if !layer.strokes.is_empty() {
+                                    object_to_select = Some((i, ObjectType::Stroke, 0));
+                                    *active_tool = crate::overlay::Tool::Move;
+                                    layer.expanded = true;
+                                }
                             }
                             
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
@@ -349,6 +384,32 @@ pub fn render_layers_window(
                             }
                         }
                     });
+                    let clicked_in_row = ui.input(|inp| {
+                        inp.pointer.any_click()
+                            && inp.pointer.interact_pos().map_or(false, |p| row_inner.response.rect.contains(p))
+                    });
+                    if clicked_in_row {
+                        project.active_layer = i;
+                    }
+                    let double_clicked_in_row = ui.input(|inp| {
+                        inp.pointer.button_double_clicked(egui::PointerButton::Primary)
+                            && inp.pointer.interact_pos().map_or(false, |p| row_inner.response.rect.contains(p))
+                    });
+                    if double_clicked_in_row {
+                        if !layer.placed_images.is_empty() {
+                            object_to_select = Some((i, ObjectType::Image, 0));
+                            *active_tool = crate::overlay::Tool::Move;
+                            layer.expanded = true;
+                        } else if !layer.text_annotations.is_empty() {
+                            object_to_select = Some((i, ObjectType::Text, 0));
+                            *active_tool = crate::overlay::Tool::Move;
+                            layer.expanded = true;
+                        } else if !layer.strokes.is_empty() {
+                            object_to_select = Some((i, ObjectType::Stroke, 0));
+                            *active_tool = crate::overlay::Tool::Move;
+                            layer.expanded = true;
+                        }
+                    }
                 }
 
                 if let Some(idx) = layer_to_merge_down {

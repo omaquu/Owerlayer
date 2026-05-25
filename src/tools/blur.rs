@@ -4,6 +4,7 @@ use crate::overlay::*;
 use crate::tools::ToolContext;
 
 pub fn update(ctx: &mut ToolContext) {
+    if *ctx.layer_prompt_open { return; }
     let project = &mut *ctx.project;
     let settings = &mut *ctx.settings;
     let mouse = ctx.mouse;
@@ -41,6 +42,7 @@ pub fn update(ctx: &mut ToolContext) {
                         img.blur = settings.blur_strength;
                         img.blur_effect = settings.blur_effect;
                         target_layer.placed_images.push(img);
+                        target_layer.expanded = true;
                         *ctx.request_history_push = Some("Blur".into());
                     }
                 }
@@ -56,5 +58,5 @@ pub fn render_preview(ctx: &mut ToolContext) {
     
     let rect = egui::Rect::from_two_pos(start, pos).translate(-render_offset);
     painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Middle);
-    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(40));
+    painter.rect_filled(rect, 0.0, egui::Color32::TRANSPARENT);
 }

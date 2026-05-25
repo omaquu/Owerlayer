@@ -5,20 +5,40 @@ use crate::overlay::*;
 use crate::tools::ToolContext;
 
 pub fn update(ctx: &mut ToolContext) {
+    if *ctx.layer_prompt_open { return; }
     if ctx.mouse.left_just_pressed {
-        if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
-            *ctx.layer_prompt_open = true;
-            return;
-        }
         ctx.auto_create_layer();
-    }
-    
-    if ctx.project.get_active_layer().map_or(false, |l| l.locked) {
-        return;
     }
 
     let project = &mut *ctx.project;
     let settings = &mut *ctx.settings;
+    let active_layer_idx = project.active_layer;
+    if active_layer_idx >= project.layers.len() { return; }
+
+    let layer = &project.layers[active_layer_idx];
+    let is_layer_locked = layer.locked;
+    let mut is_image_locked = false;
+    if !settings.brush_arrow {
+        let has_target_image = project.selected_object.map_or(false, |s| {
+            s.object_type == ObjectType::Image
+                && s.layer_idx == active_layer_idx
+                && s.object_idx < project.layers[active_layer_idx].placed_images.len()
+        });
+        if has_target_image {
+            let sel = project.selected_object.unwrap();
+            is_image_locked = project.layers[active_layer_idx].placed_images[sel.object_idx].locked;
+        } else {
+            let reuse_idx = project.layers[active_layer_idx]
+                .placed_images
+                .iter()
+                .rposition(|img| !img.locked);
+            if reuse_idx.is_none() && !project.layers[active_layer_idx].placed_images.is_empty() {
+                is_image_locked = true;
+            }
+        }
+    }
+    let is_locked = is_layer_locked || is_image_locked;
+
     let mouse = ctx.mouse;
     let current_stroke = &mut *ctx.current_stroke;
     let _line_start = &mut *ctx.line_start;
@@ -43,8 +63,6 @@ pub fn update(ctx: &mut ToolContext) {
     let _left_just_pressed = mouse.left_just_pressed;
     let left_just_released = mouse.left_just_released;
     let _right_just_pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
-    let active_layer_idx = project.active_layer;
-    if active_layer_idx >= project.layers.len() { return; }
 
             if left_down {
                 let render_offset = ctx.render_offset;
@@ -55,7 +73,8 @@ pub fn update(ctx: &mut ToolContext) {
                 // ── Find or create target PlacedImage ──
                 // Priority: keep the currently selected image, then fall back to the
                 // last unlocked PlacedImage on this layer, then create a new one.
-                if !settings.brush_arrow {
+                let is_ask_mode = settings.auto_new_layer.is_none();
+                if !is_locked && !is_ask_mode && !settings.brush_arrow {
                     // ── Find or create target PlacedImage ──
                     let has_target_image = project.selected_object.map_or(false, |s| {
                         s.object_type == ObjectType::Image
@@ -80,15 +99,16 @@ pub fn update(ctx: &mut ToolContext) {
                                 object_idx: idx,
                             });
                         } else {
-                            let canvas_w: usize = 800;
-                            let canvas_h: usize = 600;
-                            let pixels = vec![0u8; canvas_w * canvas_h * 4];
+                            let ppp = ui.ctx().pixels_per_point();
+                            let logical_w = 800.0f32;
+                            let logical_h = 600.0f32;
+                            let img_pos = egui::pos2(world_pos.x - logical_w / 2.0, world_pos.y - logical_h / 2.0);
                             let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                            let img_pos = egui::pos2(world_pos.x - canvas_w as f32 / 2.0, world_pos.y - canvas_h as f32 / 2.0);
                             let count = project.layers[active_layer_idx].placed_images.len();
-                            let mut new_img = crate::types::PlacedImage::new(id, img_pos, [canvas_w, canvas_h], pixels);
+                            let mut new_img = create_new_canvas(id, img_pos, logical_w, logical_h, ppp);
                             new_img.name = format!("Canvas {}", count + 1);
                             project.layers[active_layer_idx].placed_images.push(new_img);
+                            project.layers[active_layer_idx].expanded = true;
                             let new_idx = project.layers[active_layer_idx].placed_images.len() - 1;
                             project.selected_object = Some(SelectedObject {
                                 layer_idx: active_layer_idx,
@@ -116,17 +136,21 @@ pub fn update(ctx: &mut ToolContext) {
                     if dist > 2000.0 { 
                         current_stroke.clear();
                         current_stroke.push(pos);
-                    } else if dist > 0.5 {
-                        let steps = (dist / 0.5) as usize;
-                        for s in 1..=steps {
-                            let t = s as f32 / steps as f32;
-                            current_stroke.push(last.lerp(pos, t));
+                    } else {
+                        let step_dist = (settings.pen_width * 0.15).max(1.0);
+                        if dist > step_dist {
+                            let steps = (dist / step_dist) as usize;
+                            for s in 1..=steps {
+                                let t = s as f32 / steps as f32;
+                                current_stroke.push(last.lerp(pos, t));
+                            }
                         }
                     }
                 } else { current_stroke.push(pos); }
                 let new_points_count = current_stroke.len() - prev_len;
 
-                if !settings.brush_arrow {
+                let is_ask_mode = settings.auto_new_layer.is_none();
+                if !is_locked && !is_ask_mode && !settings.brush_arrow {
                     if let Some(sel) = project.selected_object {
                         if sel.object_type == ObjectType::Image && sel.layer_idx == active_layer_idx {
                             if let Some(img) = project.layers[active_layer_idx].placed_images.get_mut(sel.object_idx) {
@@ -225,7 +249,7 @@ pub fn update(ctx: &mut ToolContext) {
                                                 let lx = (base_p.x - img.position.x) * scale_x;
                                                 let ly = (base_p.y - img.position.y) * scale_y;
 
-                                                for _ in 0..15 {
+                                                for _ in 0..40 {
                                                     rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
                                                     let rx = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
                                                     rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
@@ -390,25 +414,49 @@ pub fn update(ctx: &mut ToolContext) {
             }
 
             if left_just_released && !current_stroke.is_empty() {
-                if settings.brush_arrow {
-                    if let Some(layer) = project.get_active_layer_mut() {
-                        let s = Stroke::new(
-                            current_stroke.clone(),
-                            settings.pen_color,
-                            settings.pen_width,
-                            StrokeKind::Freehand,
-                            settings.brush_mode,
-                            Some(settings.background_color),
-                            settings.brush_shadow,
-                            settings.brush_shape,
-                            settings.brush_outline,
-                            settings.brush_arrow,
-                        );
-                        layer.strokes.push(s);
+                let ask_mode = settings.auto_new_layer.is_none();
+                if is_locked || ask_mode {
+                    let s = Stroke::new(
+                        current_stroke.clone(),
+                        settings.pen_color,
+                        settings.pen_width,
+                        StrokeKind::Freehand,
+                        settings.brush_mode,
+                        Some(settings.background_color),
+                        settings.brush_shadow,
+                        settings.brush_shape,
+                        settings.brush_outline,
+                        settings.brush_arrow,
+                    );
+                    *ctx.pending_stroke = Some(s);
+                    *ctx.layer_prompt_open = true;
+                } else {
+                    if settings.brush_arrow {
+                        if let Some(layer) = project.get_active_layer_mut() {
+                            let s = Stroke::new(
+                                current_stroke.clone(),
+                                settings.pen_color,
+                                settings.pen_width,
+                                StrokeKind::Freehand,
+                                settings.brush_mode,
+                                Some(settings.background_color),
+                                settings.brush_shadow,
+                                settings.brush_shape,
+                                settings.brush_outline,
+                                settings.brush_arrow,
+                            );
+                            layer.strokes.push(s);
+                        }
+                    } else if let Some(sel) = project.selected_object {
+                        if sel.object_type == ObjectType::Image && sel.layer_idx == active_layer_idx {
+                            if let Some(img) = project.layers[active_layer_idx].placed_images.get_mut(sel.object_idx) {
+                                crop_to_content(img);
+                            }
+                        }
                     }
+                    *ctx.request_history_push = Some("Brush".into());
                 }
                 current_stroke.clear();
-                *ctx.request_history_push = Some("Brush".into());
             }
 
             // Visual cursor
@@ -461,7 +509,7 @@ pub fn update(ctx: &mut ToolContext) {
                         let mut rng = 42u32;
                         let half_w = width * 0.5;
                         for pt in &pts {
-                            for _ in 0..15 {
+                            for _ in 0..40 {
                                 rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
                                 let rx = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
                                 rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
@@ -799,6 +847,14 @@ pub fn render_preview(ctx: &mut ToolContext) {
     draw_stroke(&painter, &s, pen_c, egui::Vec2::ZERO, s.width, 1.0);
 }
 
+pub fn create_new_canvas(id: usize, pos: egui::Pos2, logical_w: f32, logical_h: f32, ppp: f32) -> crate::types::PlacedImage {
+    let canvas_w = (logical_w * ppp).round() as usize;
+    let canvas_h = (logical_h * ppp).round() as usize;
+    let pixels = vec![0u8; canvas_w * canvas_h * 4];
+    let mut new_img = crate::types::PlacedImage::new(id, pos, [canvas_w, canvas_h], pixels);
+    new_img.display_size = Some([logical_w, logical_h]);
+    new_img
+}
 
 fn draw_pixel_shape(img: &mut crate::types::PlacedImage, lx: f32, ly: f32, r: f32, color: [u8; 4], iw: usize, ih: usize, is_square: bool) {
     let r_ceil = r.ceil() as i32;
@@ -807,31 +863,47 @@ fn draw_pixel_shape(img: &mut crate::types::PlacedImage, lx: f32, ly: f32, r: f3
             let px = (lx as i32 + dx) as usize;
             let py = (ly as i32 + dy) as usize;
             if px < iw && py < ih {
-                let inside = if is_square {
-                    true
+                let coverage = if is_square {
+                    1.0f32
                 } else {
-                    let dist_sq = (dx * dx + dy * dy) as f32;
-                    dist_sq <= r * r
+                    let dist = ((dx as f32).powi(2) + (dy as f32).powi(2)).sqrt();
+                    if r <= 0.5 {
+                        (1.0 - dist).clamp(0.0, 1.0) * (r * 2.0)
+                    } else {
+                        let edge_width = 1.0f32;
+                        let inner_r = r - edge_width * 0.5;
+                        let outer_r = r + edge_width * 0.5;
+                        if dist <= inner_r {
+                            1.0
+                        } else if dist >= outer_r {
+                            0.0
+                        } else {
+                            ((outer_r - dist) / edge_width).clamp(0.0, 1.0)
+                        }
+                    }
                 };
-                if inside {
+
+                if coverage > 0.0 {
+                    let mut pixel_color = color;
+                    pixel_color[3] = (pixel_color[3] as f32 * coverage) as u8;
                     let idx = (py * iw + px) * 4;
                     if idx + 3 < img.pixels.len() {
-                        let src_a = color[3] as f32 / 255.0;
+                        let src_a = pixel_color[3] as f32 / 255.0;
                         let dst_a = img.pixels[idx + 3] as f32 / 255.0;
                         if img.locked {
                             if dst_a > 0.001 {
                                 let blend_a = src_a;
                                 let inv_blend = 1.0 - blend_a;
-                                img.pixels[idx]     = (color[0] as f32 * blend_a + img.pixels[idx] as f32 * inv_blend) as u8;
-                                img.pixels[idx + 1] = (color[1] as f32 * blend_a + img.pixels[idx + 1] as f32 * inv_blend) as u8;
-                                img.pixels[idx + 2] = (color[2] as f32 * blend_a + img.pixels[idx + 2] as f32 * inv_blend) as u8;
+                                img.pixels[idx]     = (pixel_color[0] as f32 * blend_a + img.pixels[idx] as f32 * inv_blend) as u8;
+                                img.pixels[idx + 1] = (pixel_color[1] as f32 * blend_a + img.pixels[idx + 1] as f32 * inv_blend) as u8;
+                                img.pixels[idx + 2] = (pixel_color[2] as f32 * blend_a + img.pixels[idx + 2] as f32 * inv_blend) as u8;
                             }
                         } else {
                             let out_a = src_a + dst_a * (1.0 - src_a);
                             if out_a > 0.001 {
-                                img.pixels[idx]     = ((color[0] as f32 * src_a + img.pixels[idx] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
-                                img.pixels[idx + 1] = ((color[1] as f32 * src_a + img.pixels[idx + 1] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
-                                img.pixels[idx + 2] = ((color[2] as f32 * src_a + img.pixels[idx + 2] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                img.pixels[idx]     = ((pixel_color[0] as f32 * src_a + img.pixels[idx] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                img.pixels[idx + 1] = ((pixel_color[1] as f32 * src_a + img.pixels[idx + 1] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                img.pixels[idx + 2] = ((pixel_color[2] as f32 * src_a + img.pixels[idx + 2] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
                                 img.pixels[idx + 3] = (out_a * 255.0) as u8;
                             }
                         }
@@ -841,3 +913,542 @@ fn draw_pixel_shape(img: &mut crate::types::PlacedImage, lx: f32, ly: f32, r: f3
         }
     }
 }
+
+fn accumulate_pixel_coverage(coverages: &mut [u8], lx: f32, ly: f32, r: f32, iw: usize, ih: usize, is_square: bool) {
+    let r_ceil = r.ceil() as i32;
+    for dy in -r_ceil..=r_ceil {
+        for dx in -r_ceil..=r_ceil {
+            let px = (lx as i32 + dx) as usize;
+            let py = (ly as i32 + dy) as usize;
+            if px < iw && py < ih {
+                let coverage = if is_square {
+                    1.0f32
+                } else {
+                    let dist = ((dx as f32).powi(2) + (dy as f32).powi(2)).sqrt();
+                    if r <= 0.5 {
+                        (1.0 - dist).clamp(0.0, 1.0) * (r * 2.0)
+                    } else {
+                        let edge_width = 1.0f32;
+                        let inner_r = r - edge_width * 0.5;
+                        let outer_r = r + edge_width * 0.5;
+                        if dist <= inner_r {
+                            1.0
+                        } else if dist >= outer_r {
+                            0.0
+                        } else {
+                            ((outer_r - dist) / edge_width).clamp(0.0, 1.0)
+                        }
+                    }
+                };
+
+                if coverage > 0.0 {
+                    let pixel_idx = py * iw + px;
+                    let cov_u8 = (coverage * 255.0) as u8;
+                    if cov_u8 > coverages[pixel_idx] {
+                        coverages[pixel_idx] = cov_u8;
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke, _settings: &Settings) {
+    let mut iw = img.size[0];
+    let mut ih = img.size[1];
+    let mut dw = img.display_size.unwrap_or([iw as f32, ih as f32])[0];
+    let mut dh = img.display_size.unwrap_or([ih as f32, ih as f32])[1];
+    if iw == 0 || ih == 0 || dw <= 0.0 || dh <= 0.0 { return; }
+    let mut scale_x = iw as f32 / dw;
+    let mut scale_y = ih as f32 / dh;
+    let mut radius = (s.width / 2.0 * scale_x).max(1.0);
+
+    // --- Pre-enlargement Phase (for unrotated canvas) ---
+    if img.rotation.abs() < 0.01 && img.skew.length() < 0.01 && img.perspective == [egui::Vec2::ZERO; 4] {
+        let mut min_tx = 0.0f32;
+        let mut min_ty = 0.0f32;
+        let mut max_tx = iw as f32;
+        let mut max_ty = ih as f32;
+
+        for &pt in &s.points {
+            let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+            let rel_world = pt - center;
+            let base_p = center + rel_world;
+            let lx = (base_p.x - img.position.x) * scale_x;
+            let ly = (base_p.y - img.position.y) * scale_y;
+            if lx - radius < min_tx { min_tx = lx - radius; }
+            if ly - radius < min_ty { min_ty = ly - radius; }
+            if lx + radius > max_tx { max_tx = lx + radius; }
+            if ly + radius > max_ty { max_ty = ly + radius; }
+        }
+
+        let exp_l = (-min_tx).ceil() as usize;
+        let exp_t = (-min_ty).ceil() as usize;
+        let exp_r = (max_tx - iw as f32).ceil() as usize;
+        let exp_b = (max_ty - ih as f32).ceil() as usize;
+
+        if exp_l > 0 || exp_t > 0 || exp_r > 0 || exp_b > 0 {
+            let new_iw = iw + exp_l + exp_r;
+            let new_ih = ih + exp_t + exp_b;
+            let mut new_pixels = vec![0u8; new_iw * new_ih * 4];
+
+            for y in 0..ih {
+                let src_s = y * iw * 4;
+                let dst_s = ((y + exp_t) * new_iw + exp_l) * 4;
+                if src_s + iw * 4 <= img.pixels.len() && dst_s + iw * 4 <= new_pixels.len() {
+                    new_pixels[dst_s..dst_s + iw * 4].copy_from_slice(&img.pixels[src_s..src_s + iw * 4]);
+                }
+            }
+
+            img.pixels = new_pixels;
+            img.size = [new_iw, new_ih];
+            iw = new_iw; ih = new_ih;
+
+            let disp_l = exp_l as f32 / scale_x;
+            let disp_t = exp_t as f32 / scale_y;
+            let disp_r = exp_r as f32 / scale_x;
+            let disp_b = exp_b as f32 / scale_y;
+
+            img.position.x -= disp_l;
+            img.position.y -= disp_t;
+            dw += disp_l + disp_r;
+            dh += disp_t + disp_b;
+            img.display_size = Some([dw, dh]);
+            
+            // Re-read scale and radius for updated canvas size
+            scale_x = iw as f32 / dw;
+            scale_y = ih as f32 / dh;
+            radius = (s.width / 2.0 * scale_x).max(1.0);
+        }
+    }
+
+    let mut color = s.color;
+    if s.brush_mode == BrushMode::Highlighter {
+        color[3] = (color[3] as f32 * (102.0 / 255.0)) as u8;
+    }
+
+    match s.brush_mode {
+        BrushMode::Spray => {
+            let mut rng = 42u32;
+            let half_w = radius;
+            let dot_radius = scale_x.max(0.8);
+            for &pt in &s.points {
+                let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+                let rel_world = pt - center;
+                let cos = img.rotation.cos();
+                let sin = img.rotation.sin();
+                let px_rot = rel_world.x * cos + rel_world.y * sin;
+                let py_rot = rel_world.y * cos - rel_world.x * sin;
+                
+                let sx = img.scale.x; let sy = img.scale.y;
+                let kx = img.skew.x; let ky = img.skew.y;
+                let det = 1.0 - kx * ky;
+                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+                } else {
+                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+                };
+                
+                let base_p = center + egui::vec2(rel_x, rel_y);
+                let lx = (base_p.x - img.position.x) * scale_x;
+                let ly = (base_p.y - img.position.y) * scale_y;
+
+                for _ in 0..40 {
+                    rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+                    let rx = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
+                    rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+                    let ry = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
+
+                    let inside = match s.brush_shape {
+                        BrushShape::Round => rx*rx + ry*ry <= half_w*half_w,
+                        BrushShape::Square => true,
+                    };
+
+                    if inside {
+                        draw_pixel_shape(img, lx + rx, ly + ry, dot_radius, color, iw, ih, false);
+                    }
+                }
+            }
+        }
+        BrushMode::Real => {
+            let mut rng = 42u32;
+            let num_bristles = (s.width * 0.4).clamp(4.0, 10.0) as usize;
+            let mut bristle_offsets = Vec::new();
+            
+            for _ in 0..num_bristles {
+                rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+                let rx = (rng % 1000) as f32 / 500.0 - 1.0 ;
+                rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+                let ry = (rng % 1000) as f32 / 500.0 - 1.0 ;
+                
+                let (off_x, off_y) = if s.brush_shape == BrushShape::Round {
+                    let len = (rx*rx + ry*ry).sqrt().max(0.001);
+                    let scale = if len > 1.0 { 1.0 / len } else { 1.0 };
+                    (rx * scale * radius * 0.9, ry * scale * radius * 0.9)
+                } else {
+                    (rx * radius * 0.9, ry * radius * 0.9)
+                };
+                
+                rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+                let alpha_mod = (rng % 100) as f32 / 100.0 * 0.5 + 0.1;
+                let mut b_col = color;
+                b_col[3] = (b_col[3] as f32 * alpha_mod) as u8;
+                
+                let b_radius = (radius * 0.5).max(1.0);
+                bristle_offsets.push((off_x, off_y, b_col, b_radius));
+            }
+
+            for &pt in &s.points {
+                let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+                let rel_world = pt - center;
+                let cos = img.rotation.cos();
+                let sin = img.rotation.sin();
+                let px_rot = rel_world.x * cos + rel_world.y * sin;
+                let py_rot = rel_world.y * cos - rel_world.x * sin;
+                
+                let sx = img.scale.x; let sy = img.scale.y;
+                let kx = img.skew.x; let ky = img.skew.y;
+                let det = 1.0 - kx * ky;
+                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+                } else {
+                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+                };
+                
+                let base_p = center + egui::vec2(rel_x, rel_y);
+                let lx = (base_p.x - img.position.x) * scale_x;
+                let ly = (base_p.y - img.position.y) * scale_y;
+
+                for &(ox, oy, b_col, b_radius) in &bristle_offsets {
+                    draw_pixel_shape(img, lx + ox, ly + oy, b_radius, b_col, iw, ih, s.brush_shape == BrushShape::Square);
+                }
+            }
+        }
+        BrushMode::Calligraphy | BrushMode::Solid | BrushMode::Highlighter => {
+            let mut coverages = vec![0u8; iw * ih];
+            
+            if s.brush_mode == BrushMode::Calligraphy {
+                let nib_angle = std::f32::consts::PI / 4.0;
+                let nib_dir = egui::vec2(nib_angle.cos(), nib_angle.sin());
+
+                for i in 0..s.points.len() {
+                    let pt = s.points[i];
+                    let dir = if i > 0 {
+                        let d = pt - s.points[i-1];
+                        if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                    } else if s.points.len() > 1 {
+                        let d = s.points[1] - s.points[0];
+                        if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                    } else {
+                        egui::vec2(1.0, 0.0)
+                    };
+
+                    let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+                    let rel_world = pt - center;
+                    let cos = img.rotation.cos();
+                    let sin = img.rotation.sin();
+                    let px_rot = rel_world.x * cos + rel_world.y * sin;
+                    let py_rot = rel_world.y * cos - rel_world.x * sin;
+                    
+                    let sx = img.scale.x; let sy = img.scale.y;
+                    let kx = img.skew.x; let ky = img.skew.y;
+                    let det = 1.0 - kx * ky;
+                    let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+                        ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+                    } else {
+                        (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+                    };
+                    
+                    let base_p = center + egui::vec2(rel_x, rel_y);
+                    let lx = (base_p.x - img.position.x) * scale_x;
+                    let ly = (base_p.y - img.position.y) * scale_y;
+
+                    if s.brush_shape == BrushShape::Round {
+                        let cross = (dir.x * nib_dir.y - dir.y * nib_dir.x).abs();
+                        let thickness = radius * (cross * 0.85 + 0.15);
+                        accumulate_pixel_coverage(&mut coverages, lx, ly, thickness, iw, ih, false);
+                    } else {
+                        let steps = (radius * 2.0) as usize + 2;
+                        for step in 0..=steps {
+                            let t = step as f32 / steps as f32 * 2.0 - 1.0;
+                            let px = lx + nib_dir.x * radius * t;
+                            let py = ly + nib_dir.y * radius * t;
+                            accumulate_pixel_coverage(&mut coverages, px, py, scale_x.max(1.0), iw, ih, false);
+                        }
+                    }
+                }
+            } else {
+                for &pt in &s.points {
+                    let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+                    let rel_world = pt - center;
+                    let cos = img.rotation.cos();
+                    let sin = img.rotation.sin();
+                    let px_rot = rel_world.x * cos + rel_world.y * sin;
+                    let py_rot = rel_world.y * cos - rel_world.x * sin;
+                    
+                    let sx = img.scale.x; let sy = img.scale.y;
+                    let kx = img.skew.x; let ky = img.skew.y;
+                    let det = 1.0 - kx * ky;
+                    let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+                        ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+                    } else {
+                        (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+                    };
+                    
+                    let base_p = center + egui::vec2(rel_x, rel_y);
+                    let lx = (base_p.x - img.position.x) * scale_x;
+                    let ly = (base_p.y - img.position.y) * scale_y;
+
+                    accumulate_pixel_coverage(&mut coverages, lx, ly, radius, iw, ih, s.brush_shape == BrushShape::Square);
+                }
+            }
+
+            let original_pixels = img.pixels.clone();
+            for y in 0..ih {
+                for x in 0..iw {
+                    let pixel_idx = y * iw + x;
+                    let cov_u8 = coverages[pixel_idx];
+                    if cov_u8 > 0 {
+                        let coverage = cov_u8 as f32 / 255.0;
+                        let mut pixel_color = color;
+                        pixel_color[3] = (pixel_color[3] as f32 * coverage) as u8;
+
+                        let idx = pixel_idx * 4;
+                        if idx + 3 < img.pixels.len() {
+                            let src_a = pixel_color[3] as f32 / 255.0;
+                            let dst_a = original_pixels[idx + 3] as f32 / 255.0;
+                            if img.locked {
+                                if dst_a > 0.001 {
+                                    let blend_a = src_a;
+                                    let inv_blend = 1.0 - blend_a;
+                                    img.pixels[idx]     = (pixel_color[0] as f32 * blend_a + original_pixels[idx] as f32 * inv_blend) as u8;
+                                    img.pixels[idx + 1] = (pixel_color[1] as f32 * blend_a + original_pixels[idx + 1] as f32 * inv_blend) as u8;
+                                    img.pixels[idx + 2] = (pixel_color[2] as f32 * blend_a + original_pixels[idx + 2] as f32 * inv_blend) as u8;
+                                }
+                            } else {
+                                let out_a = src_a + dst_a * (1.0 - src_a);
+                                if out_a > 0.001 {
+                                    img.pixels[idx]     = ((pixel_color[0] as f32 * src_a + original_pixels[idx] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                    img.pixels[idx + 1] = ((pixel_color[1] as f32 * src_a + original_pixels[idx + 1] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                    img.pixels[idx + 2] = ((pixel_color[2] as f32 * src_a + original_pixels[idx + 2] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                                    img.pixels[idx + 3] = (out_a * 255.0) as u8;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    img.texture = None;
+    img.thumbnail_dirty = true;
+    crop_to_content(img);
+}
+
+pub fn get_content_pixel_bbox(img: &crate::types::PlacedImage) -> Option<egui::Rect> {
+    let iw = img.size[0];
+    let ih = img.size[1];
+    let mut min_x = iw;
+    let mut min_y = ih;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    let mut found = false;
+    for y in 0..ih {
+        for x in 0..iw {
+            let idx = (y * iw + x) * 4;
+            if idx + 3 < img.pixels.len() && img.pixels[idx + 3] > 0 {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+                found = true;
+            }
+        }
+    }
+    if found {
+        Some(egui::Rect::from_min_max(
+            egui::pos2(min_x as f32, min_y as f32),
+            egui::pos2((max_x + 1) as f32, (max_y + 1) as f32),
+        ))
+    } else {
+        None
+    }
+}
+
+pub fn crop_to_content(img: &mut crate::types::PlacedImage) {
+    let iw = img.size[0];
+    let ih = img.size[1];
+    if iw == 0 || ih == 0 { return; }
+    
+    if let Some(bbox) = get_content_pixel_bbox(img) {
+        let min_x = bbox.min.x.floor() as i32;
+        let min_y = bbox.min.y.floor() as i32;
+        let max_x = bbox.max.x.ceil() as i32;
+        let max_y = bbox.max.y.ceil() as i32;
+        
+        let new_w = (max_x - min_x).max(1) as usize;
+        let new_h = (max_y - min_y).max(1) as usize;
+        
+        if new_w < iw || new_h < ih {
+            let mut new_pixels = vec![0u8; new_w * new_h * 4];
+            for y in 0..new_h {
+                let old_y = y as i32 + min_y;
+                if old_y < 0 || old_y >= ih as i32 { continue; }
+                for x in 0..new_w {
+                    let old_x = x as i32 + min_x;
+                    if old_x < 0 || old_x >= iw as i32 { continue; }
+                    let old_idx = (old_y as usize * iw + old_x as usize) * 4;
+                    let new_idx = (y * new_w + x) * 4;
+                    if old_idx + 3 < img.pixels.len() && new_idx + 3 < new_pixels.len() {
+                        new_pixels[new_idx..new_idx+4].copy_from_slice(&img.pixels[old_idx..old_idx+4]);
+                    }
+                }
+            }
+            
+            let dw = img.display_size.unwrap_or([iw as f32, ih as f32])[0];
+            let dh = img.display_size.unwrap_or([ih as f32, ih as f32])[1];
+            let scale_x = iw as f32 / dw;
+            let scale_y = ih as f32 / dh;
+            
+            let p_local_pts = egui::pos2(
+                img.position.x + min_x as f32 / scale_x,
+                img.position.y + min_y as f32 / scale_y,
+            );
+            let old_center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+            let old_rect = egui::Rect::from_min_size(img.position, egui::vec2(dw, dh));
+            
+            let new_screen_pos = crate::utils::transform_point_complex(
+                p_local_pts,
+                old_center,
+                img.rotation,
+                img.skew,
+                img.perspective,
+                old_rect,
+                img.scale,
+            );
+            
+            img.position = new_screen_pos;
+            img.size = [new_w, new_h];
+            img.display_size = Some([new_w as f32 / scale_x, new_h as f32 / scale_y]);
+            img.pixels = new_pixels;
+        }
+    }
+}
+
+pub fn merge_images(dest: &mut crate::types::PlacedImage, src: &crate::types::PlacedImage) {
+    let dest_iw = dest.size[0];
+    let dest_ih = dest.size[1];
+    let src_iw = src.size[0];
+    let src_ih = src.size[1];
+    if dest_iw == 0 || dest_ih == 0 || src_iw == 0 || src_ih == 0 { return; }
+
+    let dest_dw = dest.display_size.unwrap_or([dest_iw as f32, dest_ih as f32])[0];
+    let dest_dh = dest.display_size.unwrap_or([dest_ih as f32, dest_ih as f32])[1];
+    let dest_scale_x = dest_iw as f32 / dest_dw;
+    let dest_scale_y = dest_ih as f32 / dest_dh;
+
+    // Relative offset of src from dest in screen points
+    let offset_pts = src.position - dest.position;
+    let offset_px_x = (offset_pts.x * dest_scale_x).round() as i32;
+    let offset_px_y = (offset_pts.y * dest_scale_y).round() as i32;
+
+    // src bounds in dest's pixel coordinate space
+    let src_local_min_x = offset_px_x;
+    let src_local_min_y = offset_px_y;
+    let src_local_max_x = offset_px_x + src_iw as i32;
+    let src_local_max_y = offset_px_y + src_ih as i32;
+
+    // Get current dest content bbox
+    let dest_content_bbox = get_content_pixel_bbox(dest);
+    let src_local_bbox = egui::Rect::from_min_max(
+        egui::pos2(src_local_min_x as f32, src_local_min_y as f32),
+        egui::pos2(src_local_max_x as f32, src_local_max_y as f32),
+    );
+
+    let final_local_bbox = match dest_content_bbox {
+        Some(db) => db.union(src_local_bbox),
+        None => src_local_bbox,
+    };
+
+    let new_min_x = final_local_bbox.min.x.floor() as i32;
+    let new_min_y = final_local_bbox.min.y.floor() as i32;
+    let new_max_x = final_local_bbox.max.x.ceil() as i32;
+    let new_max_y = final_local_bbox.max.y.ceil() as i32;
+
+    let new_w = (new_max_x - new_min_x).max(1) as usize;
+    let new_h = (new_max_y - new_min_y).max(1) as usize;
+
+    let mut new_pixels = vec![0u8; new_w * new_h * 4];
+
+    // 1. Copy dest pixels
+    for y in 0..dest_ih {
+        let new_y = y as i32 - new_min_y;
+        if new_y < 0 || new_y >= new_h as i32 { continue; }
+        for x in 0..dest_iw {
+            let new_x = x as i32 - new_min_x;
+            if new_x < 0 || new_x >= new_w as i32 { continue; }
+            let old_idx = (y * dest_iw + x) * 4;
+            let new_idx = (new_y as usize * new_w + new_x as usize) * 4;
+            if old_idx + 3 < dest.pixels.len() && new_idx + 3 < new_pixels.len() {
+                new_pixels[new_idx..new_idx+4].copy_from_slice(&dest.pixels[old_idx..old_idx+4]);
+            }
+        }
+    }
+
+    // 2. Blend/Copy src pixels
+    for y in 0..src_ih {
+        let old_y = y as i32 + offset_px_y;
+        let new_y = old_y - new_min_y;
+        if new_y < 0 || new_y >= new_h as i32 { continue; }
+        for x in 0..src_iw {
+            let old_x = x as i32 + offset_px_x;
+            let new_x = old_x - new_min_x;
+            if new_x < 0 || new_x >= new_w as i32 { continue; }
+
+            let src_idx = (y * src_iw + x) * 4;
+            let new_idx = (new_y as usize * new_w + new_x as usize) * 4;
+            if src_idx + 3 < src.pixels.len() && new_idx + 3 < new_pixels.len() {
+                let src_a = src.pixels[src_idx + 3] as f32 / 255.0;
+                if src_a > 0.001 {
+                    let dst_a = new_pixels[new_idx + 3] as f32 / 255.0;
+                    let out_a = src_a + dst_a * (1.0 - src_a);
+                    if out_a > 0.001 {
+                        new_pixels[new_idx]     = ((src.pixels[src_idx] as f32 * src_a + new_pixels[new_idx] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                        new_pixels[new_idx + 1] = ((src.pixels[src_idx + 1] as f32 * src_a + new_pixels[new_idx + 1] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                        new_pixels[new_idx + 2] = ((src.pixels[src_idx + 2] as f32 * src_a + new_pixels[new_idx + 2] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                        new_pixels[new_idx + 3] = (out_a * 255.0) as u8;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Update dest image positioning & dimensions
+    let p_local_pts = egui::pos2(
+        dest.position.x + new_min_x as f32 / dest_scale_x,
+        dest.position.y + new_min_y as f32 / dest_scale_y,
+    );
+    let old_center = dest.position + egui::vec2(dest_dw * 0.5, dest_dh * 0.5);
+    let old_rect = egui::Rect::from_min_size(dest.position, egui::vec2(dest_dw, dest_dh));
+    
+    let new_screen_pos = crate::utils::transform_point_complex(
+        p_local_pts,
+        old_center,
+        dest.rotation,
+        dest.skew,
+        dest.perspective,
+        old_rect,
+        dest.scale,
+    );
+
+    dest.position = new_screen_pos;
+    dest.size = [new_w, new_h];
+    dest.display_size = Some([new_w as f32 / dest_scale_x, new_h as f32 / dest_scale_y]);
+    dest.pixels = new_pixels;
+    dest.texture = None;
+    dest.thumbnail_dirty = true;
+
+    crop_to_content(dest);
+}
+

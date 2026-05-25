@@ -8,7 +8,7 @@ use crate::ui::settings_menu::section_heading;
 pub fn render_filter_menu(
     ctx: &egui::Context,
     project: &mut Project,
-    settings: &Settings,
+    settings: &mut Settings,
     filters_open: &mut Option<usize>,
 ) {
     if let Some(idx) = *filters_open {
@@ -21,10 +21,11 @@ pub fn render_filter_menu(
         let frame = photoshop_frame(settings);
         let layer_name = project.layers[idx].name.clone();
 
-        egui::Window::new(format!("Layer Filters: {}", layer_name))
+        let win_resp = egui::Window::new(format!("Layer Filters: {}", layer_name))
             .title_bar(false)
             .resizable(false)
             .collapsible(false)
+            .default_pos(settings.filter_menu_pos)
             .frame(frame)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -117,18 +118,18 @@ pub fn render_filter_menu(
 
                 // Blur
                 ui.horizontal(|ui| {
-                    let mut bl = layer.blur > 0.0;
+                    let mut bl = layer.blur >= 0.0;
                     if ui.checkbox(&mut bl, "Blur").changed() {
-                        layer.blur = if bl { 10.0 } else { 0.0 };
+                        layer.blur = if bl { 10.0 } else { -1.0 };
                     }
                     if bl {
                         let mut val = layer.blur;
-                        if ui.add(egui::Slider::new(&mut val, 0.0..=100.0)).changed() {
-                            layer.blur = if val < 0.01 { 0.01 } else { val };
+                        if ui.add(egui::DragValue::new(&mut val).range(0.0..=300.0)).changed() {
+                            layer.blur = val;
                         }
                     }
                 });
-                if layer.blur > 0.0 {
+                if layer.blur >= 0.0 {
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut layer.blur_effect, BlurEffect::Gaussian, "Gaus");
                         ui.selectable_value(&mut layer.blur_effect, BlurEffect::Pixelate, "Pix");
@@ -141,6 +142,15 @@ pub fn render_filter_menu(
                     *filters_open = None;
                 }
             });
+
+        if let Some(resp) = win_resp {
+            if resp.response.dragged() {
+                let id = resp.response.layer_id;
+                if let Some(rect) = ctx.memory(|m| m.area_rect(id.id)) {
+                    settings.filter_menu_pos = rect.min;
+                }
+            }
+        }
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             *filters_open = None;

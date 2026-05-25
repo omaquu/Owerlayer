@@ -388,7 +388,7 @@ pub fn force_focus() {}
 
 /// Captures a rectangle of the desktop screen and returns RGBA bytes.
 pub fn capture_screen_rect(x: i32, y: i32, width: i32, height: i32) -> Option<Vec<u8>> {
-    if width <= 0 || height <= 0 { return None; }
+    if width <= 0 || height <= 0 || width > 8192 || height > 8192 { return None; }
     
     unsafe {
         let screen_dc = GetDC(std::ptr::null_mut());
