@@ -87,7 +87,7 @@ pub fn update(ctx: &mut ToolContext) {
                             for p in s.points {
                                 if p.distance(pos) < r {
                                     if current_segment.len() >= 2 {
-                                        let mut s2 = Stroke::new(current_segment.clone(), s.color, s.width, s.kind, s.brush_mode, s.background_color, s.shadow, s.brush_shape, s.outline, s.arrow);
+                                        let mut s2 = Stroke::new(current_segment.clone(), s.color, s.width, s.kind, s.brush_mode, s.background_color, s.shadow, s.brush_shape, s.outline, s.arrow, s.spray_density, s.highlight_opacity);
                                         s2.opacity = s.opacity;
                                         new_strokes.push(s2);
                                     }
@@ -97,7 +97,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 }
                             }
                             if current_segment.len() >= 2 {
-                                let mut s2 = Stroke::new(current_segment, s.color, s.width, s.kind, s.brush_mode, s.background_color, s.shadow, s.brush_shape, s.outline, s.arrow);
+                                let mut s2 = Stroke::new(current_segment, s.color, s.width, s.kind, s.brush_mode, s.background_color, s.shadow, s.brush_shape, s.outline, s.arrow, s.spray_density, s.highlight_opacity);
                                 s2.opacity = s.opacity;
                                 new_strokes.push(s2);
                             }

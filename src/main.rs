@@ -482,6 +482,8 @@ impl eframe::App for OwerlayerApp {
                             self.settings.brush_shape,
                             self.settings.brush_outline,
                             self.settings.brush_arrow,
+                            self.settings.spray_density,
+                            self.settings.highlight_opacity,
                         );
                         layer.strokes.push(s);
                     }

@@ -167,11 +167,17 @@ pub struct Stroke {
     pub shadow_blur: f32,
     #[serde(default)]
     pub locked: bool,
+    #[serde(default = "default_stroke_spray_density")]
+    pub spray_density: u32,
+    #[serde(default = "default_stroke_highlight_opacity")]
+    pub highlight_opacity: f32,
     #[serde(skip)]
     pub cached_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     pub cached_rect: Option<egui::Rect>,
 }
+fn default_stroke_spray_density() -> u32 { 40 }
+fn default_stroke_highlight_opacity() -> f32 { 0.4 }
 
 impl Stroke {
     pub fn new(
@@ -185,6 +191,8 @@ impl Stroke {
         brush_shape: BrushShape,
         outline: bool,
         arrow: bool,
+        spray_density: u32,
+        highlight_opacity: f32,
     ) -> Self {
         let name = match kind {
             StrokeKind::Rect => "Rectangle".to_string(),
@@ -231,6 +239,8 @@ impl Stroke {
             blur: 0.0,
             blur_effect: BlurEffect::Gaussian,
             locked: false,
+            spray_density,
+            highlight_opacity,
             cached_texture: None,
             cached_rect: None,
         }
@@ -752,6 +762,10 @@ pub struct Settings {
     pub creation_prompt_pos: egui::Pos2,
     #[serde(default)]
     pub saved_embed_urls: Vec<(String, String)>,
+    #[serde(default = "default_spray_density")]
+    pub spray_density: u32,
+    #[serde(default = "default_highlight_opacity")]
+    pub highlight_opacity: f32,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -773,6 +787,8 @@ fn default_filter_menu_pos() -> egui::Pos2 { egui::pos2(520.0, 60.0) }
 fn default_history_menu_pos() -> egui::Pos2 { egui::pos2(680.0, 60.0) }
 fn default_object_fx_menu_pos() -> egui::Pos2 { egui::pos2(840.0, 60.0) }
 fn default_creation_prompt_pos() -> egui::Pos2 { egui::pos2(500.0, 300.0) }
+fn default_spray_density() -> u32 { 40 }
+fn default_highlight_opacity() -> f32 { 0.4 }
 
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
@@ -860,6 +876,8 @@ impl Default for Settings {
             object_fx_menu_pos: default_object_fx_menu_pos(),
             creation_prompt_pos: default_creation_prompt_pos(),
             saved_embed_urls: Vec::new(),
+            spray_density: default_spray_density(),
+            highlight_opacity: default_highlight_opacity(),
         }
     }
 }

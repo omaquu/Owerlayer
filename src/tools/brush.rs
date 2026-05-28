@@ -164,7 +164,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     let radius = (settings.pen_width / 2.0 * scale_x).max(1.0);
                                     let mut color = settings.pen_color;
                                     if settings.brush_mode == BrushMode::Highlighter {
-                                        color[3] = (color[3] as f32 * (102.0 / 255.0)) as u8;
+                                        color[3] = (color[3] as f32 * settings.highlight_opacity) as u8;
                                     }
 
                                     if !img.locked && img.rotation.abs() < 0.01 && img.skew.length() < 0.01 && img.perspective == [egui::Vec2::ZERO; 4] {
@@ -249,7 +249,7 @@ pub fn update(ctx: &mut ToolContext) {
                                                 let lx = (base_p.x - img.position.x) * scale_x;
                                                 let ly = (base_p.y - img.position.y) * scale_y;
 
-                                                for _ in 0..40 {
+                                                for _ in 0..settings.spray_density {
                                                     rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
                                                     let rx = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
                                                     rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
@@ -427,6 +427,8 @@ pub fn update(ctx: &mut ToolContext) {
                         settings.brush_shape,
                         settings.brush_outline,
                         settings.brush_arrow,
+                        settings.spray_density,
+                        settings.highlight_opacity,
                     );
                     *ctx.pending_stroke = Some(s);
                     *ctx.layer_prompt_open = true;
@@ -444,6 +446,8 @@ pub fn update(ctx: &mut ToolContext) {
                                 settings.brush_shape,
                                 settings.brush_outline,
                                 settings.brush_arrow,
+                                settings.spray_density,
+                                settings.highlight_opacity,
                             );
                             layer.strokes.push(s);
                         }
@@ -499,7 +503,7 @@ pub fn update(ctx: &mut ToolContext) {
         
         let mut stroke_color = stroke_color;
         if s.brush_mode == BrushMode::Highlighter {
-            stroke_color = egui::Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), (stroke_color.a() as f32 * (102.0 / 255.0)) as u8);
+            stroke_color = egui::Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), (stroke_color.a() as f32 * s.highlight_opacity) as u8);
         }
         // Shadow and Outline are handled by draw_layer_strokes
         match s.kind {
@@ -509,7 +513,7 @@ pub fn update(ctx: &mut ToolContext) {
                         let mut rng = 42u32;
                         let half_w = width * 0.5;
                         for pt in &pts {
-                            for _ in 0..40 {
+                            for _ in 0..s.spray_density {
                                 rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
                                 let rx = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
                                 rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
@@ -843,7 +847,7 @@ pub fn render_preview(ctx: &mut ToolContext) {
     let pen_c = color32(&settings.pen_color);
     
     let pts: Vec<_> = ctx.current_stroke.clone();
-    let s = Stroke::new(pts, settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow);
+    let s = Stroke::new(pts, settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow, settings.spray_density, settings.highlight_opacity);
     draw_stroke(&painter, &s, pen_c, egui::Vec2::ZERO, s.width, 1.0);
 }
 
@@ -1025,7 +1029,7 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
 
     let mut color = s.color;
     if s.brush_mode == BrushMode::Highlighter {
-        color[3] = (color[3] as f32 * (102.0 / 255.0)) as u8;
+        color[3] = (color[3] as f32 * s.highlight_opacity) as u8;
     }
 
     match s.brush_mode {
@@ -1054,7 +1058,7 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
                 let lx = (base_p.x - img.position.x) * scale_x;
                 let ly = (base_p.y - img.position.y) * scale_y;
 
-                for _ in 0..40 {
+                for _ in 0..s.spray_density {
                     rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
                     let rx = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
                     rng = rng.wrapping_mul(1103515245).wrapping_add(12345);

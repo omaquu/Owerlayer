@@ -424,6 +424,22 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     ui.selectable_value(&mut settings.brush_mode, BrushMode::Calligraphy, "Calli").on_hover_text("Calligraphy Mode");
                     ui.selectable_value(&mut settings.brush_mode, BrushMode::Real, "Real").on_hover_text("Real Brush Mode");
                 });
+                if settings.brush_mode == BrushMode::Spray {
+                    ui.horizontal(|ui| {
+                        ui.label("Density");
+                        if ui.add(egui::Slider::new(&mut settings.spray_density, 5..=100).show_value(true)).on_hover_text("Spray dot count per point").changed() {
+                            settings.save();
+                        }
+                    });
+                }
+                if settings.brush_mode == BrushMode::Highlighter {
+                    ui.horizontal(|ui| {
+                        ui.label("Opacity");
+                        if ui.add(egui::Slider::new(&mut settings.highlight_opacity, 0.1..=1.0).show_value(true)).on_hover_text("Highlighter opacity").changed() {
+                            settings.save();
+                        }
+                    });
+                }
                 ui.horizontal(|ui| {
                     ui.toggle_value(&mut settings.brush_arrow, " > ").on_hover_text("Arrow at the end Toggle");
                 });
