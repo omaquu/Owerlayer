@@ -75,6 +75,7 @@ struct OwerlayerApp {
     rasterize_phase: u8,  // 0=idle, 1=isolate+render, 2=read pixels
     rasterize_bbox: Option<[f32; 4]>,
     rasterize_capture: rasterize::CaptureBuffer,
+    pub copied_image: Option<crate::types::PlacedImage>,
 }
 
 impl OwerlayerApp {
@@ -143,6 +144,7 @@ impl OwerlayerApp {
             rasterize_phase: 0,
             rasterize_bbox: None,
             rasterize_capture: rasterize::new_capture_buffer(),
+            copied_image: None,
         }
     }
 
@@ -580,6 +582,99 @@ impl eframe::App for OwerlayerApp {
             }
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::S)) {
                 self.project.save();
+            }
+            if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C)) {
+                if let Some(sel) = &self.project.marquee_selection {
+                    let ppp = ctx.pixels_per_point();
+                    let bounds = sel.shape.bounds();
+                    let sw = (bounds.width() * ppp).round() as i32;
+                    let sh = (bounds.height() * ppp).round() as i32;
+                    if sw > 5 && sh > 5 {
+                        let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                        let sx = (bounds.min.x * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
+                        let sy = (bounds.min.y * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
+                        if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(&self.settings, sx, sy, sw, sh) {
+                            // Mask non-selected area to transparent
+                            for py in 0..sh as usize {
+                                for px in 0..sw as usize {
+                                    let lp = bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
+                                    if !sel.shape.contains(lp) {
+                                        let idx = (py * sw as usize + px) * 4;
+                                        if idx + 3 < pixels.len() {
+                                            pixels[idx + 3] = 0;
+                                        }
+                                    }
+                                }
+                            }
+                            let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                            let mut img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
+                            img.display_size = Some([bounds.width(), bounds.height()]);
+                            img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                            img.show_source_rect = true;
+                            img.shadow = self.settings.snip_shadow;
+                            
+                            // Create transparency mask if not simple rectangular selection
+                            if !matches!(sel.shape, SelectionShape::Rect(_)) {
+                                let mut mask = vec![255u8; sw as usize * sh as usize];
+                                for py in 0..sh as usize {
+                                    for px in 0..sw as usize {
+                                        let lp = bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
+                                        if !sel.shape.contains(lp) {
+                                            mask[py * sw as usize + px] = 0;
+                                        }
+                                    }
+                                }
+                                img.mask = Some(mask);
+                            }
+                            
+                            self.copied_image = Some(img);
+                        }
+                    }
+                }
+            }
+            if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
+                if let Some(img) = &self.copied_image {
+                    let mut img_clone = img.clone();
+                    let active_layer_idx = self.project.active_layer;
+                    if active_layer_idx < self.project.layers.len() {
+                        let is_locked = self.project.layers[active_layer_idx].locked;
+                        
+                        // Center it at mouse hover position if mouse is hovering in the canvas!
+                        let mouse_pos = ctx.input(|i| i.pointer.hover_pos());
+                        if let Some(mpos) = mouse_pos {
+                            let disp_size = img_clone.display_size.unwrap_or([img_clone.size[0] as f32, img_clone.size[1] as f32]);
+                            img_clone.position = mpos - egui::vec2(disp_size[0] * 0.5, disp_size[1] * 0.5);
+                        } else {
+                            // Just shift it slightly from the copied position
+                            img_clone.position += egui::vec2(20.0, 20.0);
+                        }
+                        
+                        let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                        img_clone.id = id;
+                        
+                        if is_locked {
+                            // If locked, create a new layer automatically for the paste
+                            self.project.layers.push(crate::project::Layer::new(&format!("Pasted Layer {}", self.project.layers.len() + 1)));
+                            self.project.active_layer = self.project.layers.len() - 1;
+                            self.project.layers.last_mut().unwrap().placed_images.push(img_clone);
+                            self.project.layers.last_mut().unwrap().expanded = true;
+                        } else {
+                            self.project.layers[active_layer_idx].placed_images.push(img_clone);
+                            self.project.layers[active_layer_idx].expanded = true;
+                        }
+                        
+                        // Select the newly pasted object!
+                        let new_idx = self.project.layers[self.project.active_layer].placed_images.len() - 1;
+                        self.project.selected_object = Some(SelectedObject {
+                            layer_idx: self.project.active_layer,
+                            object_type: ObjectType::Image,
+                            object_idx: new_idx,
+                        });
+                        
+                        self.history.push(&self.project, "Paste Image");
+                        self.project.save();
+                    }
+                }
             }
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D)) {
                 if self.project.marquee_selection.is_some() {

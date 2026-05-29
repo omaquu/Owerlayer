@@ -55,6 +55,32 @@ pub enum SelectionShape {
     Poly(Vec<egui::Pos2>),
 }
 
+impl SelectionShape {
+    pub fn bounds(&self) -> egui::Rect {
+        match self {
+            SelectionShape::Rect(r) => *r,
+            SelectionShape::Circle { center, radius } => {
+                egui::Rect::from_center_size(*center, egui::vec2(radius * 2.0, radius * 2.0))
+            }
+            SelectionShape::Poly(pts) => {
+                if pts.is_empty() {
+                    egui::Rect::ZERO
+                } else {
+                    egui::Rect::from_points(pts)
+                }
+            }
+        }
+    }
+
+    pub fn contains(&self, p: egui::Pos2) -> bool {
+        match self {
+            SelectionShape::Rect(r) => r.contains(p),
+            SelectionShape::Circle { center, radius } => p.distance(*center) <= *radius,
+            SelectionShape::Poly(pts) => crate::utils::is_inside_poly(pts, p),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MarqueeSelection {
     pub shape: SelectionShape,
@@ -638,7 +664,7 @@ fn default_glow_color() -> [u8; 4] { [255, 255, 255, 255] }
 pub enum EraserMode { Stroke, Pixel }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum CutMode { Rect, Circle, Lasso, Polygon, MagicWand }
+pub enum CutMode { Rect, Circle, Lasso, Polygon, MagicWand, Star, Heart }
 
 impl Default for CutMode { fn default() -> Self { Self::Rect } }
 

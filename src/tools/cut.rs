@@ -127,10 +127,33 @@ pub fn update(ctx: &mut ToolContext) {
             pts.push(pos);
             painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, egui::Color32::WHITE)));
         }
+    } else if mode == CutMode::Star || mode == CutMode::Heart {
+        if left_just_pressed { *line_start = Some(pos); }
+        if let Some(start) = *line_start {
+            let radius = start.distance(pos);
+            if radius > 2.0 {
+                let pts = if mode == CutMode::Star { crate::utils::get_star_points(start, radius) } else { crate::utils::get_heart_points(start, radius) };
+                let mut closed_pts = pts.clone();
+                if !closed_pts.is_empty() { closed_pts.push(pts[0]); }
+                painter.add(egui::Shape::line(closed_pts, egui::Stroke::new(1.5, egui::Color32::WHITE)));
+            }
+        }
+        if left_just_released {
+            if let Some(start) = line_start.take() {
+                let radius = start.distance(pos);
+                if radius > 5.0 {
+                    let pts = if mode == CutMode::Star { crate::utils::get_star_points(start, radius) } else { crate::utils::get_heart_points(start, radius) };
+                    project.marquee_selection = Some(MarqueeSelection {
+                        shape: SelectionShape::Poly(pts)
+                    });
+                }
+            }
+        }
     } else if mode == CutMode::MagicWand {
         // Magic wand remains direct pixel clearing for instant use
         if left_just_pressed {
             let layer = &mut project.layers[active_layer_idx];
+            let mut clicked_on_img = false;
             for img in &mut layer.placed_images {
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
@@ -146,6 +169,117 @@ pub fn update(ctx: &mut ToolContext) {
                             img.texture = None;
                             img.thumbnail_dirty = true;
                             *ctx.request_history_push = Some("Cut".into());
+                            clicked_on_img = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // If they clicked on empty desktop/canvas space, perform desktop wand color extraction!
+            if !clicked_on_img {
+                let ppp = ui.ctx().pixels_per_point();
+                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                let rect = canvas_response.rect;
+                let sw = (rect.width() * ppp).round() as i32;
+                let sh = (rect.height() * ppp).round() as i32;
+                if sw > 5 && sh > 5 {
+                    let sx = if settings.use_absolute_screen_coords { 0 } else { wx };
+                    let sy = if settings.use_absolute_screen_coords { 0 } else { wy };
+                    if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, sw, sh) {
+                        let px = ((pos.x - rect.min.x) * ppp).round() as i32;
+                        let py = ((pos.y - rect.min.y) * ppp).round() as i32;
+                        if px >= 0 && px < sw && py >= 0 && py < sh {
+                            let start_idx = (py * sw + px) as usize * 4;
+                            let target_color = [pixels[start_idx], pixels[start_idx+1], pixels[start_idx+2], pixels[start_idx+3]];
+                            
+                            let color_diff = |c1: [u8; 4], c2: [u8; 4]| -> f32 {
+                                let dr = (c1[0] as f32 - c2[0] as f32).abs();
+                                let dg = (c1[1] as f32 - c2[1] as f32).abs();
+                                let db = (c1[2] as f32 - c2[2] as f32).abs();
+                                (dr + dg + db) / 3.0
+                            };
+                            
+                            let mut mask = vec![0u8; (sw * sh) as usize];
+                            let mut stack = vec![(px, py)];
+                            mask[(py * sw + px) as usize] = 255;
+                            
+                            while let Some((cx, cy)) = stack.pop() {
+                                for (dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                                    let nx = cx + dx;
+                                    let ny = cy + dy;
+                                    if nx >= 0 && nx < sw && ny >= 0 && ny < sh {
+                                        let nidx = (ny * sw + nx) as usize;
+                                        if mask[nidx] == 0 {
+                                            let pixel_idx = nidx * 4;
+                                            let current_color = [pixels[pixel_idx], pixels[pixel_idx+1], pixels[pixel_idx+2], pixels[pixel_idx+3]];
+                                            if color_diff(current_color, target_color) <= settings.magic_wand_threshold {
+                                                mask[nidx] = 255;
+                                                stack.push((nx, ny));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Make non-matching pixels transparent
+                            let mut min_x = sw;
+                            let mut min_y = sh;
+                            let mut max_x = 0;
+                            let mut max_y = 0;
+                            let mut found = false;
+                            
+                            for y in 0..sh {
+                                for x in 0..sw {
+                                    let idx = (y * sw + x) as usize;
+                                    if mask[idx] == 255 {
+                                        min_x = min_x.min(x);
+                                        min_y = min_y.min(y);
+                                        max_x = max_x.max(x);
+                                        max_y = max_y.max(y);
+                                        found = true;
+                                    } else {
+                                        pixels[idx * 4 + 3] = 0; // Set alpha to transparent
+                                    }
+                                }
+                            }
+                            
+                            if found {
+                                let crop_w = (max_x - min_x + 1) as usize;
+                                let crop_h = (max_y - min_y + 1) as usize;
+                                let mut crop_pixels = vec![0u8; crop_w * crop_h * 4];
+                                for y in 0..crop_h {
+                                    let src_y = y + min_y as usize;
+                                    let src_idx = (src_y * sw as usize + min_x as usize) * 4;
+                                    let dst_idx = y * crop_w * 4;
+                                    crop_pixels[dst_idx..dst_idx + crop_w * 4].copy_from_slice(&pixels[src_idx..src_idx + crop_w * 4]);
+                                }
+                                
+                                let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                                let logical_pos = rect.min + egui::vec2(min_x as f32 / ppp, min_y as f32 / ppp);
+                                let mut img = PlacedImage::new(id, logical_pos, [crop_w, crop_h], crop_pixels);
+                                img.display_size = Some([crop_w as f32 / ppp, crop_h as f32 / ppp]);
+                                img.shadow = settings.snip_shadow;
+                                
+                                // Create tight binary mask for cropping outline
+                                let mut tight_mask = vec![0u8; crop_w * crop_h];
+                                for y in 0..crop_h {
+                                    for x in 0..crop_w {
+                                        let src_idx = ((y + min_y as usize) * sw as usize + (x + min_x as usize)) as usize;
+                                        tight_mask[y * crop_w + x] = mask[src_idx];
+                                    }
+                                }
+                                img.mask = Some(tight_mask);
+                                
+                                layer.placed_images.push(img);
+                                let new_idx = layer.placed_images.len() - 1;
+                                project.selected_object = Some(SelectedObject {
+                                    layer_idx: active_layer_idx,
+                                    object_type: ObjectType::Image,
+                                    object_idx: new_idx,
+                                });
+                                *ctx.request_history_push = Some("Desktop Wand".into());
+                            }
                         }
                     }
                 }

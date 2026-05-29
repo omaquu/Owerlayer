@@ -536,6 +536,8 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Rect, "Rect");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Circle, "Circ");
+                ui.selectable_value(&mut settings.cut_mode, CutMode::Star, "Star");
+                ui.selectable_value(&mut settings.cut_mode, CutMode::Heart, "Heart");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Lasso, "Lasso");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::Polygon, "Poly");
                 ui.selectable_value(&mut settings.cut_mode, CutMode::MagicWand, "Wand");

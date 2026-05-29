@@ -36,7 +36,7 @@ pub fn update(ctx: &mut ToolContext) {
     let left_just_pressed = mouse.left_just_pressed;
     let left_just_released = mouse.left_just_released;
     let active_layer_idx = project.active_layer;
-    let _ppp = ui.ctx().pixels_per_point();
+    let ppp = ui.ctx().pixels_per_point();
     let render_offset = ctx.render_offset;
     let _frame_count = ctx.frame_count;
     if active_layer_idx >= project.layers.len() { return; }
@@ -56,7 +56,8 @@ pub fn update(ctx: &mut ToolContext) {
                             let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                              if settings.snip_live {
                                  *snip_created = true;
-                                 let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], Vec::new());
+                                 let mut img = PlacedImage::new(id, rect.min, [(w * ppp).round() as usize, (h * ppp).round() as usize], Vec::new());
+                                 img.display_size = Some([w, h]);
                                  img.is_live = true;
                                  img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                  img.blur = settings.blur_strength;
@@ -76,9 +77,12 @@ pub fn update(ctx: &mut ToolContext) {
                                  let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                  let sx = (rect.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                  let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                 if let Some(pixels) = capture_screen_rect_safe(settings, sx, sy, (w * ppp) as i32, (h * ppp) as i32) {
+                                 let pw = (w * ppp).round() as i32;
+                                 let ph = (h * ppp).round() as i32;
+                                 if let Some(pixels) = capture_screen_rect_safe(settings, sx, sy, pw, ph) {
                                      *snip_created = true;
-                                     let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], pixels);
+                                     let mut img = PlacedImage::new(id, rect.min, [pw as usize, ph as usize], pixels);
+                                     img.display_size = Some([w, h]);
                                      img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                      img.show_source_rect = true;
                                      img.shadow = settings.snip_shadow;
@@ -108,17 +112,19 @@ pub fn update(ctx: &mut ToolContext) {
                             let ppp = ui.ctx().pixels_per_point();
                             let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                             
-                            let mut mask = vec![255u8; (w * ppp) as usize * (h * ppp) as usize];
-                            let center = egui::pos2(w * 0.5, h * 0.5);
-                            let radius = w.min(h) * 0.5;
-                            for py in 0..(h * ppp) as usize {
-                                for px in 0..(w * ppp) as usize {
-                                    let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
-                                    if lp.distance(center) > radius {
-                                        mask[py * (w * ppp) as usize + px] = 0;
-                                    }
-                                }
-                            }
+                             let pw = (w * ppp).round() as usize;
+                             let ph = (h * ppp).round() as usize;
+                             let mut mask = vec![255u8; pw * ph];
+                             let center = egui::pos2(w * 0.5, h * 0.5);
+                             let radius = w.min(h) * 0.5;
+                             for py in 0..ph {
+                                 for px in 0..pw {
+                                     let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
+                                     if lp.distance(center) > radius {
+                                         mask[py * pw + px] = 0;
+                                     }
+                                 }
+                             }
 
                             let mut local_pts = Vec::new();
                             let segments = 64;
@@ -133,7 +139,8 @@ pub fn update(ctx: &mut ToolContext) {
 
                             if settings.snip_live {
                                 *snip_created = true;
-                                let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], Vec::new());
+                                let mut img = PlacedImage::new(id, rect.min, [pw, ph], Vec::new());
+                                img.display_size = Some([w, h]);
                                 img.is_live = true;
                                 img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                 img.mask = Some(mask);
@@ -147,10 +154,11 @@ pub fn update(ctx: &mut ToolContext) {
                                 let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                 let sx = (rect.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                 let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, (w * ppp) as i32, (h * ppp) as i32) {
+                                if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, pw as i32, ph as i32) {
                                     *snip_created = true;
                                     for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
-                                    let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], pixels);
+                                    let mut img = PlacedImage::new(id, rect.min, [pw, ph], pixels);
+                                    img.display_size = Some([w, h]);
                                     img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                     img.show_source_rect = true;
                                     img.mask = Some(mask);
@@ -171,25 +179,26 @@ pub fn update(ctx: &mut ToolContext) {
                 if left_just_released && current_stroke.len() > 3 {
                     let bounds = egui::Rect::from_points(&current_stroke);
                     let ppp = ui.ctx().pixels_per_point();
-                    let sw = (bounds.width() * ppp) as i32;
-                    let sh = (bounds.height() * ppp) as i32;
+                    let sw = (bounds.width() * ppp) as usize;
+                    let sh = (bounds.height() * ppp) as usize;
                     
                     if sw > 5 && sh > 5 {
                         let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                         let poly: Vec<egui::Pos2> = current_stroke.iter().map(|p| egui::pos2(p.x - bounds.min.x, p.y - bounds.min.y)).collect();
-                        let mut mask = vec![255u8; sw as usize * sh as usize];
-                        for py in 0..sh as usize {
-                            for px in 0..sw as usize {
+                        let mut mask = vec![255u8; sw * sh];
+                        for py in 0..sh {
+                            for px in 0..sw {
                                 let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
                                 if !is_inside_poly(&poly, lp) {
-                                    mask[py * sw as usize + px] = 0;
+                                    mask[py * sw + px] = 0;
                                 }
                             }
                         }
 
                         if settings.snip_live {
                             *snip_created = true;
-                            let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], Vec::new());
+                            let mut img = PlacedImage::new(id, bounds.min, [sw, sh], Vec::new());
+                            img.display_size = Some([bounds.width(), bounds.height()]);
                             img.is_live = true;
                             img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                             img.mask = Some(mask);
@@ -203,10 +212,11 @@ pub fn update(ctx: &mut ToolContext) {
                             let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                             let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                             let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                            if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw, sh) {
+                            if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw as i32, sh as i32) {
                                 *snip_created = true;
                                 for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
-                                let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], pixels);
+                                let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+                                img.display_size = Some([bounds.width(), bounds.height()]);
                                 img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                 img.show_source_rect = true;
                                 img.mask = Some(mask);
@@ -229,25 +239,26 @@ pub fn update(ctx: &mut ToolContext) {
                 if (right_clicked || enter_pressed || close_to_start) && !current_stroke.is_empty() {
                     let bounds = egui::Rect::from_points(&current_stroke);
                     let ppp = ui.ctx().pixels_per_point();
-                    let sw = (bounds.width() * ppp) as i32;
-                    let sh = (bounds.height() * ppp) as i32;
+                    let sw = (bounds.width() * ppp) as usize;
+                    let sh = (bounds.height() * ppp) as usize;
                     
                     if sw > 5 && sh > 5 {
                         let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                         let poly: Vec<egui::Pos2> = current_stroke.iter().map(|p| egui::pos2(p.x - bounds.min.x, p.y - bounds.min.y)).collect();
-                        let mut mask = vec![255u8; sw as usize * sh as usize];
-                        for py in 0..sh as usize {
-                            for px in 0..sw as usize {
+                        let mut mask = vec![255u8; sw * sh];
+                        for py in 0..sh {
+                            for px in 0..sw {
                                 let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
                                 if !is_inside_poly(&poly, lp) {
-                                    mask[py * sw as usize + px] = 0;
+                                    mask[py * sw + px] = 0;
                                 }
                             }
                         }
 
                         if settings.snip_live {
                             *snip_created = true;
-                            let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], Vec::new());
+                            let mut img = PlacedImage::new(id, bounds.min, [sw, sh], Vec::new());
+                            img.display_size = Some([bounds.width(), bounds.height()]);
                             img.is_live = true;
                             img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                             img.mask = Some(mask);
@@ -261,10 +272,11 @@ pub fn update(ctx: &mut ToolContext) {
                             let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                             let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                             let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                            if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw, sh) {
+                            if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw as i32, sh as i32) {
                                 *snip_created = true;
                                 for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
-                                let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], pixels);
+                                let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+                                img.display_size = Some([bounds.width(), bounds.height()]);
                                 img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                 img.show_source_rect = true;
                                 img.mask = Some(mask);
@@ -293,25 +305,26 @@ pub fn update(ctx: &mut ToolContext) {
                             let pts = if mode == SnipMode::Star { get_star_points(start, radius) } else { get_heart_points(start, radius) };
                             let bounds = egui::Rect::from_points(&pts);
                             let ppp = ui.ctx().pixels_per_point();
-                            let sw = (bounds.width() * ppp) as i32;
-                            let sh = (bounds.height() * ppp) as i32;
+                            let sw = (bounds.width() * ppp) as usize;
+                            let sh = (bounds.height() * ppp) as usize;
                             
                             if sw > 5 && sh > 5 {
                                 let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                                 let poly: Vec<egui::Pos2> = pts.iter().map(|p| egui::pos2(p.x - bounds.min.x, p.y - bounds.min.y)).collect();
-                                let mut mask = vec![255u8; sw as usize * sh as usize];
-                                for py in 0..sh as usize {
-                                    for px in 0..sw as usize {
+                                let mut mask = vec![255u8; sw * sh];
+                                for py in 0..sh {
+                                    for px in 0..sw {
                                         let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
                                         if !is_inside_poly(&poly, lp) {
-                                            mask[py * sw as usize + px] = 0;
+                                            mask[py * sw + px] = 0;
                                         }
                                     }
                                 }
                                 
                                 if settings.snip_live {
                                     *snip_created = true;
-                                    let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], Vec::new());
+                                    let mut img = PlacedImage::new(id, bounds.min, [sw, sh], Vec::new());
+                                    img.display_size = Some([bounds.width(), bounds.height()]);
                                     img.is_live = true;
                                     img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                     img.mask = Some(mask);
@@ -323,10 +336,11 @@ pub fn update(ctx: &mut ToolContext) {
                                     let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                     let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                     let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                    if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw, sh) {
+                                    if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw as i32, sh as i32) {
                                         *snip_created = true;
                                         for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
-                                        let mut img = PlacedImage::new(id, bounds.min, [bounds.width().round() as usize, bounds.height().round() as usize], pixels);
+                                        let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+                                        img.display_size = Some([bounds.width(), bounds.height()]);
                                         img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                         img.show_source_rect = true;
                                         img.mask = Some(mask);
@@ -355,7 +369,8 @@ pub fn update(ctx: &mut ToolContext) {
                         if w > 5.0 && h > 5.0 {
                             let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                             *snip_created = true;
-                            let mut img = PlacedImage::new(id, rect.min, [w.round() as usize, h.round() as usize], Vec::new());
+                            let mut img = PlacedImage::new(id, rect.min, [(w * ppp).round() as usize, (h * ppp).round() as usize], Vec::new());
+                            img.display_size = Some([w, h]);
                             img.is_live = true;
                             img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                             img.show_source_rect = true;
@@ -367,7 +382,6 @@ pub fn update(ctx: &mut ToolContext) {
             }
 
             if *snip_created {
-                let ppp = ui.ctx().pixels_per_point();
                 match settings.auto_new_layer {
                     Some(true) => {
                         project.layers.push(crate::project::Layer::new(&format!("Snip {}", project.layers.len() + 1)));
@@ -383,8 +397,8 @@ pub fn update(ctx: &mut ToolContext) {
                                     let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                                     let path = pics.join(format!("snip_{}.png", time_str));
                                     if !snip_clone.pixels.is_empty() {
-                                        let p_w = (snip_clone.size[0] as f32 * ppp).round() as u32;
-                                        let p_h = (snip_clone.size[1] as f32 * ppp).round() as u32;
+                                        let p_w = snip_clone.size[0] as u32;
+                                        let p_h = snip_clone.size[1] as u32;
                                         if let Some(img_buf) = image::RgbaImage::from_raw(p_w, p_h, snip_clone.pixels.clone()) {
                                             let _ = img_buf.save(path);
                                         }
@@ -408,8 +422,8 @@ pub fn update(ctx: &mut ToolContext) {
                                         let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                                         let path = pics.join(format!("snip_{}.png", time_str));
                                         if !snip_clone.pixels.is_empty() {
-                                            let p_w = (snip_clone.size[0] as f32 * ppp).round() as u32;
-                                            let p_h = (snip_clone.size[1] as f32 * ppp).round() as u32;
+                                            let p_w = snip_clone.size[0] as u32;
+                                            let p_h = snip_clone.size[1] as u32;
                                             if let Some(img_buf) = image::RgbaImage::from_raw(p_w, p_h, snip_clone.pixels.clone()) {
                                                 let _ = img_buf.save(path);
                                             }
@@ -433,8 +447,8 @@ pub fn update(ctx: &mut ToolContext) {
                                         let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                                         let path = pics.join(format!("snip_{}.png", time_str));
                                         if !snip_clone.pixels.is_empty() {
-                                            let p_w = (snip_clone.size[0] as f32 * ppp).round() as u32;
-                                            let p_h = (snip_clone.size[1] as f32 * ppp).round() as u32;
+                                            let p_w = snip_clone.size[0] as u32;
+                                            let p_h = snip_clone.size[1] as u32;
                                             if let Some(img_buf) = image::RgbaImage::from_raw(p_w, p_h, snip_clone.pixels.clone()) {
                                                 let _ = img_buf.save(path);
                                             }
