@@ -220,6 +220,22 @@ pub fn draw_tool_icon(ui: &mut egui::Ui, tool: Tool, _size: f32, is_selected: bo
             painter.add(egui::Shape::line(vec![p1, p2, p3, p4, p1], stroke));
             painter.line_segment([center + egui::vec2(-3.0, -1.0), center + egui::vec2(3.0, 5.0)], stroke);
         }
+        Tool::PaintBucket => {
+            // Photoshop-like Paint Bucket icon: a tilted bucket pouring a drop
+            let p1 = center + egui::vec2(-4.0, -2.0);
+            let p2 = center + egui::vec2(4.0, -6.0);
+            let p3 = center + egui::vec2(7.0, 0.0);
+            let p4 = center + egui::vec2(-1.0, 4.0);
+            painter.add(egui::Shape::line(vec![p1, p2, p3, p4, p1], stroke));
+            
+            // Handle
+            painter.line_segment([center + egui::vec2(-4.0, -2.0), center + egui::vec2(-6.0, -7.0)], stroke);
+            painter.line_segment([center + egui::vec2(-6.0, -7.0), center + egui::vec2(2.0, -11.0)], stroke);
+            painter.line_segment([center + egui::vec2(2.0, -11.0), center + egui::vec2(4.0, -6.0)], stroke);
+            
+            // Drop
+            painter.circle_filled(center + egui::vec2(6.0, 6.0), 1.5, icon_color);
+        }
         Tool::Snip => {
             painter.line_segment([center - egui::vec2(6.0, 6.0), center - egui::vec2(6.0, -8.0)], stroke);
             painter.line_segment([center - egui::vec2(8.0, -6.0), center + egui::vec2(6.0, -6.0)], stroke);
@@ -306,7 +322,7 @@ pub fn render_photoshop_panel(
     request_history_push: &mut Option<String>,
 ) {
     let main_tools = vec![
-        Tool::Move, Tool::Brush, Tool::Eraser, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur, Tool::Embed,
+        Tool::Move, Tool::Brush, Tool::Eraser, Tool::PaintBucket, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur, Tool::Embed,
     ];
     
     let hide_icon = if settings.hide_all { "👁" } else { "👓" };
@@ -395,14 +411,16 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             draw_pick_color_icon(ui, rect, egui::Color32::WHITE);
             resp.on_hover_text("Pick Color");
             
-            let mut bg = color32(&settings.background_color);
-            if ui.color_edit_button_srgba(&mut bg).on_hover_text("Fill Color").changed() { settings.background_color = [bg.r(), bg.g(), bg.b(), bg.a()]; }
-            
-            let (rect2, resp2) = ui.allocate_at_least(egui::vec2(24.0, 24.0), egui::Sense::click());
-            if resp2.clicked() { settings.picking_fill_color = true; }
-            if resp2.hovered() { ui.painter().rect_filled(rect2, 4.0, egui::Color32::from_white_alpha(30)); }
-            draw_pick_color_icon(ui, rect2, egui::Color32::LIGHT_GRAY);
-            resp2.on_hover_text("Pick Fill");
+            if *active_tool == Tool::Shape {
+                let mut bg = color32(&settings.background_color);
+                if ui.color_edit_button_srgba(&mut bg).on_hover_text("Fill Color").changed() { settings.background_color = [bg.r(), bg.g(), bg.b(), bg.a()]; }
+                
+                let (rect2, resp2) = ui.allocate_at_least(egui::vec2(24.0, 24.0), egui::Sense::click());
+                if resp2.clicked() { settings.picking_fill_color = true; }
+                if resp2.hovered() { ui.painter().rect_filled(rect2, 4.0, egui::Color32::from_white_alpha(30)); }
+                draw_pick_color_icon(ui, rect2, egui::Color32::LIGHT_GRAY);
+                resp2.on_hover_text("Pick Fill");
+            }
         });
         ui.add(egui::Separator::default().vertical());
     }
@@ -471,6 +489,9 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         }
                     });
             });
+        }
+        Tool::PaintBucket => {
+            ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Tolerance: "));
         }
         Tool::Shape => {
             ui.horizontal(|ui| {

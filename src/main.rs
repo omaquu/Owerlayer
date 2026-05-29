@@ -477,7 +477,7 @@ impl eframe::App for OwerlayerApp {
                             self.settings.pen_width,
                             overlay::StrokeKind::Freehand,
                             self.settings.brush_mode,
-                            Some(self.settings.background_color),
+                            None,
                             self.settings.brush_shadow,
                             self.settings.brush_shape,
                             self.settings.brush_outline,
@@ -670,41 +670,37 @@ impl eframe::App for OwerlayerApp {
             }
 
             if self.layer_prompt_open && self.edit_mode {
-                // Auto-dismiss if the active layer already told us not to ask again
-                let already_dismissed = self.project.layers
-                    .get(self.project.active_layer)
-                    .map_or(false, |l| l.lock_prompt_dismissed);
-                if already_dismissed {
-                    // Silently unlock the selected object and carry on
-                    let layer_idx = self.project.active_layer;
-                    if let Some(sel) = self.project.selected_object {
-                        if sel.layer_idx == layer_idx {
-                            match sel.object_type {
-                                crate::overlay::ObjectType::Image => {
-                                    if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
-                                        img.locked = false;
-                                    }
-                                }
-                                crate::overlay::ObjectType::Stroke => {
-                                    if let Some(s) = self.project.layers[layer_idx].strokes.get_mut(sel.object_idx) {
-                                        s.locked = false;
-                                    }
-                                }
-                                crate::overlay::ObjectType::Text => {
-                                    if let Some(t) = self.project.layers[layer_idx].text_annotations.get_mut(sel.object_idx) {
-                                        t.locked = false;
-                                    }
-                                }
-                            }
-                        }
+                let layer_idx = self.project.active_layer;
+                if layer_idx < self.project.layers.len() {
+                    if !self.project.layers[layer_idx].lock_prompt_dismissed {
+                        self.project.layers[layer_idx].lock_prompt_choice = None;
                     }
-                    self.layer_prompt_open = false;
-                    self.last_tool_used = Some(self.active_tool);
-                } else {
-                    let mut close_prompt = false;
-                    let mut action: Option<u8> = None; // 1=unlock+use, 2=new object, 3=new layer
-                    let layer_idx = self.project.active_layer;
+                }
 
+                // If the layer is empty and not locked, skip the prompt entirely and just create a new object
+                let layer_is_empty_and_unlocked = if layer_idx < self.project.layers.len() {
+                    let layer = &self.project.layers[layer_idx];
+                    !layer.locked && layer.strokes.is_empty() && layer.placed_images.is_empty() && layer.text_annotations.is_empty()
+                } else {
+                    false
+                };
+
+                let already_dismissed = self.project.layers
+                    .get(layer_idx)
+                    .map_or(false, |l| l.lock_prompt_dismissed && l.lock_prompt_choice.is_some());
+
+                let mut close_prompt = false;
+                let mut action: Option<u8> = None; // 1=unlock+use, 2=new object, 3=new layer, 4=same object
+                let mut save_preference = false;
+
+                if layer_is_empty_and_unlocked {
+                    // Layer is empty - no need to ask, just create a new object directly
+                    action = Some(2);
+                    close_prompt = true;
+                } else if already_dismissed {
+                    action = self.project.layers.get(layer_idx).and_then(|l| l.lock_prompt_choice);
+                    close_prompt = true;
+                } else {
                     let layer_locked = layer_idx < self.project.layers.len() && self.project.layers[layer_idx].locked;
                     let mut obj_locked = false;
                     if let Some(sel) = self.project.selected_object {
@@ -729,7 +725,6 @@ impl eframe::App for OwerlayerApp {
                         ("New Content Options", "You are creating new content. What would you like to do?")
                     };
 
-                    // Check if there's an available PlacedImage to merge into
                     let new_content_is_in_placed_images = self.pending_stroke.is_none();
                     let has_merge_target = if let Some(sel) = self.project.selected_object {
                         let limit = if new_content_is_in_placed_images {
@@ -740,7 +735,6 @@ impl eframe::App for OwerlayerApp {
                         sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image
                             && sel.object_idx < limit
                     } else {
-                        // Fallback: any unlocked image on the active layer (excluding the newly added one if present)
                         if layer_idx < self.project.layers.len() {
                             let len = self.project.layers[layer_idx].placed_images.len();
                             if new_content_is_in_placed_images {
@@ -767,21 +761,25 @@ impl eframe::App for OwerlayerApp {
                                     if ui.button("🔓 Use Current Object (Unlock)").clicked() {
                                         action = Some(1);
                                         close_prompt = true;
+                                        save_preference = true;
                                     }
                                 }
                                 if has_merge_target {
                                     if ui.button("✏️ Add to Same Object").clicked() {
                                         action = Some(4);
                                         close_prompt = true;
+                                        save_preference = true;
                                     }
                                 }
                                 if ui.button("📄 New Object (Same Layer)").clicked() {
                                     action = Some(2);
                                     close_prompt = true;
+                                    save_preference = true;
                                 }
                                 if ui.button("➕ New Layer").clicked() {
                                     action = Some(3);
                                     close_prompt = true;
+                                    save_preference = true;
                                 }
                                 if ui.button("Cancel").clicked() {
                                     close_prompt = true;
@@ -789,16 +787,17 @@ impl eframe::App for OwerlayerApp {
                             });
 
                             ui.add_space(6.0);
-                            // Per-layer "don't ask again"
                             if layer_idx < self.project.layers.len() {
                                 let mut dismissed = self.project.layers[layer_idx].lock_prompt_dismissed;
                                 if ui.checkbox(&mut dismissed, "Don't ask again for this layer").changed() {
                                     self.project.layers[layer_idx].lock_prompt_dismissed = dismissed;
+                                    if !dismissed {
+                                        self.project.layers[layer_idx].lock_prompt_choice = None;
+                                    }
                                 }
                             }
                         });
 
-                    // Save window position when dragged
                     if let Some(resp) = prompt_resp {
                         if resp.response.dragged() {
                             let layer_id = resp.response.layer_id;
@@ -808,167 +807,65 @@ impl eframe::App for OwerlayerApp {
                         }
                     }
 
-                    if let Some(act) = action {
-                        if let Some(s) = self.pending_stroke.take() {
-                            let is_vector = s.kind != crate::types::StrokeKind::Freehand || self.settings.brush_arrow;
-                            
-                            match act {
-                                1 => {
-                                    // Unlock
-                                    if let Some(sel) = self.project.selected_object {
-                                        if sel.layer_idx == layer_idx && layer_idx < self.project.layers.len() {
-                                            match sel.object_type {
-                                                crate::overlay::ObjectType::Image => {
-                                                    if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
-                                                        img.locked = false;
-                                                    }
-                                                }
-                                                crate::overlay::ObjectType::Stroke => {
-                                                    if let Some(st) = self.project.layers[layer_idx].strokes.get_mut(sel.object_idx) {
-                                                        st.locked = false;
-                                                    }
-                                                }
-                                                crate::overlay::ObjectType::Text => {
-                                                    if let Some(t) = self.project.layers[layer_idx].text_annotations.get_mut(sel.object_idx) {
-                                                        t.locked = false;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } else if layer_idx < self.project.layers.len() {
-                                        self.project.layers[layer_idx].locked = false;
-                                    }
-                                    
-                                    // Apply
-                                    if layer_idx < self.project.layers.len() {
-                                        if is_vector {
-                                            self.project.layers[layer_idx].strokes.push(s);
-                                        } else {
-                                            let mut applied = false;
-                                            if let Some(sel) = self.project.selected_object {
-                                                if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image {
-                                                    if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
-                                                        crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
-                                                        applied = true;
-                                                    }
-                                                }
-                                            }
-                                            if !applied {
-                                                let reuse_idx = self.project.layers[layer_idx].placed_images.iter().rposition(|img| !img.locked);
-                                                if let Some(idx) = reuse_idx {
-                                                    let img = &mut self.project.layers[layer_idx].placed_images[idx];
-                                                    crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
-                                                } else {
-                                                    let ppp = ctx.pixels_per_point();
-                                                    let logical_w = 800.0f32;
-                                                    let logical_h = 600.0f32;
-                                                    let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                                                    let count = self.project.layers[layer_idx].placed_images.len();
-                                                    let mut new_img = crate::tools::brush::create_new_canvas(id, egui::pos2(100.0, 100.0), logical_w, logical_h, ppp);
-                                                    new_img.name = format!("Canvas {}", count + 1);
-                                                    crate::tools::brush::rasterize_stroke_to_image(&mut new_img, &s, &self.settings);
-                                                    self.project.layers[layer_idx].placed_images.push(new_img);
-                                                }
-                                            }
-                                        }
-                                        if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
-                                        self.request_history_push = Some("Draw".into());
-                                    }
-                                }
-                                2 => {
-                                    if layer_idx < self.project.layers.len() {
-                                        if is_vector {
-                                            self.project.layers[layer_idx].strokes.push(s);
-                                        } else {
-                                            let ppp = ctx.pixels_per_point();
-                                            let logical_w = 800.0f32;
-                                            let logical_h = 600.0f32;
-                                            let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                                            let count = self.project.layers[layer_idx].placed_images.len();
-                                            let mut new_img = crate::tools::brush::create_new_canvas(id, egui::pos2(100.0, 100.0), logical_w, logical_h, ppp);
-                                            new_img.name = format!("Canvas {}", count + 1);
-                                            crate::tools::brush::rasterize_stroke_to_image(&mut new_img, &s, &self.settings);
-                                            self.project.layers[layer_idx].placed_images.push(new_img);
-                                            
-                                            let new_idx = self.project.layers[layer_idx].placed_images.len() - 1;
-                                            self.project.selected_object = Some(SelectedObject {
-                                                layer_idx,
-                                                object_type: crate::overlay::ObjectType::Image,
-                                                object_idx: new_idx,
-                                            });
-                                        }
-                                        if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
-                                        self.request_history_push = Some("Draw".into());
-                                    }
-                                }
-                                3 => {
-                                    self.project.layers.push(crate::project::Layer::new(self.active_tool.name()));
-                                    let new_layer_idx = self.project.layers.len() - 1;
-                                    self.project.active_layer = new_layer_idx;
-                                    self.project.selected_object = None;
-                                    
-                                    if is_vector {
-                                        self.project.layers[new_layer_idx].strokes.push(s);
-                                    } else {
-                                        let ppp = ctx.pixels_per_point();
-                                        let logical_w = 800.0f32;
-                                        let logical_h = 600.0f32;
-                                        let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                                        let mut new_img = crate::tools::brush::create_new_canvas(id, egui::pos2(100.0, 100.0), logical_w, logical_h, ppp);
-                                        new_img.name = "Canvas 1".to_string();
-                                        crate::tools::brush::rasterize_stroke_to_image(&mut new_img, &s, &self.settings);
-                                        self.project.layers[new_layer_idx].placed_images.push(new_img);
-                                        
-                                        self.project.selected_object = Some(SelectedObject {
-                                            layer_idx: new_layer_idx,
-                                            object_type: crate::overlay::ObjectType::Image,
-                                            object_idx: 0,
-                                        });
-                                    }
-                                    if new_layer_idx < self.project.layers.len() { self.project.layers[new_layer_idx].expanded = true; }
-                                    self.request_history_push = Some("Draw".into());
-                                }
-                                4 => {
-                                    // Same Object: rasterize pending stroke into existing image
-                                    if layer_idx < self.project.layers.len() {
-                                        let new_content_is_in_placed_images = false;
-                                        let limit = if new_content_is_in_placed_images {
-                                            self.project.layers[layer_idx].placed_images.len().saturating_sub(1)
-                                        } else {
-                                            self.project.layers[layer_idx].placed_images.len()
-                                        };
+                    if save_preference && layer_idx < self.project.layers.len() {
+                        if self.project.layers[layer_idx].lock_prompt_dismissed {
+                            self.project.layers[layer_idx].lock_prompt_choice = action;
+                        } else {
+                            self.project.layers[layer_idx].lock_prompt_choice = None;
+                        }
+                    }
+                }
 
-                                        let mut target_idx = None;
+                if let Some(act) = action {
+                    if let Some(s) = self.pending_stroke.take() {
+                        let is_vector = true;
+                        
+                        match act {
+                            1 => {
+                                // Unlock
+                                if let Some(sel) = self.project.selected_object {
+                                    if sel.layer_idx == layer_idx && layer_idx < self.project.layers.len() {
+                                        match sel.object_type {
+                                            crate::overlay::ObjectType::Image => {
+                                                if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
+                                                    img.locked = false;
+                                                }
+                                            }
+                                            crate::overlay::ObjectType::Stroke => {
+                                                if let Some(st) = self.project.layers[layer_idx].strokes.get_mut(sel.object_idx) {
+                                                    st.locked = false;
+                                                }
+                                            }
+                                            crate::overlay::ObjectType::Text => {
+                                                if let Some(t) = self.project.layers[layer_idx].text_annotations.get_mut(sel.object_idx) {
+                                                    t.locked = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if layer_idx < self.project.layers.len() {
+                                    self.project.layers[layer_idx].locked = false;
+                                }
+                                
+                                // Apply
+                                if layer_idx < self.project.layers.len() {
+                                    if is_vector {
+                                        self.project.layers[layer_idx].strokes.push(s);
+                                    } else {
+                                        let mut applied = false;
                                         if let Some(sel) = self.project.selected_object {
-                                            if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image
-                                                && sel.object_idx < limit {
-                                                target_idx = Some(sel.object_idx);
+                                            if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image {
+                                                if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
+                                                    crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
+                                                    applied = true;
+                                                }
                                             }
                                         }
-                                        if target_idx.is_none() {
-                                            if limit > 0 {
-                                                target_idx = self.project.layers[layer_idx].placed_images[..limit]
-                                                    .iter()
-                                                    .rposition(|img| !img.locked);
-                                            }
-                                        }
-                                        if let Some(idx) = target_idx {
-                                            if is_vector {
-                                                self.project.layers[layer_idx].strokes.push(s);
-                                            } else {
+                                        if !applied {
+                                            let reuse_idx = self.project.layers[layer_idx].placed_images.iter().rposition(|img| !img.locked);
+                                            if let Some(idx) = reuse_idx {
                                                 let img = &mut self.project.layers[layer_idx].placed_images[idx];
-                                                img.locked = false;
                                                 crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
-                                            }
-                                            self.project.selected_object = Some(SelectedObject {
-                                                layer_idx,
-                                                object_type: crate::overlay::ObjectType::Image,
-                                                object_idx: idx,
-                                            });
-                                        } else {
-                                            // Fallback: create new object
-                                            if is_vector {
-                                                self.project.layers[layer_idx].strokes.push(s);
                                             } else {
                                                 let ppp = ctx.pixels_per_point();
                                                 let logical_w = 800.0f32;
@@ -981,119 +878,230 @@ impl eframe::App for OwerlayerApp {
                                                 self.project.layers[layer_idx].placed_images.push(new_img);
                                             }
                                         }
-                                        if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
-                                        self.request_history_push = Some("Draw".into());
                                     }
-                                }
-                                _ => {}
-                            }
-                        } else {
-                            match act {
-                                1 => {
-                                    if let Some(sel) = self.project.selected_object {
-                                        if sel.layer_idx == layer_idx && layer_idx < self.project.layers.len() {
-                                            match sel.object_type {
-                                                crate::overlay::ObjectType::Image => {
-                                                    if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
-                                                        img.locked = false;
-                                                    }
-                                                }
-                                                crate::overlay::ObjectType::Stroke => {
-                                                    if let Some(st) = self.project.layers[layer_idx].strokes.get_mut(sel.object_idx) {
-                                                        st.locked = false;
-                                                    }
-                                                }
-                                                crate::overlay::ObjectType::Text => {
-                                                    if let Some(t) = self.project.layers[layer_idx].text_annotations.get_mut(sel.object_idx) {
-                                                        t.locked = false;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } else if layer_idx < self.project.layers.len() {
-                                        self.project.layers[layer_idx].locked = false;
-                                    }
-                                }
-                                2 => {
                                     if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
-                                    self.project.selected_object = None;
+                                    self.request_history_push = Some("Draw".into());
                                 }
-                                3 => {
-                                    self.project.layers.push(crate::project::Layer::new(self.active_tool.name()));
-                                    let new_layer_idx = self.project.layers.len() - 1;
-                                    let prev_layer_idx = self.project.active_layer;
-                                    if prev_layer_idx < new_layer_idx {
-                                        if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed {
-                                            if let Some(img) = self.project.layers[prev_layer_idx].placed_images.pop() {
-                                                self.project.layers[new_layer_idx].placed_images.push(img);
-                                            }
+                            }
+                            2 => {
+                                if layer_idx < self.project.layers.len() {
+                                    if is_vector {
+                                        self.project.layers[layer_idx].strokes.push(s);
+                                    } else {
+                                        let ppp = ctx.pixels_per_point();
+                                        let logical_w = 800.0f32;
+                                        let logical_h = 600.0f32;
+                                        let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                                        let count = self.project.layers[layer_idx].placed_images.len();
+                                        let mut new_img = crate::tools::brush::create_new_canvas(id, egui::pos2(100.0, 100.0), logical_w, logical_h, ppp);
+                                        new_img.name = format!("Canvas {}", count + 1);
+                                        crate::tools::brush::rasterize_stroke_to_image(&mut new_img, &s, &self.settings);
+                                        self.project.layers[layer_idx].placed_images.push(new_img);
+                                        
+                                        let new_idx = self.project.layers[layer_idx].placed_images.len() - 1;
+                                        self.project.selected_object = Some(SelectedObject {
+                                            layer_idx,
+                                            object_type: crate::overlay::ObjectType::Image,
+                                            object_idx: new_idx,
+                                        });
+                                    }
+                                    if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
+                                    self.request_history_push = Some("Draw".into());
+                                }
+                            }
+                            3 => {
+                                self.project.layers.push(crate::project::Layer::new(self.active_tool.name()));
+                                let new_layer_idx = self.project.layers.len() - 1;
+                                self.project.active_layer = new_layer_idx;
+                                self.project.selected_object = None;
+                                
+                                if is_vector {
+                                    self.project.layers[new_layer_idx].strokes.push(s);
+                                } else {
+                                    let ppp = ctx.pixels_per_point();
+                                    let logical_w = 800.0f32;
+                                    let logical_h = 600.0f32;
+                                    let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                                    let mut new_img = crate::tools::brush::create_new_canvas(id, egui::pos2(100.0, 100.0), logical_w, logical_h, ppp);
+                                    new_img.name = "Canvas 1".to_string();
+                                    crate::tools::brush::rasterize_stroke_to_image(&mut new_img, &s, &self.settings);
+                                    self.project.layers[new_layer_idx].placed_images.push(new_img);
+                                    
+                                    self.project.selected_object = Some(SelectedObject {
+                                        layer_idx: new_layer_idx,
+                                        object_type: crate::overlay::ObjectType::Image,
+                                        object_idx: 0,
+                                    });
+                                }
+                                if new_layer_idx < self.project.layers.len() { self.project.layers[new_layer_idx].expanded = true; }
+                                self.request_history_push = Some("Draw".into());
+                            }
+                            4 => {
+                                // Same Object: rasterize pending stroke into existing image
+                                if layer_idx < self.project.layers.len() {
+                                    let new_content_is_in_placed_images = false;
+                                    let limit = if new_content_is_in_placed_images {
+                                        self.project.layers[layer_idx].placed_images.len().saturating_sub(1)
+                                    } else {
+                                        self.project.layers[layer_idx].placed_images.len()
+                                    };
+
+                                    let mut target_idx = None;
+                                    if let Some(sel) = self.project.selected_object {
+                                        if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image
+                                            && sel.object_idx < limit {
+                                            target_idx = Some(sel.object_idx);
                                         }
                                     }
-                                    self.project.active_layer = new_layer_idx;
-                                    self.project.selected_object = None;
-                                    if new_layer_idx < self.project.layers.len() { self.project.layers[new_layer_idx].expanded = true; }
-                                }
-                                4 => {
-                                    // Same Object: merge new snip/image into existing PlacedImage
-                                    if layer_idx < self.project.layers.len() {
-                                        let new_content_is_in_placed_images = self.pending_stroke.is_none();
-                                        let limit = if new_content_is_in_placed_images {
-                                            self.project.layers[layer_idx].placed_images.len().saturating_sub(1)
+                                    if target_idx.is_none() {
+                                        if limit > 0 {
+                                            target_idx = self.project.layers[layer_idx].placed_images[..limit]
+                                                .iter()
+                                                .rposition(|img| !img.locked);
+                                        }
+                                    }
+                                    if let Some(idx) = target_idx {
+                                        if is_vector {
+                                            self.project.layers[layer_idx].strokes.push(s);
                                         } else {
-                                            self.project.layers[layer_idx].placed_images.len()
-                                        };
-
-                                        let mut target_idx = None;
-                                        if let Some(sel) = self.project.selected_object {
-                                            if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image
-                                                && sel.object_idx < limit {
-                                                target_idx = Some(sel.object_idx);
+                                            let img = &mut self.project.layers[layer_idx].placed_images[idx];
+                                            img.locked = false;
+                                            crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
+                                        }
+                                        self.project.selected_object = Some(SelectedObject {
+                                            layer_idx,
+                                            object_type: crate::overlay::ObjectType::Image,
+                                            object_idx: idx,
+                                        });
+                                    } else {
+                                        // Fallback: create new object
+                                        if is_vector {
+                                            self.project.layers[layer_idx].strokes.push(s);
+                                        } else {
+                                            let ppp = ctx.pixels_per_point();
+                                            let logical_w = 800.0f32;
+                                            let logical_h = 600.0f32;
+                                            let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                                            let count = self.project.layers[layer_idx].placed_images.len();
+                                            let mut new_img = crate::tools::brush::create_new_canvas(id, egui::pos2(100.0, 100.0), logical_w, logical_h, ppp);
+                                            new_img.name = format!("Canvas {}", count + 1);
+                                            crate::tools::brush::rasterize_stroke_to_image(&mut new_img, &s, &self.settings);
+                                            self.project.layers[layer_idx].placed_images.push(new_img);
+                                        }
+                                    }
+                                    if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
+                                    self.request_history_push = Some("Draw".into());
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match act {
+                            1 => {
+                                if let Some(sel) = self.project.selected_object {
+                                    if sel.layer_idx == layer_idx && layer_idx < self.project.layers.len() {
+                                        match sel.object_type {
+                                            crate::overlay::ObjectType::Image => {
+                                                if let Some(img) = self.project.layers[layer_idx].placed_images.get_mut(sel.object_idx) {
+                                                    img.locked = false;
+                                                }
+                                            }
+                                            crate::overlay::ObjectType::Stroke => {
+                                                if let Some(st) = self.project.layers[layer_idx].strokes.get_mut(sel.object_idx) {
+                                                    st.locked = false;
+                                                }
+                                            }
+                                            crate::overlay::ObjectType::Text => {
+                                                if let Some(t) = self.project.layers[layer_idx].text_annotations.get_mut(sel.object_idx) {
+                                                    t.locked = false;
+                                                }
                                             }
                                         }
-                                        if target_idx.is_none() {
-                                            if limit > 0 {
-                                                target_idx = self.project.layers[layer_idx].placed_images[..limit]
-                                                    .iter()
-                                                    .rposition(|img| !img.locked);
-                                            }
+                                    }
+                                } else if layer_idx < self.project.layers.len() {
+                                    self.project.layers[layer_idx].locked = false;
+                                }
+                            }
+                            2 => {
+                                if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
+                                self.project.selected_object = None;
+                            }
+                            3 => {
+                                self.project.layers.push(crate::project::Layer::new(self.active_tool.name()));
+                                let new_layer_idx = self.project.layers.len() - 1;
+                                let prev_layer_idx = self.project.active_layer;
+                                if prev_layer_idx < new_layer_idx {
+                                    if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed {
+                                        if let Some(img) = self.project.layers[prev_layer_idx].placed_images.pop() {
+                                            self.project.layers[new_layer_idx].placed_images.push(img);
                                         }
-                                        if let Some(tidx) = target_idx {
-                                            // The new image was just pushed by the tool; pop it and merge into target
-                                            let last_idx = self.project.layers[layer_idx].placed_images.len().saturating_sub(1);
-                                            if last_idx != tidx && last_idx < self.project.layers[layer_idx].placed_images.len() {
-                                                let new_img = self.project.layers[layer_idx].placed_images.remove(last_idx);
-                                                let dest = &mut self.project.layers[layer_idx].placed_images[tidx];
-                                                dest.locked = false;
-                                                crate::tools::brush::merge_images(dest, &new_img);
-                                            }
-                                            // Recompute tidx in case remove shifted it
-                                            let final_idx = tidx.min(self.project.layers[layer_idx].placed_images.len().saturating_sub(1));
-                                            self.project.selected_object = Some(SelectedObject {
-                                                layer_idx,
-                                                object_type: crate::overlay::ObjectType::Image,
-                                                object_idx: final_idx,
-                                            });
-                                        }
-                                        if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
                                     }
                                 }
-                                _ => {}
+                                self.project.active_layer = new_layer_idx;
+                                self.project.selected_object = None;
+                                if new_layer_idx < self.project.layers.len() { self.project.layers[new_layer_idx].expanded = true; }
                             }
-                        }
-                    } else if close_prompt {
-                        self.pending_stroke = None;
-                        if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed {
-                            let layer_idx = self.project.active_layer;
-                            if layer_idx < self.project.layers.len() {
-                                self.project.layers[layer_idx].placed_images.pop();
-                            }
-                        }
-                    }
+                            4 => {
+                                // Same Object: merge new snip/image into existing PlacedImage
+                                if layer_idx < self.project.layers.len() {
+                                    let new_content_is_in_placed_images = self.pending_stroke.is_none();
+                                    let limit = if new_content_is_in_placed_images {
+                                        self.project.layers[layer_idx].placed_images.len().saturating_sub(1)
+                                    } else {
+                                        self.project.layers[layer_idx].placed_images.len()
+                                    };
 
-                    if close_prompt {
-                        self.layer_prompt_open = false;
-                        self.last_tool_used = Some(self.active_tool);
+                                    let mut target_idx = None;
+                                    if let Some(sel) = self.project.selected_object {
+                                        if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image
+                                            && sel.object_idx < limit {
+                                            target_idx = Some(sel.object_idx);
+                                        }
+                                    }
+                                    if target_idx.is_none() {
+                                        if limit > 0 {
+                                            target_idx = self.project.layers[layer_idx].placed_images[..limit]
+                                                .iter()
+                                                .rposition(|img| !img.locked);
+                                        }
+                                    }
+                                    if let Some(tidx) = target_idx {
+                                        // The new image was just pushed by the tool; pop it and merge into target
+                                        let last_idx = self.project.layers[layer_idx].placed_images.len().saturating_sub(1);
+                                        if last_idx != tidx && last_idx < self.project.layers[layer_idx].placed_images.len() {
+                                            let new_img = self.project.layers[layer_idx].placed_images.remove(last_idx);
+                                            let dest = &mut self.project.layers[layer_idx].placed_images[tidx];
+                                            dest.locked = false;
+                                            crate::tools::brush::merge_images(dest, &new_img);
+                                        }
+                                        // Recompute tidx in case remove shifted it
+                                        let final_idx = tidx.min(self.project.layers[layer_idx].placed_images.len().saturating_sub(1));
+                                        self.project.selected_object = Some(SelectedObject {
+                                            layer_idx,
+                                            object_type: crate::overlay::ObjectType::Image,
+                                            object_idx: final_idx,
+                                        });
+                                    }
+                                    if layer_idx < self.project.layers.len() { self.project.layers[layer_idx].expanded = true; }
+                                }
+                            }
+                            _ => {}
+                        }
                     }
+                } else if close_prompt {
+                    self.pending_stroke = None;
+                    if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed {
+                        let layer_idx = self.project.active_layer;
+                        if layer_idx < self.project.layers.len() {
+                            self.project.layers[layer_idx].placed_images.pop();
+                        }
+                    }
+                }
+
+                if close_prompt {
+                    self.layer_prompt_open = false;
+                    self.last_tool_used = Some(self.active_tool);
+                    self.project.save();
                 }
             }
         }

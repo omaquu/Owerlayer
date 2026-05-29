@@ -60,6 +60,7 @@ pub enum Tool {
     Cut,
     Blur,
     Embed,
+    PaintBucket,
 }
 
 impl Tool {
@@ -75,6 +76,7 @@ impl Tool {
             Tool::Mirror => "Mirror Tool",
             Tool::Blur => "Blur Tool",
             Tool::Embed => "Embed Tool",
+            Tool::PaintBucket => "Paint Bucket Tool",
         }
     }
 
@@ -90,6 +92,7 @@ impl Tool {
             Tool::Mirror => "M",
             Tool::Blur => "K",
             Tool::Embed => "I",
+            Tool::PaintBucket => "G",
         }
     }
 }

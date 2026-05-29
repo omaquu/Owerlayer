@@ -74,7 +74,7 @@ pub fn update(ctx: &mut ToolContext) {
                 // Priority: keep the currently selected image, then fall back to the
                 // last unlocked PlacedImage on this layer, then create a new one.
                 let is_ask_mode = settings.auto_new_layer.is_none();
-                if !is_locked && !is_ask_mode && !settings.brush_arrow {
+                if !is_locked && !is_ask_mode && false {
                     // ── Find or create target PlacedImage ──
                     let has_target_image = project.selected_object.map_or(false, |s| {
                         s.object_type == ObjectType::Image
@@ -150,7 +150,7 @@ pub fn update(ctx: &mut ToolContext) {
                 let new_points_count = current_stroke.len() - prev_len;
 
                 let is_ask_mode = settings.auto_new_layer.is_none();
-                if !is_locked && !is_ask_mode && !settings.brush_arrow {
+                if !is_locked && !is_ask_mode && false {
                     if let Some(sel) = project.selected_object {
                         if sel.object_type == ObjectType::Image && sel.layer_idx == active_layer_idx {
                             if let Some(img) = project.layers[active_layer_idx].placed_images.get_mut(sel.object_idx) {
@@ -422,7 +422,7 @@ pub fn update(ctx: &mut ToolContext) {
                         settings.pen_width,
                         StrokeKind::Freehand,
                         settings.brush_mode,
-                        Some(settings.background_color),
+                        None,
                         settings.brush_shadow,
                         settings.brush_shape,
                         settings.brush_outline,
@@ -433,30 +433,22 @@ pub fn update(ctx: &mut ToolContext) {
                     *ctx.pending_stroke = Some(s);
                     *ctx.layer_prompt_open = true;
                 } else {
-                    if settings.brush_arrow {
-                        if let Some(layer) = project.get_active_layer_mut() {
-                            let s = Stroke::new(
-                                current_stroke.clone(),
-                                settings.pen_color,
-                                settings.pen_width,
-                                StrokeKind::Freehand,
-                                settings.brush_mode,
-                                Some(settings.background_color),
-                                settings.brush_shadow,
-                                settings.brush_shape,
-                                settings.brush_outline,
-                                settings.brush_arrow,
-                                settings.spray_density,
-                                settings.highlight_opacity,
-                            );
-                            layer.strokes.push(s);
-                        }
-                    } else if let Some(sel) = project.selected_object {
-                        if sel.object_type == ObjectType::Image && sel.layer_idx == active_layer_idx {
-                            if let Some(img) = project.layers[active_layer_idx].placed_images.get_mut(sel.object_idx) {
-                                crop_to_content(img);
-                            }
-                        }
+                    if let Some(layer) = project.get_active_layer_mut() {
+                        let s = Stroke::new(
+                            current_stroke.clone(),
+                            settings.pen_color,
+                            settings.pen_width,
+                            StrokeKind::Freehand,
+                            settings.brush_mode,
+                            None,
+                            settings.brush_shadow,
+                            settings.brush_shape,
+                            settings.brush_outline,
+                            settings.brush_arrow,
+                            settings.spray_density,
+                            settings.highlight_opacity,
+                        );
+                        layer.strokes.push(s);
                     }
                     *ctx.request_history_push = Some("Brush".into());
                 }
@@ -847,7 +839,7 @@ pub fn render_preview(ctx: &mut ToolContext) {
     let pen_c = color32(&settings.pen_color);
     
     let pts: Vec<_> = ctx.current_stroke.clone();
-    let s = Stroke::new(pts, settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow, settings.spray_density, settings.highlight_opacity);
+    let s = Stroke::new(pts, settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, None, settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow, settings.spray_density, settings.highlight_opacity);
     draw_stroke(&painter, &s, pen_c, egui::Vec2::ZERO, s.width, 1.0);
 }
 

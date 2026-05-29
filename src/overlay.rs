@@ -770,6 +770,9 @@ pub fn render_canvas(
             Tool::Eraser => {
                 crate::tools::eraser::update(&mut ctx);
             }
+            Tool::PaintBucket => {
+                crate::tools::paint_bucket::update(&mut ctx);
+            }
         }
 
     }

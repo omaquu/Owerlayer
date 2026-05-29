@@ -12,6 +12,7 @@ pub mod text;
 pub mod embed;
 pub mod move_tool;
 pub mod eraser;
+pub mod paint_bucket;
 
 pub struct ToolContext<'a, 'b> {
     pub ui: &'a mut egui::Ui,
