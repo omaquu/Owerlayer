@@ -502,7 +502,6 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.selectable_value(&mut settings.shape_type, ShapeType::Arrow, "Arrow");
                 ui.selectable_value(&mut settings.shape_type, ShapeType::Poly, "Poly");
             });
-            ui.checkbox(&mut settings.shape_fill, "Fill");
         }
         Tool::Snip => {
             ui.horizontal(|ui| {
@@ -512,7 +511,6 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star");
                 ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Window, "Win").on_hover_text("Capture a specific window");
                 ui.add(egui::Separator::default().vertical());
                 let static_sel = !settings.snip_live;
                 let live_sel = settings.snip_live;
@@ -542,6 +540,12 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
+            });
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Rect, "Rect");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Circle, "Circ");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Star, "Star");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Heart, "Heart");
             });
         }
         Tool::Move => {

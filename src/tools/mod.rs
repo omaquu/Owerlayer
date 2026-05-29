@@ -33,6 +33,7 @@ pub struct ToolContext<'a, 'b> {
     pub embed_trigger: &'a mut bool,
     pub pending_text: &'a mut Option<PendingText>,
     pub pending_stroke: &'a mut Option<Stroke>,
+    pub pending_text_to_add: &'a mut Option<TextAnnotation>,
     pub initial_bounds: &'a mut Option<egui::Rect>,
     pub initial_center: &'a mut Option<egui::Pos2>,
     pub initial_layer: &'a mut Option<crate::project::Layer>,

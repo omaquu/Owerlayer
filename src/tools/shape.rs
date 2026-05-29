@@ -78,10 +78,35 @@ pub fn update(ctx: &mut ToolContext) {
 }
 
 pub fn render_preview(ctx: &mut ToolContext) {
+    let settings = &ctx.settings;
+    if settings.shape_type == ShapeType::Poly {
+        let pts = ctx.current_stroke.clone();
+        if !pts.is_empty() {
+            let painter = ctx.ui.painter_at(ctx.canvas_response.rect);
+            let pen_c = color32(&settings.pen_color);
+            let stroke = egui::Stroke::new(settings.stroke_width, pen_c);
+            let render_offset = ctx.render_offset;
+            
+            let render_pts: Vec<egui::Pos2> = pts.iter().map(|&p| p - render_offset).collect();
+            for window in render_pts.windows(2) {
+                painter.line_segment([window[0], window[1]], stroke);
+            }
+            
+            let last_pt = render_pts[render_pts.len() - 1];
+            let mouse_pos = ctx.mouse.pos - render_offset;
+            painter.line_segment([last_pt, mouse_pos], egui::Stroke::new(settings.stroke_width, pen_c.gamma_multiply(0.6)));
+            
+            for &pt in &render_pts {
+                painter.circle_filled(pt, 3.0, pen_c);
+                painter.circle_stroke(pt, 4.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+            }
+        }
+        return;
+    }
+
     let start = match ctx.line_start { Some(s) => *s, None => return };
     let pos = ctx.mouse.pos;
     let render_offset = ctx.render_offset;
-    let settings = &ctx.settings;
     let painter = ctx.ui.painter_at(ctx.canvas_response.rect);
     
     let pen_c = color32(&settings.pen_color);

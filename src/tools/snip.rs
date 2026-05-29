@@ -47,10 +47,6 @@ pub fn update(ctx: &mut ToolContext) {
                 if left_just_pressed { 
                     *line_start = Some(pos); 
                 }
-                if let Some(start) = *line_start {
-                    let rect = egui::Rect::from_two_pos(start, pos);
-                    painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Middle);
-                }
                 if left_just_released {
                     if let Some(start) = line_start.take() {
                         let rect = egui::Rect::from_two_pos(start, pos);
@@ -290,11 +286,6 @@ pub fn update(ctx: &mut ToolContext) {
                 if left_just_pressed { 
                     *line_start = Some(pos); 
                 }
-                if let Some(start) = *line_start {
-                    let radius = start.distance(pos);
-                    let pts = if mode == SnipMode::Star { get_star_points(start, radius) } else { get_heart_points(start, radius) };
-                    painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(1.0, egui::Color32::WHITE)));
-                }
                 if left_just_released {
                     if let Some(start) = line_start.take() {
                         let radius = start.distance(pos);
@@ -458,9 +449,41 @@ pub fn render_preview(ctx: &mut ToolContext) {
     let pos = ctx.mouse.pos;
     let render_offset = ctx.render_offset;
     let painter = ctx.ui.painter_at(ctx.canvas_response.rect);
+    let settings = &ctx.settings;
     
-    let rect = egui::Rect::from_two_pos(start, pos).translate(-render_offset);
-    painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::StrokeKind::Middle);
-    painter.rect_filled(rect, 0.0, egui::Color32::TRANSPARENT);
+    let color = egui::Color32::WHITE;
+    let stroke = egui::Stroke::new(1.0, color);
+    
+    match settings.snip_mode {
+        SnipMode::Rect | SnipMode::Window => {
+            let rect = egui::Rect::from_two_pos(start, pos).translate(-render_offset);
+            painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Middle);
+        }
+        SnipMode::Circle => {
+            let rect = egui::Rect::from_two_pos(start, pos);
+            let center = rect.center() - render_offset;
+            let radius = rect.width().min(rect.height()) * 0.5;
+            painter.circle_stroke(center, radius, stroke);
+        }
+        SnipMode::Star => {
+            let radius = start.distance(pos);
+            let pts = get_star_points(start - render_offset, radius);
+            if pts.len() >= 2 {
+                let mut closed_pts = pts.clone();
+                closed_pts.push(pts[0]);
+                painter.add(egui::Shape::line(closed_pts, stroke));
+            }
+        }
+        SnipMode::Heart => {
+            let radius = start.distance(pos);
+            let pts = get_heart_points(start - render_offset, radius);
+            if pts.len() >= 2 {
+                let mut closed_pts = pts.clone();
+                closed_pts.push(pts[0]);
+                painter.add(egui::Shape::line(closed_pts, stroke));
+            }
+        }
+        _ => {}
+    }
 }
 

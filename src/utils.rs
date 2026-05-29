@@ -7,11 +7,15 @@ pub fn color32(c: &[u8; 4]) -> egui::Color32 {
 
 pub fn is_inside_poly(poly: &[egui::Pos2], p: egui::Pos2) -> bool {
     let mut inside = false;
+    if poly.is_empty() { return false; }
     let mut j = poly.len() - 1;
     for i in 0..poly.len() {
-        if ((poly[i].y > p.y) != (poly[j].y > p.y)) &&
-           (p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / (poly[j].y - poly[i].y) + poly[i].x) {
-            inside = !inside;
+        let dy = poly[j].y - poly[i].y;
+        if dy.abs() > 0.000001 {
+            if ((poly[i].y > p.y) != (poly[j].y > p.y)) &&
+               (p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / dy + poly[i].x) {
+                inside = !inside;
+            }
         }
         j = i;
     }

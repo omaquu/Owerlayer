@@ -22,6 +22,11 @@ pub fn update(ctx: &mut ToolContext) {
     let pos = mouse.pos;
     let left_just_pressed = mouse.left_just_pressed;
     
+    if left_just_pressed && is_locked {
+        *ctx.layer_prompt_open = true;
+        return;
+    }
+    
     if left_just_pressed && !is_locked {
         // Find or create target PlacedImage
         let has_target_image = project.selected_object.map_or(false, |s| {

@@ -42,6 +42,7 @@ struct OwerlayerApp {
 
     pending_text: Option<PendingText>,
     pending_stroke: Option<Stroke>,
+    pending_text_to_add: Option<overlay::TextAnnotation>,
 
     show_settings_panel: bool,
     show_layers_panel: bool,
@@ -103,6 +104,7 @@ impl OwerlayerApp {
             dragging_source_rect: false,
             pending_text: None,
             pending_stroke: None,
+            pending_text_to_add: None,
             show_settings_panel: false,
             show_layers_panel: true,
             show_exit_dialog: false,
@@ -515,7 +517,7 @@ impl eframe::App for OwerlayerApp {
                                 let edit_resp = ui.add(egui::TextEdit::singleline(&mut pending.buffer).desired_width(200.0).hint_text("Enter to place, Esc to cancel"));
                                 edit_resp.request_focus();
                                 
-                                if edit_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                if ui.input(|i| i.key_pressed(egui::Key::Enter)) || (edit_resp.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape))) {
                                     finalize = true;
                                 }
                             });
@@ -528,24 +530,33 @@ impl eframe::App for OwerlayerApp {
                     if let Some(p) = self.pending_text.take() {
                         if !p.buffer.is_empty() {
                             let text_str = p.buffer.clone();
-                            if let Some(layer) = self.project.get_active_layer_mut() {
-                                let mut ann = overlay::TextAnnotation::new(p.position, text_str.clone(), self.settings.pen_color, self.settings.font_size);
-                                ann.monospace = self.settings.text_monospace;
-                                ann.shadow = self.settings.text_shadow;
-                                ann.outline = self.settings.text_outline;
-                                ann.stroke_width = self.settings.text_stroke_width;
-                                ann.font = self.settings.text_font;
-                                ann.wave_warp = self.settings.text_wave_warp;
-                                
-                                let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
-                                let galley = ctx.fonts(|f| f.layout_no_wrap(text_str.clone(), font, egui::Color32::WHITE));
-                                ann.exact_size = [galley.size().x, galley.size().y];
-                                
-                                layer.text_annotations.push(ann);
-                                layer.expanded = true;
+                            let mut ann = overlay::TextAnnotation::new(p.position, text_str.clone(), self.settings.pen_color, self.settings.font_size);
+                            ann.monospace = self.settings.text_monospace;
+                            ann.shadow = self.settings.text_shadow;
+                            ann.outline = self.settings.text_outline;
+                            ann.stroke_width = self.settings.text_stroke_width;
+                            ann.font = self.settings.text_font;
+                            ann.wave_warp = self.settings.text_wave_warp;
+                            
+                            let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
+                            let galley = ctx.fonts(|f| f.layout_no_wrap(text_str.clone(), font, egui::Color32::WHITE));
+                            ann.exact_size = [galley.size().x, galley.size().y];
+                            
+                            let active_layer_idx = self.project.active_layer;
+                            let is_locked = active_layer_idx < self.project.layers.len() && self.project.layers[active_layer_idx].locked;
+                            let ask_mode = self.settings.auto_new_layer.is_none();
+                            
+                            if is_locked || ask_mode {
+                                self.pending_text_to_add = Some(ann);
+                                self.layer_prompt_open = true;
+                            } else {
+                                if let Some(layer) = self.project.get_active_layer_mut() {
+                                    layer.text_annotations.push(ann);
+                                    layer.expanded = true;
+                                }
+                                self.history.push(&self.project, format!("Text: {}", text_str));
+                                self.project.save();
                             }
-                            self.history.push(&self.project, format!("Text: {}", text_str));
-                            self.project.save();
                         }
                     }
                 } else if cancel {
@@ -961,13 +972,9 @@ impl eframe::App for OwerlayerApp {
                                         }
                                     }
                                     if let Some(idx) = target_idx {
-                                        if is_vector {
-                                            self.project.layers[layer_idx].strokes.push(s);
-                                        } else {
-                                            let img = &mut self.project.layers[layer_idx].placed_images[idx];
-                                            img.locked = false;
-                                            crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
-                                        }
+                                        let img = &mut self.project.layers[layer_idx].placed_images[idx];
+                                        img.locked = false;
+                                        crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
                                         self.project.selected_object = Some(SelectedObject {
                                             layer_idx,
                                             object_type: crate::overlay::ObjectType::Image,
@@ -1088,8 +1095,38 @@ impl eframe::App for OwerlayerApp {
                             _ => {}
                         }
                     }
+
+                    if let Some(ann) = self.pending_text_to_add.take() {
+                        let text_str = ann.text.clone();
+                        match act {
+                            1 => {
+                                if layer_idx < self.project.layers.len() {
+                                    self.project.layers[layer_idx].locked = false;
+                                    self.project.layers[layer_idx].text_annotations.push(ann);
+                                    self.project.layers[layer_idx].expanded = true;
+                                }
+                            }
+                            2 => {
+                                if layer_idx < self.project.layers.len() {
+                                    self.project.layers[layer_idx].text_annotations.push(ann);
+                                    self.project.layers[layer_idx].expanded = true;
+                                }
+                            }
+                            3 => {
+                                self.project.layers.push(crate::project::Layer::new("Text Layer"));
+                                let new_layer_idx = self.project.layers.len() - 1;
+                                self.project.active_layer = new_layer_idx;
+                                self.project.layers[new_layer_idx].text_annotations.push(ann);
+                                self.project.layers[new_layer_idx].expanded = true;
+                            }
+                            _ => {}
+                        }
+                        self.request_history_push = Some(format!("Text: {}", text_str));
+                        self.project.save();
+                    }
                 } else if close_prompt {
                     self.pending_stroke = None;
+                    self.pending_text_to_add = None;
                     if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed {
                         let layer_idx = self.project.active_layer;
                         if layer_idx < self.project.layers.len() {
@@ -1183,6 +1220,7 @@ impl eframe::App for OwerlayerApp {
                     &mut self.dragging_source_rect,
                     &mut self.pending_text,
                     &mut self.pending_stroke,
+                    &mut self.pending_text_to_add,
                     &mut self.last_tool_used,
                     self.edit_mode,
                     &mut self.layer_prompt_open,

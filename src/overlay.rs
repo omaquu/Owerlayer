@@ -78,6 +78,7 @@ pub fn render_canvas(
     dragging_source_rect: &mut bool,
     pending_text: &mut Option<PendingText>,
     pending_stroke: &mut Option<Stroke>,
+    pending_text_to_add: &mut Option<TextAnnotation>,
     last_tool_used: &mut Option<Tool>,
     edit_mode: bool,
     layer_prompt_open: &mut bool,
@@ -711,6 +712,8 @@ pub fn render_canvas(
         switch_to_move: &mut switch_to_move,
         embed_trigger: _embed_trigger,
         pending_text,
+        pending_stroke,
+        pending_text_to_add,
         initial_bounds,
         initial_center,
         initial_layer,
@@ -719,7 +722,6 @@ pub fn render_canvas(
         edit_mode,
         layer_prompt_open,
         request_history_push,
-        pending_stroke,
     };
 
     // ── Live preview (skip during rasterize) ──
