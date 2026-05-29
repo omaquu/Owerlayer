@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::overlay::*;
+use crate::utils::*;
 use crate::tools::ToolContext;
 
 pub fn update(ctx: &mut ToolContext) {
@@ -28,7 +29,62 @@ pub fn update(ctx: &mut ToolContext) {
     }
     
     if left_just_pressed && !is_locked {
-        // Find or create target PlacedImage
+        // 1. Vector shape interior fill check
+        let mut filled_vector_shape = false;
+        let mut check_layer_idx = Some(active_layer_idx);
+        if let Some(idx) = check_layer_idx {
+            let layer = &mut project.layers[idx];
+            // Iterate in reverse order to target top-most stroke first
+            for s in layer.strokes.iter_mut().rev() {
+                if s.points.is_empty() { continue; }
+                let inside = match s.kind {
+                    StrokeKind::Rect => {
+                        if s.points.len() >= 2 {
+                            let r = egui::Rect::from_two_pos(s.points[0], s.points[1]);
+                            r.contains(pos)
+                        } else { false }
+                    }
+                    StrokeKind::Circle => {
+                        if s.points.len() >= 2 {
+                            let r = egui::Rect::from_two_pos(s.points[0], s.points[1]);
+                            let center = r.center();
+                            let radius = r.width().min(r.height()) * 0.5;
+                            pos.distance(center) <= radius
+                        } else { false }
+                    }
+                    StrokeKind::Star => {
+                        if s.points.len() >= 2 {
+                            let radius = s.points[0].distance(s.points[1]);
+                            let pts = get_star_points(s.points[0], radius);
+                            is_inside_poly(&pts, pos)
+                        } else { false }
+                    }
+                    StrokeKind::Heart => {
+                        if s.points.len() >= 2 {
+                            let radius = s.points[0].distance(s.points[1]);
+                            let pts = get_heart_points(s.points[0], radius);
+                            is_inside_poly(&pts, pos)
+                        } else { false }
+                    }
+                    StrokeKind::Poly => {
+                        is_inside_poly(&s.points, pos)
+                    }
+                    _ => false,
+                };
+                if inside {
+                    s.background_color = Some(settings.pen_color);
+                    filled_vector_shape = true;
+                    *ctx.request_history_push = Some("Paint Bucket".into());
+                    break;
+                }
+            }
+        }
+        
+        if filled_vector_shape {
+            return;
+        }
+
+        // 2. Fallback to bitmap canvas flood fill
         let has_target_image = project.selected_object.map_or(false, |s| {
             s.object_type == ObjectType::Image
                 && s.layer_idx == active_layer_idx
@@ -113,7 +169,7 @@ pub fn update(ctx: &mut ToolContext) {
                             let start_color = [img.pixels[idx], img.pixels[idx+1], img.pixels[idx+2], img.pixels[idx+3]];
                             let fill_color = settings.pen_color;
                             
-                            paint_bucket_flood_fill(img, px, py, start_color, fill_color, settings.magic_wand_threshold);
+                            paint_bucket_flood_fill(img, px, py, start_color, fill_color, settings.magic_wand_threshold, &project.marquee_selection);
                             img.texture = None;
                             img.thumbnail_dirty = true;
                             *ctx.request_history_push = Some("Paint Bucket".into());
@@ -125,7 +181,15 @@ pub fn update(ctx: &mut ToolContext) {
     }
 }
 
-pub fn paint_bucket_flood_fill(img: &mut crate::types::PlacedImage, start_x: i32, start_y: i32, target_color: [u8; 4], fill_color: [u8; 4], threshold: f32) {
+pub fn paint_bucket_flood_fill(
+    img: &mut crate::types::PlacedImage,
+    start_x: i32,
+    start_y: i32,
+    target_color: [u8; 4],
+    fill_color: [u8; 4],
+    threshold: f32,
+    selection: &Option<crate::types::MarqueeSelection>,
+) {
     let w = img.size[0] as i32;
     let h = img.size[1] as i32;
     if start_x < 0 || start_x >= w || start_y < 0 || start_y >= h { return; }
@@ -134,6 +198,17 @@ pub fn paint_bucket_flood_fill(img: &mut crate::types::PlacedImage, start_x: i32
         return;
     }
     
+    let dw = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+    let dh = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+    let scale_x = dw / img.size[0] as f32;
+    let scale_y = dh / img.size[1] as f32;
+    
+    let cos = img.rotation.cos();
+    let sin = img.rotation.sin();
+    let sx = img.scale.x; let sy = img.scale.y;
+    let kx = img.skew.x; let ky = img.skew.y;
+    let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+
     let mut stack = vec![(start_x, start_y)];
     let mut visited = vec![false; (w * h) as usize];
     
@@ -160,15 +235,36 @@ pub fn paint_bucket_flood_fill(img: &mut crate::types::PlacedImage, start_x: i32
         };
 
         if is_match {
-            img.pixels[pixel_idx] = fill_color[0];
-            img.pixels[pixel_idx + 1] = fill_color[1];
-            img.pixels[pixel_idx + 2] = fill_color[2];
-            img.pixels[pixel_idx + 3] = fill_color[3];
-            
-            stack.push((x + 1, y));
-            stack.push((x - 1, y));
-            stack.push((x, y + 1));
-            stack.push((x, y - 1));
+            // Check selection boundary constraint if selection is active
+            let mut in_selection = true;
+            if let Some(sel) = selection {
+                // Map local pixel coordinate back to world coordinates
+                let rel_x = (x as f32 - img.size[0] as f32 * 0.5) * scale_x;
+                let rel_y = (y as f32 - img.size[1] as f32 * 0.5) * scale_y;
+                let px_rot = rel_x * sx + rel_y * sy * kx;
+                let py_rot = rel_y * sy + rel_x * sx * ky;
+                let world_x = center.x + px_rot * cos - py_rot * sin;
+                let world_y = center.y + py_rot * cos + px_rot * sin;
+                let world_pos = egui::pos2(world_x, world_y);
+                
+                in_selection = match &sel.shape {
+                    SelectionShape::Rect(r) => r.contains(world_pos),
+                    SelectionShape::Circle { center, radius } => world_pos.distance(*center) <= *radius,
+                    SelectionShape::Poly(pts) => is_inside_poly(pts, world_pos),
+                };
+            }
+
+            if in_selection {
+                img.pixels[pixel_idx] = fill_color[0];
+                img.pixels[pixel_idx + 1] = fill_color[1];
+                img.pixels[pixel_idx + 2] = fill_color[2];
+                img.pixels[pixel_idx + 3] = fill_color[3];
+                
+                stack.push((x + 1, y));
+                stack.push((x - 1, y));
+                stack.push((x, y + 1));
+                stack.push((x, y - 1));
+            }
         }
     }
 }

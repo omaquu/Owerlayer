@@ -254,11 +254,23 @@ pub fn draw_tool_icon(ui: &mut egui::Ui, tool: Tool, _size: f32, is_selected: bo
             painter.rect_stroke(egui::Rect::from_center_size(center, egui::vec2(14.0, 10.0)), 0.0, stroke, egui::StrokeKind::Middle);
         }
         Tool::Cut => {
-            // Draw scissors icon
-            painter.circle_stroke(center + egui::vec2(-4.0, 4.0), 2.5, stroke);
-            painter.circle_stroke(center + egui::vec2(4.0, 4.0), 2.5, stroke);
-            painter.line_segment([center + egui::vec2(-2.5, 2.0), center + egui::vec2(6.0, -6.0)], stroke);
-            painter.line_segment([center + egui::vec2(2.5, 2.0), center + egui::vec2(-6.0, -6.0)], stroke);
+            // Draw a dashed rectangle marquee icon
+            // Top side
+            painter.line_segment([center + egui::vec2(-7.0, -5.0), center + egui::vec2(-3.0, -5.0)], stroke);
+            painter.line_segment([center + egui::vec2(-1.0, -5.0), center + egui::vec2(3.0, -5.0)], stroke);
+            painter.line_segment([center + egui::vec2(5.0, -5.0), center + egui::vec2(7.0, -5.0)], stroke);
+            // Bottom side
+            painter.line_segment([center + egui::vec2(-7.0, 5.0), center + egui::vec2(-3.0, 5.0)], stroke);
+            painter.line_segment([center + egui::vec2(-1.0, 5.0), center + egui::vec2(3.0, 5.0)], stroke);
+            painter.line_segment([center + egui::vec2(5.0, 5.0), center + egui::vec2(7.0, 5.0)], stroke);
+            // Left side
+            painter.line_segment([center + egui::vec2(-7.0, -5.0), center + egui::vec2(-7.0, -3.0)], stroke);
+            painter.line_segment([center + egui::vec2(-7.0, -1.0), center + egui::vec2(-7.0, 1.0)], stroke);
+            painter.line_segment([center + egui::vec2(-7.0, 3.0), center + egui::vec2(-7.0, 5.0)], stroke);
+            // Right side
+            painter.line_segment([center + egui::vec2(7.0, -5.0), center + egui::vec2(7.0, -3.0)], stroke);
+            painter.line_segment([center + egui::vec2(7.0, -1.0), center + egui::vec2(7.0, 1.0)], stroke);
+            painter.line_segment([center + egui::vec2(7.0, 3.0), center + egui::vec2(7.0, 5.0)], stroke);
         }
         Tool::Mirror => {
             painter.rect_stroke(egui::Rect::from_center_size(center, egui::vec2(14.0, 14.0)), 0.0, stroke, egui::StrokeKind::Middle);

@@ -48,6 +48,18 @@ impl MouseState {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum ShapeType { Rect, Circle, Star, Heart, Arrow, Poly }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum SelectionShape {
+    Rect(egui::Rect),
+    Circle { center: egui::Pos2, radius: f32 },
+    Poly(Vec<egui::Pos2>),
+}
+
+#[derive(Clone, Debug)]
+pub struct MarqueeSelection {
+    pub shape: SelectionShape,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Tool {
     Move,
@@ -72,7 +84,7 @@ impl Tool {
             Tool::Text => "Text Tool",
             Tool::Shape => "Shape Tool",
             Tool::Snip => "Snip Tool",
-            Tool::Cut => "Cut Tool",
+            Tool::Cut => "Marquee Tool",
             Tool::Mirror => "Mirror Tool",
             Tool::Blur => "Blur Tool",
             Tool::Embed => "Embed Tool",

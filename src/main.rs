@@ -582,7 +582,18 @@ impl eframe::App for OwerlayerApp {
                 self.project.save();
             }
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D)) {
-                self.show_debug_window = !self.show_debug_window;
+                if self.project.marquee_selection.is_some() {
+                    self.project.marquee_selection = None;
+                } else {
+                    self.show_debug_window = !self.show_debug_window;
+                }
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
+                if self.project.marquee_selection.is_some() {
+                    crate::tools::cut::erase_marquee_selection(&mut self.project, &self.settings);
+                    self.history.push(&self.project, "Erase Selection");
+                    self.project.save();
+                }
             }
         }
 
@@ -749,9 +760,9 @@ impl eframe::App for OwerlayerApp {
                         if layer_idx < self.project.layers.len() {
                             let len = self.project.layers[layer_idx].placed_images.len();
                             if new_content_is_in_placed_images {
-                                len > 1 && self.project.layers[layer_idx].placed_images[..len - 1].iter().any(|img| !img.locked)
+                                len > 1
                             } else {
-                                len > 0 && self.project.layers[layer_idx].placed_images.iter().any(|img| !img.locked)
+                                len > 0
                             }
                         } else {
                             false

@@ -367,6 +367,7 @@ pub fn update(ctx: &mut ToolContext) {
             }
 
             if *snip_created {
+                let ppp = ui.ctx().pixels_per_point();
                 match settings.auto_new_layer {
                     Some(true) => {
                         project.layers.push(crate::project::Layer::new(&format!("Snip {}", project.layers.len() + 1)));
@@ -382,9 +383,11 @@ pub fn update(ctx: &mut ToolContext) {
                                     let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                                     let path = pics.join(format!("snip_{}.png", time_str));
                                     if !snip_clone.pixels.is_empty() {
-                                        let mut img_buf = image::RgbaImage::new(snip_clone.size[0] as u32, snip_clone.size[1] as u32);
-                                        img_buf.copy_from_slice(&snip_clone.pixels);
-                                        let _ = img_buf.save(path);
+                                        let p_w = (snip_clone.size[0] as f32 * ppp).round() as u32;
+                                        let p_h = (snip_clone.size[1] as f32 * ppp).round() as u32;
+                                        if let Some(img_buf) = image::RgbaImage::from_raw(p_w, p_h, snip_clone.pixels.clone()) {
+                                            let _ = img_buf.save(path);
+                                        }
                                     }
                                 }
                             });
@@ -405,9 +408,11 @@ pub fn update(ctx: &mut ToolContext) {
                                         let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                                         let path = pics.join(format!("snip_{}.png", time_str));
                                         if !snip_clone.pixels.is_empty() {
-                                            let mut img_buf = image::RgbaImage::new(snip_clone.size[0] as u32, snip_clone.size[1] as u32);
-                                            img_buf.copy_from_slice(&snip_clone.pixels);
-                                            let _ = img_buf.save(path);
+                                            let p_w = (snip_clone.size[0] as f32 * ppp).round() as u32;
+                                            let p_h = (snip_clone.size[1] as f32 * ppp).round() as u32;
+                                            if let Some(img_buf) = image::RgbaImage::from_raw(p_w, p_h, snip_clone.pixels.clone()) {
+                                                let _ = img_buf.save(path);
+                                            }
                                         }
                                     }
                                 });
@@ -428,9 +433,11 @@ pub fn update(ctx: &mut ToolContext) {
                                         let time_str = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                                         let path = pics.join(format!("snip_{}.png", time_str));
                                         if !snip_clone.pixels.is_empty() {
-                                            let mut img_buf = image::RgbaImage::new(snip_clone.size[0] as u32, snip_clone.size[1] as u32);
-                                            img_buf.copy_from_slice(&snip_clone.pixels);
-                                            let _ = img_buf.save(path);
+                                            let p_w = (snip_clone.size[0] as f32 * ppp).round() as u32;
+                                            let p_h = (snip_clone.size[1] as f32 * ppp).round() as u32;
+                                            if let Some(img_buf) = image::RgbaImage::from_raw(p_w, p_h, snip_clone.pixels.clone()) {
+                                                let _ = img_buf.save(path);
+                                            }
                                         }
                                     }
                                 });

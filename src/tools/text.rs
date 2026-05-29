@@ -189,11 +189,6 @@ pub fn draw_layer_text(
 
             for primitive in primitives {
                 if let egui::epaint::Primitive::Mesh(mut mesh) = primitive.primitive {
-                    // Apply relative transform
-                    for v in &mut mesh.vertices {
-                        v.pos -= center.to_vec2();
-                    }
-                    
                     // Apply transform_mesh for rotation/skew/perspective/scale
                     let mut final_scale = ann.scale;
                     if ann.flipped_h { final_scale.x *= -1.0; }

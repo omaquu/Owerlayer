@@ -738,6 +738,85 @@ pub fn render_canvas(
         if *ctx.active_tool == Tool::Move {
             crate::tools::move_tool::render(&mut ctx);
         }
+
+        // Render marquee selection outline (marching ants)
+        if let Some(sel) = &ctx.project.marquee_selection {
+            let time = ctx.ui.input(|i| i.time);
+            let painter = ctx.ui.painter_at(ctx.canvas_response.rect);
+            
+            // Helper for drawing dashed path
+            let draw_dashed_path = |painter: &egui::Painter, points: &[egui::Pos2], time: f64| {
+                if points.len() < 2 { return; }
+                let dash_len = 6.0f32;
+                let speed = 15.0f32;
+                let mut current_offset = (time as f32 * speed) % (dash_len * 2.0);
+                let mut draw_white = current_offset < dash_len;
+                if !draw_white {
+                    current_offset -= dash_len;
+                }
+                
+                for i in 0..points.len() - 1 {
+                    let p1 = points[i];
+                    let p2 = points[i+1];
+                    let dir = p2 - p1;
+                    let dist = dir.length();
+                    if dist < 0.001 { continue; }
+                    
+                    let dir = dir / dist;
+                    let mut t = 0.0f32;
+                    
+                    while t < dist {
+                        let dash_left = dash_len - current_offset;
+                        let step = dash_left.min(dist - t);
+                        
+                        let start = p1 + dir * t;
+                        let end = p1 + dir * (t + step);
+                        
+                        let color = if draw_white { egui::Color32::WHITE } else { egui::Color32::BLACK };
+                        painter.line_segment([start, end], egui::Stroke::new(1.2, color));
+                        
+                        t += step;
+                        current_offset += step;
+                        if current_offset >= dash_len {
+                            current_offset = 0.0;
+                            draw_white = !draw_white;
+                        }
+                    }
+                }
+            };
+
+            match &sel.shape {
+                crate::types::SelectionShape::Rect(rect) => {
+                    let r = rect.translate(-ctx.render_offset);
+                    let pts = vec![
+                        r.left_top(),
+                        r.right_top(),
+                        r.right_bottom(),
+                        r.left_bottom(),
+                        r.left_top(),
+                    ];
+                    draw_dashed_path(&painter, &pts, time);
+                }
+                crate::types::SelectionShape::Circle { center, radius } => {
+                    let c = *center - ctx.render_offset;
+                    let mut pts = Vec::with_capacity(61);
+                    for i in 0..=60 {
+                        let angle = i as f32 * std::f32::consts::TAU / 60.0;
+                        pts.push(c + egui::vec2(angle.cos() * radius, angle.sin() * radius));
+                    }
+                    draw_dashed_path(&painter, &pts, time);
+                }
+                crate::types::SelectionShape::Poly(pts) => {
+                    if pts.len() >= 2 {
+                        let mut closed_pts: Vec<egui::Pos2> = pts.iter().map(|&p| p - ctx.render_offset).collect();
+                        closed_pts.push(pts[0] - ctx.render_offset);
+                        draw_dashed_path(&painter, &closed_pts, time);
+                    }
+                }
+            }
+            
+            ctx.ui.ctx().request_repaint();
+        }
     }
 
     if rasterize_phase == 0 && edit_mode && can_draw && active_layer_idx < ctx.project.layers.len() {

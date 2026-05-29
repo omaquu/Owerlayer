@@ -29,8 +29,11 @@ pub fn update(ctx: &mut ToolContext) {
                     if left_just_pressed { 
                         current_stroke.push(pos); 
                     }
-                    let finish = ui.ctx().input(|i| i.key_pressed(egui::Key::Enter));
-                    if finish && current_stroke.len() >= 2 {
+                    let right_clicked = ui.ctx().input(|i| i.pointer.secondary_pressed());
+                    let enter_pressed = ui.ctx().input(|i| i.key_pressed(egui::Key::Enter));
+                    let close_to_start = current_stroke.len() > 2 && pos.distance(current_stroke[0]) < 15.0 && left_just_pressed;
+                    
+                    if (right_clicked || enter_pressed || close_to_start) && current_stroke.len() >= 2 {
                         let mut final_points = current_stroke.clone();
                         final_points.push(final_points[0]);
                         let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity);
