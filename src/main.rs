@@ -422,6 +422,23 @@ impl eframe::App for OwerlayerApp {
         }
         self.frame_count += 1;
         
+        // Sanitizing selected_object bounds to prevent panics and crashes from deleted layers or objects
+        if let Some(sel) = self.project.selected_object {
+            if sel.layer_idx >= self.project.layers.len() {
+                self.project.selected_object = None;
+            } else {
+                let layer = &self.project.layers[sel.layer_idx];
+                let is_valid = match sel.object_type {
+                    ObjectType::Image => sel.object_idx < layer.placed_images.len(),
+                    ObjectType::Stroke => sel.object_idx < layer.strokes.len(),
+                    ObjectType::Text => sel.object_idx < layer.text_annotations.len(),
+                };
+                if !is_valid {
+                    self.project.selected_object = None;
+                }
+            }
+        }
+        
         // ---- 0. First-frame init ----
         if !self.initialized {
             self.initialized = true;

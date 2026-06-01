@@ -137,49 +137,56 @@ pub fn update(ctx: &mut ToolContext) {
                         crate::tools::brush::rasterize_stroke_to_image(img, stroke, settings);
                     }
 
-                    let dw = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                    let dh = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1];
-                    let iw = img.size[0];
-                    let ih = img.size[1];
-                    if iw > 0 && ih > 0 && dw > 0.0 && dh > 0.0 {
-                        let scale_x = iw as f32 / dw;
-                        let scale_y = ih as f32 / dh;
-                        
-                        let render_offset = ctx.render_offset;
-                        let world_pt = pos + render_offset;
-                        let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                        let rel_world = world_pt - center;
-                        
-                        let cos = img.rotation.cos();
-                        let sin = img.rotation.sin();
-                        let px_rot = rel_world.x * cos + rel_world.y * sin;
-                        let py_rot = rel_world.y * cos - rel_world.x * sin;
-                        
-                        let sx = img.scale.x; let sy = img.scale.y;
-                        let kx = img.skew.x; let ky = img.skew.y;
-                        let det = 1.0 - kx * ky;
-                        let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                            ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                        } else {
-                            (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                        };
-                        
-                        let base_p = center + egui::vec2(rel_x, rel_y);
-                        let lx = (base_p.x - img.position.x) * scale_x;
-                        let ly = (base_p.y - img.position.y) * scale_y;
-                        
-                        let px = lx.round() as i32;
-                        let py = ly.round() as i32;
-                        
-                        if px >= 0 && px < iw as i32 && py >= 0 && py < ih as i32 {
-                            let idx = (py as usize * iw + px as usize) * 4;
-                            let start_color = [img.pixels[idx], img.pixels[idx+1], img.pixels[idx+2], img.pixels[idx+3]];
-                            let fill_color = settings.pen_color;
+                    if project.marquee_selection.is_some() {
+                        paint_bucket_flood_fill(img, 0, 0, [0,0,0,0], settings.pen_color, settings.magic_wand_threshold, &project.marquee_selection);
+                        img.texture = None;
+                        img.thumbnail_dirty = true;
+                        *ctx.request_history_push = Some("Paint Bucket".into());
+                    } else {
+                        let dw = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+                        let dh = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+                        let iw = img.size[0];
+                        let ih = img.size[1];
+                        if iw > 0 && ih > 0 && dw > 0.0 && dh > 0.0 {
+                            let scale_x = iw as f32 / dw;
+                            let scale_y = ih as f32 / dh;
                             
-                            paint_bucket_flood_fill(img, px, py, start_color, fill_color, settings.magic_wand_threshold, &project.marquee_selection);
-                            img.texture = None;
-                            img.thumbnail_dirty = true;
-                            *ctx.request_history_push = Some("Paint Bucket".into());
+                            let render_offset = ctx.render_offset;
+                            let world_pt = pos + render_offset;
+                            let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+                            let rel_world = world_pt - center;
+                            
+                            let cos = img.rotation.cos();
+                            let sin = img.rotation.sin();
+                            let px_rot = rel_world.x * cos + rel_world.y * sin;
+                            let py_rot = rel_world.y * cos - rel_world.x * sin;
+                            
+                            let sx = img.scale.x; let sy = img.scale.y;
+                            let kx = img.skew.x; let ky = img.skew.y;
+                            let det = 1.0 - kx * ky;
+                            let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+                                ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+                            } else {
+                                (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+                            };
+                            
+                            let base_p = center + egui::vec2(rel_x, rel_y);
+                            let lx = (base_p.x - img.position.x) * scale_x;
+                            let ly = (base_p.y - img.position.y) * scale_y;
+                            
+                            let px = lx.round() as i32;
+                            let py = ly.round() as i32;
+                            
+                            if px >= 0 && px < iw as i32 && py >= 0 && py < ih as i32 {
+                                let idx = (py as usize * iw + px as usize) * 4;
+                                let start_color = [img.pixels[idx], img.pixels[idx+1], img.pixels[idx+2], img.pixels[idx+3]];
+                                let fill_color = settings.pen_color;
+                                
+                                paint_bucket_flood_fill(img, px, py, start_color, fill_color, settings.magic_wand_threshold, &project.marquee_selection);
+                                img.texture = None;
+                                img.thumbnail_dirty = true;
+                                *ctx.request_history_push = Some("Paint Bucket".into());
+                            }
                         }
                     }
                 }
@@ -206,25 +213,35 @@ pub fn paint_bucket_flood_fill(
     let scale_x = dw / img.size[0] as f32;
     let scale_y = dh / img.size[1] as f32;
     
-    let cos = img.rotation.cos();
-    let sin = img.rotation.sin();
-    let sx = img.scale.x; let sy = img.scale.y;
-    let kx = img.skew.x; let ky = img.skew.y;
     let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+
+    let map_to_world = |x: i32, y: i32| -> egui::Pos2 {
+        let mut local_x = x as f32 * scale_x;
+        let mut local_y = y as f32 * scale_y;
+        if img.flipped_h {
+            local_x = dw - local_x;
+        }
+        if img.flipped_v {
+            local_y = dh - local_y;
+        }
+        let p_untrans = img.position + egui::vec2(local_x, local_y);
+        transform_point_complex(
+            p_untrans,
+            center,
+            img.rotation,
+            img.skew,
+            img.perspective,
+            egui::Rect::from_min_size(img.position, egui::vec2(dw, dh)),
+            img.scale,
+        )
+    };
 
     if let Some(sel) = selection {
         for y in 0..h {
             for x in 0..w {
                 let idx = (y * w + x) as usize;
                 let pixel_idx = idx * 4;
-                
-                let rel_x = (x as f32 - img.size[0] as f32 * 0.5) * scale_x;
-                let rel_y = (y as f32 - img.size[1] as f32 * 0.5) * scale_y;
-                let px_rot = rel_x * sx + rel_y * sy * kx;
-                let py_rot = rel_y * sy + rel_x * sx * ky;
-                let world_x = center.x + px_rot * cos - py_rot * sin;
-                let world_y = center.y + py_rot * cos + px_rot * sin;
-                let world_pos = egui::pos2(world_x, world_y);
+                let world_pos = map_to_world(x, y);
                 
                 if sel.contains(world_pos) {
                     img.pixels[pixel_idx] = fill_color[0];
@@ -270,15 +287,7 @@ pub fn paint_bucket_flood_fill(
             // Check selection boundary constraint if selection is active
             let mut in_selection = true;
             if let Some(sel) = selection {
-                // Map local pixel coordinate back to world coordinates
-                let rel_x = (x as f32 - img.size[0] as f32 * 0.5) * scale_x;
-                let rel_y = (y as f32 - img.size[1] as f32 * 0.5) * scale_y;
-                let px_rot = rel_x * sx + rel_y * sy * kx;
-                let py_rot = rel_y * sy + rel_x * sx * ky;
-                let world_x = center.x + px_rot * cos - py_rot * sin;
-                let world_y = center.y + py_rot * cos + px_rot * sin;
-                let world_pos = egui::pos2(world_x, world_y);
-                
+                let world_pos = map_to_world(x, y);
                 in_selection = sel.contains(world_pos);
             }
 
