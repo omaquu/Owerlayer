@@ -97,8 +97,20 @@ pub fn update(ctx: &mut ToolContext) {
                             let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
                             
                             if let Some(ref local_pts) = img.snip_points {
-                                let world_pts: Vec<egui::Pos2> = local_pts.iter().map(|p| egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y)).collect();
-                                painter.add(egui::Shape::line(world_pts, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
+                                let mut current_path = Vec::new();
+                                for p in local_pts {
+                                    if p.x.is_nan() || p.y.is_nan() {
+                                        if !current_path.is_empty() {
+                                            painter.add(egui::Shape::line(current_path.clone(), egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
+                                            current_path.clear();
+                                        }
+                                    } else {
+                                        current_path.push(egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y));
+                                    }
+                                }
+                                if !current_path.is_empty() {
+                                    painter.add(egui::Shape::line(current_path, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
+                                }
                             } else {
                                 painter.rect_stroke(src_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
                             }
@@ -114,12 +126,14 @@ pub fn update(ctx: &mut ToolContext) {
                                     *line_start = Some(egui::pos2(-4.0, idx as f32)); // Move source rect handle
                                     *initial_bounds = Some(src_rect);
                                     *dragging_source_rect = true;
+                                    click_consumed = true;
                                 }
                             }
                             if left_just_pressed && src_rect.contains(pos) && !*dragging_source_rect {
                                 *line_start = Some(pos);
                                 *initial_bounds = Some(src_rect);
                                 *dragging_source_rect = true;
+                                click_consumed = true;
                             }
                         }
                     }
@@ -164,6 +178,7 @@ pub fn update(ctx: &mut ToolContext) {
                 // Use two rows: row 1 = URL bar (for embeds), row 2 = buttons
                 let bar_height = if sel_is_embed { 52.0 } else { 32.0 };
                 let top_btns_rect = egui::Rect::from_min_size(bounds.left_top() - egui::vec2(0.0, bar_height + 40.0), egui::vec2(bounds.width().max(320.0), bar_height));
+                if settings.show_screen_controls {
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(top_btns_rect), |ui| {
                     ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_black_alpha(150);
 
@@ -331,6 +346,7 @@ pub fn update(ctx: &mut ToolContext) {
                         });
                     });
                 });
+                }
 
                 // Skew handles (hit-test only, visuals drawn in render())
                 let _draw_mids = [bounds.left_center(), bounds.right_center(), bounds.center_top(), bounds.center_bottom()];
@@ -351,7 +367,7 @@ pub fn update(ctx: &mut ToolContext) {
                 
                 // Removed duplicate red garbage bin delete button logic
 
-                if top_btns_rect.contains(pos) { return; }
+                if settings.show_screen_controls && top_btns_rect.contains(pos) { return; }
 
                 if left_just_pressed && !*dragging_source_rect {
                     // Locked objects: show selection box but block all transforms
@@ -424,13 +440,70 @@ pub fn update(ctx: &mut ToolContext) {
                             }
                         }
 
-                        if !sel_is_locked {
-                            *line_start = Some(pos);
-                            *drag_state = 0;
-                            *initial_bounds = Some(raw_bounds);
-                            *initial_layer = Some(layer.clone());
+                        let mut hovering_object = false;
+                        if project.selected_object.is_none() {
+                            let world_pos = pos + render_offset;
+                            // Check images
+                            for img_idx in 0..layer.placed_images.len() {
+                                if let Some(rect) = crate::utils::object_bounds(layer, ObjectType::Image, img_idx) {
+                                    if rect.contains(world_pos) {
+                                        hovering_object = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            // Check text
+                            if !hovering_object {
+                                for txt_idx in 0..layer.text_annotations.len() {
+                                    if let Some(rect) = crate::utils::object_bounds(layer, ObjectType::Text, txt_idx) {
+                                        if rect.contains(world_pos) {
+                                            hovering_object = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            // Check strokes
+                            if !hovering_object {
+                                for s in &layer.strokes {
+                                    let s_hit = if s.points.len() < 2 {
+                                        s.points.iter().any(|p| p.distance(world_pos) < s.width + 10.0)
+                                    } else {
+                                        let mut hit_line = false;
+                                        for w in s.points.windows(2) {
+                                            let (p0, p1) = (w[0], w[1]);
+                                            let len_sq = p0.distance_sq(p1);
+                                            if len_sq > 0.0 {
+                                                let t = ((world_pos.x - p0.x) * (p1.x - p0.x) + (world_pos.y - p0.y) * (p1.y - p0.y)) / len_sq;
+                                                let t = t.clamp(0.0, 1.0);
+                                                let proj = p0 + (p1 - p0) * t;
+                                                if world_pos.distance(proj) < s.width * 0.5 + 5.0 {
+                                                    hit_line = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        hit_line
+                                    };
+                                    if s_hit {
+                                        hovering_object = true;
+                                        break;
+                                    }
+                                }
+                            }
                         }
-                        click_consumed = true;
+
+                        if hovering_object {
+                            // Do not consume click, let it propagate to the selection handler at the bottom
+                        } else {
+                            if !sel_is_locked {
+                                *line_start = Some(pos);
+                                *drag_state = 0;
+                                *initial_bounds = Some(raw_bounds);
+                                *initial_layer = Some(layer.clone());
+                            }
+                            click_consumed = true;
+                        }
                     } else if !hit {
                         // Click OUTSIDE selected object → only deselect if we are NOT clicking another object (handled below)
                         // project.selected_object = None; // Move this to the bottom block

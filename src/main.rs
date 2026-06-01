@@ -23,6 +23,56 @@ use ui::settings_menu::render_settings_window;
 use ui::layer_menu::render_layers_window;
 use ui::filter_menu::render_filter_menu;
 
+fn marquee_to_local_points(sel: &crate::types::MarqueeSelection, bounds_min: egui::Pos2) -> Vec<egui::Pos2> {
+    let mut pts = Vec::new();
+    
+    let push_shape = |pts: &mut Vec<egui::Pos2>, shape: &crate::types::SelectionShape| {
+        match shape {
+            crate::types::SelectionShape::Rect(r) => {
+                pts.push(egui::pos2(r.left_top().x - bounds_min.x, r.left_top().y - bounds_min.y));
+                pts.push(egui::pos2(r.right_top().x - bounds_min.x, r.right_top().y - bounds_min.y));
+                pts.push(egui::pos2(r.right_bottom().x - bounds_min.x, r.right_bottom().y - bounds_min.y));
+                pts.push(egui::pos2(r.left_bottom().x - bounds_min.x, r.left_bottom().y - bounds_min.y));
+                pts.push(egui::pos2(r.left_top().x - bounds_min.x, r.left_top().y - bounds_min.y));
+            }
+            crate::types::SelectionShape::Circle { center, radius } => {
+                let segments = 64;
+                for i in 0..=segments {
+                    let angle = (i as f32) * 2.0 * std::f32::consts::PI / (segments as f32);
+                    let p = egui::pos2(
+                        center.x + radius * angle.cos() - bounds_min.x,
+                        center.y + radius * angle.sin() - bounds_min.y,
+                    );
+                    pts.push(p);
+                }
+            }
+            crate::types::SelectionShape::Poly(poly_pts) => {
+                if !poly_pts.is_empty() {
+                    for p in poly_pts {
+                        pts.push(egui::pos2(p.x - bounds_min.x, p.y - bounds_min.y));
+                    }
+                    if poly_pts.first() != poly_pts.last() {
+                        let first = poly_pts[0];
+                        pts.push(egui::pos2(first.x - bounds_min.x, first.y - bounds_min.y));
+                    }
+                }
+            }
+        }
+    };
+    
+    push_shape(&mut pts, &sel.shape);
+    
+    for op in &sel.ops {
+        pts.push(egui::Pos2::new(f32::NAN, f32::NAN));
+        match op {
+            crate::types::SelectionOp::Add(sh) => push_shape(&mut pts, sh),
+            crate::types::SelectionOp::Subtract(sh) => push_shape(&mut pts, sh),
+        }
+    }
+    
+    pts
+}
+
 struct OwerlayerApp {
     pub edit_mode: bool,
     pub embed_url: String,
@@ -633,6 +683,7 @@ impl eframe::App for OwerlayerApp {
                             new_img.display_size = Some([bounds.width(), bounds.height()]);
                             new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                             new_img.show_source_rect = true;
+                            new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
                             new_img.shadow = self.settings.snip_shadow;
                             new_img.is_live = self.settings.snip_live;
                             new_img.blur = self.settings.blur_strength;
@@ -658,6 +709,7 @@ impl eframe::App for OwerlayerApp {
                             new_img.display_size = Some([bounds.width(), bounds.height()]);
                             new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                             new_img.show_source_rect = true;
+                            new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
                             new_img.shadow = self.settings.snip_shadow;
                             new_img.is_live = self.settings.snip_live;
                             new_img.blur = self.settings.blur_strength;
@@ -824,7 +876,7 @@ impl eframe::App for OwerlayerApp {
             println!("DEBUG: Frame {} | show_ui=true | edit_mode={} | rasterize_phase={} | req={:?}", self.frame_count, self.edit_mode, self.rasterize_phase, self.project.rasterize_request.is_some());
             overlay::render_mode_indicator(ctx, self.edit_mode, self.settings.hotkey.display_name(), self.settings.toggle_mode, &self.settings, &self.owl_icon);
             let mut embed_trigger = false;
-            render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger, &mut self.show_history_panel, &mut self.request_history_push);
+            render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger, &mut self.show_history_panel, &mut self.request_history_push, &mut self.filters_open);
             if embed_trigger { self.handle_embed_trigger(); }
             
             render_filter_menu(ctx, &mut self.project, &mut self.settings, &mut self.filters_open);

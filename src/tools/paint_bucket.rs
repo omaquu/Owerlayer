@@ -201,10 +201,6 @@ pub fn paint_bucket_flood_fill(
     let h = img.size[1] as i32;
     if start_x < 0 || start_x >= w || start_y < 0 || start_y >= h { return; }
     
-    if target_color == fill_color {
-        return;
-    }
-    
     let dw = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
     let dh = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
     let scale_x = dw / img.size[0] as f32;
@@ -215,6 +211,35 @@ pub fn paint_bucket_flood_fill(
     let sx = img.scale.x; let sy = img.scale.y;
     let kx = img.skew.x; let ky = img.skew.y;
     let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+
+    if let Some(sel) = selection {
+        for y in 0..h {
+            for x in 0..w {
+                let idx = (y * w + x) as usize;
+                let pixel_idx = idx * 4;
+                
+                let rel_x = (x as f32 - img.size[0] as f32 * 0.5) * scale_x;
+                let rel_y = (y as f32 - img.size[1] as f32 * 0.5) * scale_y;
+                let px_rot = rel_x * sx + rel_y * sy * kx;
+                let py_rot = rel_y * sy + rel_x * sx * ky;
+                let world_x = center.x + px_rot * cos - py_rot * sin;
+                let world_y = center.y + py_rot * cos + px_rot * sin;
+                let world_pos = egui::pos2(world_x, world_y);
+                
+                if sel.contains(world_pos) {
+                    img.pixels[pixel_idx] = fill_color[0];
+                    img.pixels[pixel_idx + 1] = fill_color[1];
+                    img.pixels[pixel_idx + 2] = fill_color[2];
+                    img.pixels[pixel_idx + 3] = fill_color[3];
+                }
+            }
+        }
+        return;
+    }
+
+    if target_color == fill_color {
+        return;
+    }
 
     let mut stack = vec![(start_x, start_y)];
     let mut visited = vec![false; (w * h) as usize];

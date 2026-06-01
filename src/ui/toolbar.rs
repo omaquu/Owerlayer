@@ -332,6 +332,7 @@ pub fn render_photoshop_panel(
     embed_trigger: &mut bool,
     show_history_panel: &mut bool,
     request_history_push: &mut Option<String>,
+    filters_open: &mut Option<usize>,
 ) {
     let main_tools = vec![
         Tool::Move, Tool::Brush, Tool::Eraser, Tool::PaintBucket, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur, Tool::Embed,
@@ -372,7 +373,7 @@ pub fn render_photoshop_panel(
                 ui.add(egui::Separator::default().vertical());
                 ui.vertical(|ui| {
                     ui.set_width(120.0);
-                    render_tool_options(ui, active_tool, settings, project, true, embed_url, embed_trigger, request_history_push);
+                    render_tool_options(ui, active_tool, settings, project, true, embed_url, embed_trigger, request_history_push, filters_open);
                 });
             });
         } else {
@@ -393,7 +394,7 @@ pub fn render_photoshop_panel(
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.set_height(24.0);
-                    render_tool_options(ui, active_tool, settings, project, false, embed_url, embed_trigger, request_history_push);
+                    render_tool_options(ui, active_tool, settings, project, false, embed_url, embed_trigger, request_history_push, filters_open);
                 });
             });
         }
@@ -409,7 +410,7 @@ pub fn render_photoshop_panel(
     }
 }
 
-pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, _is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool, request_history_push: &mut Option<String>) {
+pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, _is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool, request_history_push: &mut Option<String>, filters_open: &mut Option<usize>) {
     ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
     
     if !matches!(active_tool, Tool::Move | Tool::Mirror | Tool::Embed) {
@@ -622,115 +623,158 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Move => {
-            ui.horizontal_wrapped(|ui| {
+            ui.vertical(|ui| {
                 if let Some(sel) = project.selected_object {
-                    if ui.button(egui::RichText::new("✖").color(egui::Color32::RED)).on_hover_text("Delete Selected (X)").clicked() {
-                        let layer = &mut project.layers[sel.layer_idx];
-                        match sel.object_type {
-                            ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
-                            ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
-                            ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
+                    ui.horizontal(|ui| {
+                        if ui.button(egui::RichText::new("✖").color(egui::Color32::RED)).on_hover_text("Delete Selected (X)").clicked() {
+                            let layer = &mut project.layers[sel.layer_idx];
+                            match sel.object_type {
+                                ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
+                                ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
+                                ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
+                            }
+                            project.selected_object = None;
                         }
-                        project.selected_object = None;
-                    }
-                    ui.separator();
-                    
-                    if ui.button("⟳").on_hover_text("Rotate 90").clicked() {
-                        let layer = &mut project.layers[sel.layer_idx];
-                        match sel.object_type {
-                            ObjectType::Image => { layer.placed_images[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
-                            ObjectType::Stroke => { layer.strokes[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
-                            ObjectType::Text => { layer.text_annotations[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
-                        }
-                        *request_history_push = Some("Rotate".into());
-                    }
-                    if ui.button("↔").on_hover_text("Flip H").clicked() {
-                        let layer = &mut project.layers[sel.layer_idx];
-                        match sel.object_type {
-                            ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_h = !layer.placed_images[sel.object_idx].flipped_h; }
-                            ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_h = !layer.strokes[sel.object_idx].flipped_h; }
-                            ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_h = !layer.text_annotations[sel.object_idx].flipped_h; }
-                        }
-                        *request_history_push = Some("Flip H".into());
-                    }
-                    if ui.button("↕").on_hover_text("Flip V").clicked() {
-                        let layer = &mut project.layers[sel.layer_idx];
-                        match sel.object_type {
-                            ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_v = !layer.placed_images[sel.object_idx].flipped_v; }
-                            ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_v = !layer.strokes[sel.object_idx].flipped_v; }
-                            ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_v = !layer.text_annotations[sel.object_idx].flipped_v; }
-                        }
-                        *request_history_push = Some("Flip V".into());
-                    }
-                    ui.separator();
-
-                    // Opacity
-                    ui.label("Op:");
-                    let mut op = match sel.object_type {
-                        ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity,
-                        ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity,
-                        ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity,
-                    } * 100.0;
-                    if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).suffix("%")).changed() {
-                        let final_op = op / 100.0;
-                        match sel.object_type {
-                            ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity = final_op,
-                            ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity = final_op,
-                            ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity = final_op,
-                        }
-                    }
-                    ui.separator();
-
-                    // Blur strength
-                    // ui.label("Blur:");
-                    let mut bl = match sel.object_type {
-                        ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur,
-                        ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur,
-                        ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur,
-                    };
-                    let mut bl_slider = bl.max(0.0);
-                    if ui.add(egui::DragValue::new(&mut bl_slider).range(0.0..=300.0).prefix("Blur: ")).changed() {
-                        match sel.object_type {
-                            ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur = bl_slider,
-                            ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur = bl_slider,
-                            ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur = bl_slider,
-                        }
-                    }
-                    
-                    // Blur styles when object is selected and has blur > 0.1:
-                    let blur_val = match sel.object_type {
-                        ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur,
-                        ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur,
-                        ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur,
-                    };
-                    if blur_val > 0.1 {
                         ui.separator();
-                        match sel.object_type {
+                        
+                        if ui.button("⟳").on_hover_text("Rotate 90").clicked() {
+                            let layer = &mut project.layers[sel.layer_idx];
+                            match sel.object_type {
+                                ObjectType::Image => { layer.placed_images[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
+                                ObjectType::Stroke => { layer.strokes[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
+                                ObjectType::Text => { layer.text_annotations[sel.object_idx].rotation += std::f32::consts::PI / 2.0; }
+                            }
+                            *request_history_push = Some("Rotate".into());
+                        }
+                        if ui.button("↔").on_hover_text("Flip H").clicked() {
+                            let layer = &mut project.layers[sel.layer_idx];
+                            match sel.object_type {
+                                ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_h = !layer.placed_images[sel.object_idx].flipped_h; }
+                                ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_h = !layer.strokes[sel.object_idx].flipped_h; }
+                                ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_h = !layer.text_annotations[sel.object_idx].flipped_h; }
+                            }
+                            *request_history_push = Some("Flip H".into());
+                        }
+                        if ui.button("↕").on_hover_text("Flip V").clicked() {
+                            let layer = &mut project.layers[sel.layer_idx];
+                            match sel.object_type {
+                                ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_v = !layer.placed_images[sel.object_idx].flipped_v; }
+                                ObjectType::Stroke => { layer.strokes[sel.object_idx].flipped_v = !layer.strokes[sel.object_idx].flipped_v; }
+                                ObjectType::Text => { layer.text_annotations[sel.object_idx].flipped_v = !layer.text_annotations[sel.object_idx].flipped_v; }
+                            }
+                            *request_history_push = Some("Flip V".into());
+                        }
+                        ui.separator();
+
+                        // Opacity
+                        ui.label("Op:");
+                        let mut op = match sel.object_type {
+                            ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity,
+                            ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity,
+                            ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity,
+                        } * 100.0;
+                        if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).suffix("%")).changed() {
+                            let final_op = op / 100.0;
+                            match sel.object_type {
+                                ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity = final_op,
+                                ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity = final_op,
+                                ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity = final_op,
+                            }
+                        }
+                        ui.separator();
+                        
+                        if ui.button("⎌").on_hover_text("Reset Transforms").clicked() {
+                            let layer = &mut project.layers[sel.layer_idx];
+                            match sel.object_type {
+                                ObjectType::Image => { let img = &mut layer.placed_images[sel.object_idx]; img.rotation = 0.0; img.skew = egui::Vec2::ZERO; img.perspective = [egui::Vec2::ZERO; 4]; }
+                                ObjectType::Stroke => { let s = &mut layer.strokes[sel.object_idx]; s.rotation = 0.0; s.skew = egui::Vec2::ZERO; s.perspective = [egui::Vec2::ZERO; 4]; }
+                                ObjectType::Text => { let t = &mut layer.text_annotations[sel.object_idx]; t.rotation = 0.0; t.skew = egui::Vec2::ZERO; t.perspective = [egui::Vec2::ZERO; 4]; }
+                            }
+                            *request_history_push = Some("Reset Transforms".into());
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        // Quick FX button
+                        let has_fx = match sel.object_type {
                             ObjectType::Image => {
-                                let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
-                                ui.selectable_value(&mut img.blur_effect, BlurEffect::Gaussian, "Gaus");
-                                ui.selectable_value(&mut img.blur_effect, BlurEffect::Pixelate, "Pix");
-                                ui.selectable_value(&mut img.blur_effect, BlurEffect::Glitch, "VHS");
+                                let img = &project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                img.shadow || img.glow || img.outline || img.blur > 0.0 || img.grayscale || img.invert || img.sepia
                             }
                             ObjectType::Stroke => {
-                                let s = &mut project.layers[sel.layer_idx].strokes[sel.object_idx];
-                                ui.selectable_value(&mut s.blur_effect, BlurEffect::Gaussian, "Gaus");
-                                ui.selectable_value(&mut s.blur_effect, BlurEffect::Pixelate, "Pix");
-                                ui.selectable_value(&mut s.blur_effect, BlurEffect::Glitch, "VHS");
+                                let s = &project.layers[sel.layer_idx].strokes[sel.object_idx];
+                                s.shadow || s.glow || s.outline || s.grayscale || s.invert || s.sepia
                             }
                             ObjectType::Text => {
-                                let t = &mut project.layers[sel.layer_idx].text_annotations[sel.object_idx];
-                                ui.selectable_value(&mut t.blur_effect, BlurEffect::Gaussian, "Gaus");
-                                ui.selectable_value(&mut t.blur_effect, BlurEffect::Pixelate, "Pix");
-                                ui.selectable_value(&mut t.blur_effect, BlurEffect::Glitch, "VHS");
+                                let t = &project.layers[sel.layer_idx].text_annotations[sel.object_idx];
+                                t.shadow || t.glow || t.outline || t.grayscale || t.invert || t.sepia
+                            }
+                        };
+                        let mut fx_btn = egui::Button::new(egui::RichText::new("fx").strong());
+                        if has_fx {
+                            fx_btn = fx_btn.fill(egui::Color32::from_rgb(100, 140, 200));
+                        }
+                        if ui.add(fx_btn).on_hover_text("Object FX").clicked() {
+                            settings.fx_open = Some(sel);
+                        }
+
+                        // Quick Rasterize button
+                        if ui.button("📷").on_hover_text("Rasterize Object").clicked() {
+                            project.rasterize_request = Some(crate::types::RasterizeRequest {
+                                layer_idx: sel.layer_idx,
+                                object_idx: Some((sel.object_type, sel.object_idx)),
+                            });
+                        }
+                        ui.separator();
+
+                        // Blur strength
+                        let mut bl = match sel.object_type {
+                            ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur,
+                            ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur,
+                            ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur,
+                        };
+                        let mut bl_slider = bl.max(0.0);
+                        if ui.add(egui::DragValue::new(&mut bl_slider).range(0.0..=300.0).prefix("Blur: ")).changed() {
+                            match sel.object_type {
+                                ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur = bl_slider,
+                                ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur = bl_slider,
+                                ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur = bl_slider,
                             }
                         }
-                    }
-                    ui.separator();
-                    
-                    if let ObjectType::Image = sel.object_type {
-                        let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
-                        ui.horizontal(|ui| {
+                        
+                        // Blur styles when object is selected and has blur > 0.1:
+                        let blur_val = match sel.object_type {
+                            ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur,
+                            ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur,
+                            ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur,
+                        };
+                        if blur_val > 0.1 {
+                            ui.separator();
+                            match sel.object_type {
+                                ObjectType::Image => {
+                                    let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                    ui.selectable_value(&mut img.blur_effect, BlurEffect::Gaussian, "Gaus");
+                                    ui.selectable_value(&mut img.blur_effect, BlurEffect::Pixelate, "Pix");
+                                    ui.selectable_value(&mut img.blur_effect, BlurEffect::Glitch, "VHS");
+                                }
+                                ObjectType::Stroke => {
+                                    let s = &mut project.layers[sel.layer_idx].strokes[sel.object_idx];
+                                    ui.selectable_value(&mut s.blur_effect, BlurEffect::Gaussian, "Gaus");
+                                    ui.selectable_value(&mut s.blur_effect, BlurEffect::Pixelate, "Pix");
+                                    ui.selectable_value(&mut s.blur_effect, BlurEffect::Glitch, "VHS");
+                                }
+                                ObjectType::Text => {
+                                    let t = &mut project.layers[sel.layer_idx].text_annotations[sel.object_idx];
+                                    ui.selectable_value(&mut t.blur_effect, BlurEffect::Gaussian, "Gaus");
+                                    ui.selectable_value(&mut t.blur_effect, BlurEffect::Pixelate, "Pix");
+                                    ui.selectable_value(&mut t.blur_effect, BlurEffect::Glitch, "VHS");
+                                }
+                            }
+                        }
+                        
+                        if let ObjectType::Image = sel.object_type {
+                            let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                            ui.separator();
                             if ui.selectable_label(!img.is_live, "Static").clicked() { img.is_live = false; }
                             if ui.selectable_label(img.is_live, "Live").clicked() {
                                 img.is_live = true;
@@ -739,31 +783,62 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                                     img.show_source_rect = true;
                                 }
                             }
-                            if img.is_live {
+                            if img.is_live || img.source_rect.is_some() {
                                 ui.checkbox(&mut img.show_source_rect, "Show Source");
                             }
-                        });
-                        ui.separator();
-                    }
-                    if ui.button("⎌").on_hover_text("Reset Transforms").clicked() {
-                        let layer = &mut project.layers[sel.layer_idx];
-                        match sel.object_type {
-                            ObjectType::Image => { let img = &mut layer.placed_images[sel.object_idx]; img.rotation = 0.0; img.skew = egui::Vec2::ZERO; img.perspective = [egui::Vec2::ZERO; 4]; }
-                            ObjectType::Stroke => { let s = &mut layer.strokes[sel.object_idx]; s.rotation = 0.0; s.skew = egui::Vec2::ZERO; s.perspective = [egui::Vec2::ZERO; 4]; }
-                            ObjectType::Text => { let t = &mut layer.text_annotations[sel.object_idx]; t.rotation = 0.0; t.skew = egui::Vec2::ZERO; t.perspective = [egui::Vec2::ZERO; 4]; }
                         }
-                        *request_history_push = Some("Reset Transforms".into());
-                    }
+                    });
                 } else {
-                    ui.label("Active Layer:");
-                    let layer = &mut project.layers[project.active_layer];
-                    let mut op = layer.opacity * 100.0;
-                    if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).prefix("Op: ").suffix("%")).changed() {
-                        layer.opacity = op / 100.0;
-                    }
-                    if ui.button("⎌").on_hover_text("Reset Layer Transforms").clicked() {
-                        crate::utils::translate_layer(layer, -crate::utils::layer_bounds(layer).map(|b| b.min.to_vec2()).unwrap_or(egui::Vec2::ZERO));
-                    }
+                    // LAYER MODE
+                    let active_layer_idx = project.active_layer;
+                    ui.horizontal(|ui| {
+                        ui.label("Active Layer:");
+                        let layer = &mut project.layers[active_layer_idx];
+                        let mut op = layer.opacity * 100.0;
+                        if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).prefix("Op: ").suffix("%")).changed() {
+                            layer.opacity = op / 100.0;
+                        }
+                        if ui.button("⎌").on_hover_text("Reset Layer Transforms").clicked() {
+                            crate::utils::translate_layer(layer, -crate::utils::layer_bounds(layer).map(|b| b.min.to_vec2()).unwrap_or(egui::Vec2::ZERO));
+                        }
+                    });
+                    
+                    ui.horizontal(|ui| {
+                        let layer = &mut project.layers[active_layer_idx];
+                        
+                        // FX shortcut button
+                        let has_fx = layer.shadow || layer.glow || layer.outline || layer.blur > 0.0 || layer.grayscale || layer.invert || layer.sepia;
+                        let mut fx_btn = egui::Button::new(egui::RichText::new("fx").strong());
+                        if has_fx {
+                            fx_btn = fx_btn.fill(egui::Color32::from_rgb(100, 140, 200));
+                        }
+                        if ui.add(fx_btn).on_hover_text("Layer FX").clicked() {
+                            *filters_open = Some(active_layer_idx);
+                        }
+
+                        // Rasterize Layer shortcut button
+                        if ui.button("📷").on_hover_text("Rasterize Layer").clicked() {
+                            project.rasterize_request = Some(crate::types::RasterizeRequest {
+                                layer_idx: active_layer_idx,
+                                object_idx: None,
+                            });
+                        }
+                        ui.separator();
+
+                        // Layer Blur slider
+                        let mut bl_slider = layer.blur.max(0.0);
+                        if ui.add(egui::DragValue::new(&mut bl_slider).range(0.0..=300.0).prefix("Blur: ")).changed() {
+                            layer.blur = bl_slider;
+                        }
+
+                        // Blur styles when layer blur > 0.1:
+                        if layer.blur > 0.1 {
+                            ui.separator();
+                            ui.selectable_value(&mut layer.blur_effect, BlurEffect::Gaussian, "Gaus");
+                            ui.selectable_value(&mut layer.blur_effect, BlurEffect::Pixelate, "Pix");
+                            ui.selectable_value(&mut layer.blur_effect, BlurEffect::Glitch, "VHS");
+                        }
+                    });
                 }
             });
         }
@@ -859,7 +934,8 @@ pub fn render_toolbar(
     embed_trigger: &mut bool,
     show_history_panel: &mut bool,
     request_history_push: &mut Option<String>,
+    filters_open: &mut Option<usize>,
 ) {
-    render_photoshop_panel(ctx, active_tool, settings, show_settings_panel, show_layers_panel, show_exit_dialog, project, embed_url, embed_trigger, show_history_panel, request_history_push);
+    render_photoshop_panel(ctx, active_tool, settings, show_settings_panel, show_layers_panel, show_exit_dialog, project, embed_url, embed_trigger, show_history_panel, request_history_push, filters_open);
 }
 

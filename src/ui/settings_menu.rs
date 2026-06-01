@@ -78,6 +78,7 @@ pub fn render_settings_window(
             ui.checkbox(&mut settings.keep_ui_visible, "Keep toolbar visible in pass-through");
             ui.checkbox(&mut settings.hide_edit_info, "Hide Edit Mode Info Text");
             ui.checkbox(&mut settings.prompt_delete_layer, "Prompt before deleting layer");
+            ui.checkbox(&mut settings.show_screen_controls, "Show On-Screen Layer Overlay Controls");
             
             ui.add_space(4.0);
             let mut auto_new = settings.auto_new_layer.unwrap_or(true);

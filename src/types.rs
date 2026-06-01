@@ -874,6 +874,8 @@ pub struct Settings {
     pub spray_density: u32,
     #[serde(default = "default_highlight_opacity")]
     pub highlight_opacity: f32,
+    #[serde(default = "default_show_screen_controls")]
+    pub show_screen_controls: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -897,6 +899,7 @@ fn default_object_fx_menu_pos() -> egui::Pos2 { egui::pos2(840.0, 60.0) }
 fn default_creation_prompt_pos() -> egui::Pos2 { egui::pos2(500.0, 300.0) }
 fn default_spray_density() -> u32 { 40 }
 fn default_highlight_opacity() -> f32 { 0.4 }
+fn default_show_screen_controls() -> bool { true }
 
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
@@ -987,6 +990,7 @@ impl Default for Settings {
             saved_embed_urls: Vec::new(),
             spray_density: default_spray_density(),
             highlight_opacity: default_highlight_opacity(),
+            show_screen_controls: default_show_screen_controls(),
         }
     }
 }
