@@ -544,25 +544,67 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Cut => {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Rect, "Rect");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Circle, "Circ");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Star, "Star");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Heart, "Heart");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Lasso, "Lasso");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::Polygon, "Poly");
-                ui.selectable_value(&mut settings.cut_mode, CutMode::MagicWand, "Wand");
-                ui.add(egui::Separator::default().vertical());
-                ui.checkbox(&mut settings.inverted_cut, "Invert");
-                if settings.cut_mode == CutMode::MagicWand {
-                    ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: "));
-                }
-                if project.marquee_selection.is_some() {
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Rect, "Rect");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Circle, "Circ");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Star, "Star");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Heart, "Heart");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Lasso, "Lasso");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Polygon, "Poly");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::MagicWand, "Wand");
                     ui.add(egui::Separator::default().vertical());
-                    if ui.add(egui::Button::new(egui::RichText::new("✂ Snip").color(egui::Color32::from_rgb(100, 220, 100)).strong())).clicked() {
-                        project.request_copy = true;
+                    ui.checkbox(&mut settings.inverted_cut, "Invert");
+                    if settings.cut_mode == CutMode::MagicWand {
+                        ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: "));
                     }
-                }
+                });
+                
+                ui.horizontal(|ui| {
+                    let new_sel = settings.selection_mode == SelectionMode::New;
+                    let add_sel = settings.selection_mode == SelectionMode::Add;
+                    let sub_sel = settings.selection_mode == SelectionMode::Subtract;
+                    
+                    let new_color = if new_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                    let add_color = if add_sel { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
+                    let sub_color = if sub_sel { egui::Color32::from_rgb(255, 100, 100) } else { egui::Color32::from_gray(140) };
+                    
+                    if ui.add(egui::Button::new(egui::RichText::new("🟥 New").color(new_color).strong()).selected(new_sel)).clicked() { settings.selection_mode = SelectionMode::New; }
+                    if ui.add(egui::Button::new(egui::RichText::new("➕ Add").color(add_color).strong()).selected(add_sel)).clicked() { settings.selection_mode = SelectionMode::Add; }
+                    if ui.add(egui::Button::new(egui::RichText::new("➖ Subtract").color(sub_color).strong()).selected(sub_sel)).clicked() { settings.selection_mode = SelectionMode::Subtract; }
+                    
+                    ui.add(egui::Separator::default().vertical());
+                    
+                    let static_sel = !settings.snip_live;
+                    let live_sel = settings.snip_live;
+                    let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                    let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                    if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
+                    if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
+                });
+                
+                ui.horizontal(|ui| {
+                    ui.add(egui::Slider::new(&mut settings.blur_strength, 0.0..=300.0).prefix("Blur: "));
+                    if settings.blur_strength > 0.1 {
+                        ui.add(egui::Separator::default().vertical());
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
+                    }
+                    
+                    if project.marquee_selection.is_some() {
+                        ui.add(egui::Separator::default().vertical());
+                        if ui.add(egui::Button::new(egui::RichText::new("✂ Snip").color(egui::Color32::from_rgb(100, 220, 100)).strong())).clicked() {
+                            project.request_copy = true;
+                        }
+                        if ui.add(egui::Button::new(egui::RichText::new("✂ Cut").color(egui::Color32::from_rgb(255, 180, 50)).strong())).clicked() {
+                            project.request_cut = true;
+                        }
+                        if ui.add(egui::Button::new(egui::RichText::new("💧 Blur").color(egui::Color32::from_rgb(100, 180, 255)).strong())).clicked() {
+                            project.request_blur = true;
+                        }
+                    }
+                });
             });
         }
         Tool::Blur => {

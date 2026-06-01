@@ -254,11 +254,7 @@ pub fn paint_bucket_flood_fill(
                 let world_y = center.y + py_rot * cos + px_rot * sin;
                 let world_pos = egui::pos2(world_x, world_y);
                 
-                in_selection = match &sel.shape {
-                    SelectionShape::Rect(r) => r.contains(world_pos),
-                    SelectionShape::Circle { center, radius } => world_pos.distance(*center) <= *radius,
-                    SelectionShape::Poly(pts) => is_inside_poly(pts, world_pos),
-                };
+                in_selection = sel.contains(world_pos);
             }
 
             if in_selection {

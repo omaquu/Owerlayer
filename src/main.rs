@@ -585,31 +585,67 @@ impl eframe::App for OwerlayerApp {
                 self.project.save();
             }
             let trigger_copy = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C)) || self.project.request_copy;
-            if trigger_copy {
+            let trigger_cut = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::X)) || self.project.request_cut;
+            let trigger_blur = self.project.request_blur;
+            
+            if trigger_copy || trigger_cut || trigger_blur {
                 self.project.request_copy = false;
+                self.project.request_cut = false;
+                self.project.request_blur = false;
+                
                 if let Some(sel) = &self.project.marquee_selection {
                     let ppp = ctx.pixels_per_point();
-                    let bounds = sel.shape.bounds();
+                    let bounds = sel.bounds();
                     let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                     let render_offset = if self.settings.use_absolute_screen_coords {
                         egui::vec2(wx as f32 / ppp, wy as f32 / ppp)
                     } else {
                         egui::Vec2::ZERO
                     };
-                    // Bounds is in world space! Translate it to screen/window space using render_offset
                     let screen_bounds = bounds.translate(-render_offset);
                     let sw = (screen_bounds.width() * ppp).round() as i32;
                     let sh = (screen_bounds.height() * ppp).round() as i32;
                     if sw > 5 && sh > 5 {
                         let sx = (screen_bounds.min.x * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
                         let sy = (screen_bounds.min.y * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
-                        if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(&self.settings, sx, sy, sw, sh) {
-                            // Mask non-selected area to transparent
+                        
+                        let captured_pixels = if trigger_copy || trigger_cut || !self.settings.snip_live {
+                            crate::tools::snip::capture_screen_rect_safe(&self.settings, sx, sy, sw, sh)
+                        } else {
+                            None
+                        };
+                        
+                        let mut mask = vec![255u8; sw as usize * sh as usize];
+                        for py in 0..sh as usize {
+                            for px in 0..sw as usize {
+                                let lp = screen_bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
+                                let wp = lp + render_offset;
+                                if !sel.contains(wp) {
+                                    mask[py * sw as usize + px] = 0;
+                                }
+                            }
+                        }
+                        
+                        let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                        let mut img = if trigger_blur {
+                            let pixels = captured_pixels.unwrap_or_default();
+                            let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
+                            new_img.display_size = Some([bounds.width(), bounds.height()]);
+                            new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                            new_img.show_source_rect = true;
+                            new_img.shadow = self.settings.snip_shadow;
+                            new_img.is_live = self.settings.snip_live;
+                            new_img.blur = self.settings.blur_strength;
+                            new_img.blur_effect = self.settings.blur_effect;
+                            new_img.mask = Some(mask);
+                            new_img.mask_dirty = true;
+                            new_img.name = format!("Blur Area {}", id % 100);
+                            new_img
+                        } else {
+                            let mut pixels = captured_pixels.unwrap_or_default();
                             for py in 0..sh as usize {
                                 for px in 0..sw as usize {
-                                    let lp = screen_bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
-                                    let wp = lp + render_offset;
-                                    if !sel.shape.contains(wp) {
+                                    if mask[py * sw as usize + px] == 0 {
                                         let idx = (py * sw as usize + px) * 4;
                                         if idx + 3 < pixels.len() {
                                             pixels[idx + 3] = 0;
@@ -617,33 +653,55 @@ impl eframe::App for OwerlayerApp {
                                     }
                                 }
                             }
-                            let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                            let mut img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
-                            img.display_size = Some([bounds.width(), bounds.height()]);
-                            img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
-                            img.show_source_rect = true;
-                            img.shadow = self.settings.snip_shadow;
-                            img.is_live = self.settings.snip_live;
-                            img.blur = self.settings.blur_strength;
-                            img.blur_effect = self.settings.blur_effect;
                             
-                            // Create transparency mask if not simple rectangular selection
-                            if !matches!(sel.shape, SelectionShape::Rect(_)) {
-                                let mut mask = vec![255u8; sw as usize * sh as usize];
-                                for py in 0..sh as usize {
-                                    for px in 0..sw as usize {
-                                        let lp = screen_bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
-                                        let wp = lp + render_offset;
-                                        if !sel.shape.contains(wp) {
-                                            mask[py * sw as usize + px] = 0;
-                                        }
-                                    }
-                                }
-                                img.mask = Some(mask);
+                            let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
+                            new_img.display_size = Some([bounds.width(), bounds.height()]);
+                            new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                            new_img.show_source_rect = true;
+                            new_img.shadow = self.settings.snip_shadow;
+                            new_img.is_live = self.settings.snip_live;
+                            new_img.blur = self.settings.blur_strength;
+                            new_img.blur_effect = self.settings.blur_effect;
+                            
+                            let is_rect = matches!(sel.shape, SelectionShape::Rect(_)) && sel.ops.is_empty();
+                            if !is_rect {
+                                new_img.mask = Some(mask);
+                                new_img.mask_dirty = true;
                             }
                             
-                            crate::winapi_utils::copy_image_to_clipboard(&img.pixels, img.size[0], img.size[1]);
-                            self.copied_image = Some(img);
+                            crate::winapi_utils::copy_image_to_clipboard(&new_img.pixels, new_img.size[0], new_img.size[1]);
+                            self.copied_image = Some(new_img.clone());
+                            new_img
+                        };
+                        
+                        if trigger_cut {
+                            self.history.push(&self.project, "Cut Selection");
+                            crate::tools::cut::erase_marquee_selection(&mut self.project, &self.settings);
+                        }
+                        
+                        let active_layer_idx = self.project.active_layer;
+                        if active_layer_idx < self.project.layers.len() {
+                            let is_locked = self.project.layers[active_layer_idx].locked;
+                            let ask_mode = self.settings.auto_new_layer.is_none();
+                            
+                            if is_locked || ask_mode {
+                                self.project.layers[active_layer_idx].placed_images.push(img);
+                                self.project.layers[active_layer_idx].expanded = true;
+                                self.layer_prompt_open = true;
+                            } else {
+                                self.project.layers[active_layer_idx].placed_images.push(img);
+                                self.project.layers[active_layer_idx].expanded = true;
+                                
+                                let action_name = if trigger_blur {
+                                    "Blur Area"
+                                } else if trigger_cut {
+                                    "Cut Selection"
+                                } else {
+                                    "Snip Selection"
+                                };
+                                self.history.push(&self.project, action_name);
+                                self.project.save();
+                            }
                         }
                     }
                 }
@@ -1174,7 +1232,7 @@ impl eframe::App for OwerlayerApp {
                                 let new_layer_idx = self.project.layers.len() - 1;
                                 let prev_layer_idx = self.project.active_layer;
                                 if prev_layer_idx < new_layer_idx {
-                                    if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed {
+                                                                    if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed || self.active_tool == overlay::Tool::Cut {
                                         if let Some(img) = self.project.layers[prev_layer_idx].placed_images.pop() {
                                             self.project.layers[new_layer_idx].placed_images.push(img);
                                         }
@@ -1263,7 +1321,7 @@ impl eframe::App for OwerlayerApp {
                 } else if close_prompt {
                     self.pending_stroke = None;
                     self.pending_text_to_add = None;
-                    if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed {
+                    if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed || self.active_tool == overlay::Tool::Cut {
                         let layer_idx = self.project.active_layer;
                         if layer_idx < self.project.layers.len() {
                             self.project.layers[layer_idx].placed_images.pop();

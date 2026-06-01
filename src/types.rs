@@ -81,9 +81,69 @@ impl SelectionShape {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum SelectionOp {
+    Add(SelectionShape),
+    Subtract(SelectionShape),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct MarqueeSelection {
     pub shape: SelectionShape,
+    pub ops: Vec<SelectionOp>,
+}
+
+impl MarqueeSelection {
+    pub fn contains(&self, p: egui::Pos2) -> bool {
+        let mut inside = self.shape.contains(p);
+        for op in &self.ops {
+            match op {
+                SelectionOp::Add(sh) => {
+                    if sh.contains(p) {
+                        inside = true;
+                    }
+                }
+                SelectionOp::Subtract(sh) => {
+                    if sh.contains(p) {
+                        inside = false;
+                    }
+                }
+            }
+        }
+        inside
+    }
+
+    pub fn bounds(&self) -> egui::Rect {
+        let mut r = self.shape.bounds();
+        for op in &self.ops {
+            match op {
+                SelectionOp::Add(sh) => {
+                    r = r.union(sh.bounds());
+                }
+                SelectionOp::Subtract(_) => {}
+            }
+        }
+        r
+    }
+
+    pub fn translate(&mut self, delta: egui::Vec2) {
+        match &mut self.shape {
+            SelectionShape::Rect(r) => { *r = r.translate(delta); }
+            SelectionShape::Circle { center, .. } => { *center += delta; }
+            SelectionShape::Poly(pts) => { for p in pts { *p += delta; } }
+        }
+        for op in &mut self.ops {
+            match op {
+                SelectionOp::Add(sh) | SelectionOp::Subtract(sh) => {
+                    match sh {
+                        SelectionShape::Rect(r) => { *r = r.translate(delta); }
+                        SelectionShape::Circle { center, .. } => { *center += delta; }
+                        SelectionShape::Poly(pts) => { for p in pts { *p += delta; } }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -663,10 +723,15 @@ fn default_glow_color() -> [u8; 4] { [255, 255, 255, 255] }
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EraserMode { Stroke, Pixel }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub enum CutMode { Rect, Circle, Lasso, Polygon, MagicWand, Star, Heart }
 
 impl Default for CutMode { fn default() -> Self { Self::Rect } }
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub enum SelectionMode { New, Add, Subtract }
+
+impl Default for SelectionMode { fn default() -> Self { Self::New } }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -695,6 +760,8 @@ pub struct Settings {
     pub text_stroke_width: f32,
     #[serde(default)]
     pub cut_mode: CutMode,
+    #[serde(default)]
+    pub selection_mode: SelectionMode,
     #[serde(default = "default_bg_color")]
     pub background_color: [u8; 4],
     #[serde(default)]
@@ -863,6 +930,7 @@ impl Default for Settings {
             text_outline: false,
             text_stroke_width: 1.0,
             cut_mode: CutMode::Rect,
+            selection_mode: SelectionMode::New,
             background_color: [0, 0, 0, 0],
             stroke_width: default_stroke_width(),
             shape_type: ShapeType::Rect,

@@ -804,6 +804,13 @@ pub fn render_canvas(
                 if points.len() < 2 { return; }
                 let dash_len = 6.0f32;
                 let speed = 15.0f32;
+                
+                // First draw solid black line under the path to ensure perfect contrast and prevent flashing
+                painter.add(egui::Shape::line(
+                    points.to_vec(),
+                    egui::Stroke::new(2.0, egui::Color32::BLACK)
+                ));
+                
                 let mut current_offset = (time as f32 * speed) % (dash_len * 2.0);
                 let mut draw_white = current_offset < dash_len;
                 if !draw_white {
@@ -827,8 +834,9 @@ pub fn render_canvas(
                         let start = p1 + dir * t;
                         let end = p1 + dir * (t + step);
                         
-                        let color = if draw_white { egui::Color32::WHITE } else { egui::Color32::BLACK };
-                        painter.line_segment([start, end], egui::Stroke::new(1.2, color));
+                        if draw_white {
+                            painter.line_segment([start, end], egui::Stroke::new(1.2, egui::Color32::WHITE));
+                        }
                         
                         t += step;
                         current_offset += step;
@@ -840,32 +848,43 @@ pub fn render_canvas(
                 }
             };
 
-            match &sel.shape {
-                crate::types::SelectionShape::Rect(rect) => {
-                    let r = rect.translate(-ctx.render_offset);
-                    let pts = vec![
-                        r.left_top(),
-                        r.right_top(),
-                        r.right_bottom(),
-                        r.left_bottom(),
-                        r.left_top(),
-                    ];
-                    draw_dashed_path(&painter, &pts, time);
-                }
-                crate::types::SelectionShape::Circle { center, radius } => {
-                    let c = *center - ctx.render_offset;
-                    let mut pts = Vec::with_capacity(61);
-                    for i in 0..=60 {
-                        let angle = i as f32 * std::f32::consts::TAU / 60.0;
-                        pts.push(c + egui::vec2(angle.cos() * radius, angle.sin() * radius));
+            let draw_selection_shape = |painter: &egui::Painter, shape: &crate::types::SelectionShape, render_offset: egui::Vec2, time: f64| {
+                match shape {
+                    crate::types::SelectionShape::Rect(rect) => {
+                        let r = rect.translate(-render_offset);
+                        let pts = vec![
+                            r.left_top(),
+                            r.right_top(),
+                            r.right_bottom(),
+                            r.left_bottom(),
+                            r.left_top(),
+                        ];
+                        draw_dashed_path(painter, &pts, time);
                     }
-                    draw_dashed_path(&painter, &pts, time);
+                    crate::types::SelectionShape::Circle { center, radius } => {
+                        let c = *center - render_offset;
+                        let mut pts = Vec::with_capacity(61);
+                        for i in 0..=60 {
+                            let angle = i as f32 * std::f32::consts::TAU / 60.0;
+                            pts.push(c + egui::vec2(angle.cos() * radius, angle.sin() * radius));
+                        }
+                        draw_dashed_path(painter, &pts, time);
+                    }
+                    crate::types::SelectionShape::Poly(pts) => {
+                        if pts.len() >= 2 {
+                            let mut closed_pts: Vec<egui::Pos2> = pts.iter().map(|&p| p - render_offset).collect();
+                            closed_pts.push(pts[0] - render_offset);
+                            draw_dashed_path(painter, &closed_pts, time);
+                        }
+                    }
                 }
-                crate::types::SelectionShape::Poly(pts) => {
-                    if pts.len() >= 2 {
-                        let mut closed_pts: Vec<egui::Pos2> = pts.iter().map(|&p| p - ctx.render_offset).collect();
-                        closed_pts.push(pts[0] - ctx.render_offset);
-                        draw_dashed_path(&painter, &closed_pts, time);
+            };
+
+            draw_selection_shape(&painter, &sel.shape, ctx.render_offset, time);
+            for op in &sel.ops {
+                match op {
+                    crate::types::SelectionOp::Add(sh) | crate::types::SelectionOp::Subtract(sh) => {
+                        draw_selection_shape(&painter, sh, ctx.render_offset, time);
                     }
                 }
             }

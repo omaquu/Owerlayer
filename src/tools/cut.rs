@@ -3,6 +3,37 @@ use crate::utils::*;
 use crate::overlay::*;
 use crate::tools::ToolContext;
 
+fn set_marquee_selection(project: &mut crate::project::Project, settings: &crate::types::Settings, new_shape: SelectionShape) {
+    match settings.selection_mode {
+        crate::types::SelectionMode::New => {
+            project.marquee_selection = Some(MarqueeSelection {
+                shape: new_shape,
+                ops: Vec::new(),
+            });
+        }
+        crate::types::SelectionMode::Add => {
+            if let Some(sel) = &mut project.marquee_selection {
+                sel.ops.push(crate::types::SelectionOp::Add(new_shape));
+            } else {
+                project.marquee_selection = Some(MarqueeSelection {
+                    shape: new_shape,
+                    ops: Vec::new(),
+                });
+            }
+        }
+        crate::types::SelectionMode::Subtract => {
+            if let Some(sel) = &mut project.marquee_selection {
+                sel.ops.push(crate::types::SelectionOp::Subtract(new_shape));
+            } else {
+                project.marquee_selection = Some(MarqueeSelection {
+                    shape: new_shape,
+                    ops: Vec::new(),
+                });
+            }
+        }
+    }
+}
+
 pub fn update(ctx: &mut ToolContext) {
     if *ctx.layer_prompt_open { return; }
     if ctx.mouse.left_just_pressed {
@@ -30,11 +61,7 @@ pub fn update(ctx: &mut ToolContext) {
     if left_just_pressed {
         if let Some(sel) = &project.marquee_selection {
             let world_pos = pos + ctx.render_offset;
-            let inside = match &sel.shape {
-                SelectionShape::Rect(r) => r.contains(world_pos),
-                SelectionShape::Circle { center, radius } => world_pos.distance(*center) <= *radius,
-                SelectionShape::Poly(pts) => is_inside_poly(pts, world_pos),
-            };
+            let inside = sel.contains(world_pos);
             if inside {
                 *ctx.drag_state = 999; // Unique id for dragging selection outline
             }
@@ -44,11 +71,7 @@ pub fn update(ctx: &mut ToolContext) {
     if *ctx.drag_state == 999 {
         let delta = mouse.delta;
         if let Some(sel) = &mut project.marquee_selection {
-            match &mut sel.shape {
-                SelectionShape::Rect(r) => { *r = r.translate(delta); }
-                SelectionShape::Circle { center, .. } => { *center += delta; }
-                SelectionShape::Poly(pts) => { for p in pts { *p += delta; } }
-            }
+            sel.translate(delta);
         }
         if left_just_released {
             *ctx.drag_state = 0;
@@ -57,8 +80,15 @@ pub fn update(ctx: &mut ToolContext) {
     }
 
     // Clicking outside existing selection starts a new one
-    if left_just_pressed {
-        project.marquee_selection = None;
+    if left_just_pressed && settings.selection_mode == crate::types::SelectionMode::New {
+        let mut clicked_inside = false;
+        if let Some(sel) = &project.marquee_selection {
+            let world_pos = pos + ctx.render_offset;
+            clicked_inside = sel.contains(world_pos);
+        }
+        if !clicked_inside {
+            project.marquee_selection = None;
+        }
     }
 
     if mode == CutMode::Lasso {
@@ -68,9 +98,7 @@ pub fn update(ctx: &mut ToolContext) {
         }
         if left_just_released && current_stroke.len() >= 3 {
             let world_pts: Vec<egui::Pos2> = current_stroke.iter().map(|&p| p + ctx.render_offset).collect();
-            project.marquee_selection = Some(MarqueeSelection {
-                shape: SelectionShape::Poly(world_pts)
-            });
+            set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
             current_stroke.clear();
         }
     } else if mode == CutMode::Rect {
@@ -85,9 +113,7 @@ pub fn update(ctx: &mut ToolContext) {
                 let rect = egui::Rect::from_two_pos(start, pos);
                 if rect.width() > 2.0 && rect.height() > 2.0 {
                     let world_rect = rect.translate(ctx.render_offset);
-                    project.marquee_selection = Some(MarqueeSelection {
-                        shape: SelectionShape::Rect(world_rect)
-                    });
+                    set_marquee_selection(project, settings, SelectionShape::Rect(world_rect));
                 }
             }
         }
@@ -106,9 +132,7 @@ pub fn update(ctx: &mut ToolContext) {
                 let radius = start.distance(pos);
                 if radius > 5.0 {
                     let world_center = start + ctx.render_offset;
-                    project.marquee_selection = Some(MarqueeSelection {
-                        shape: SelectionShape::Circle { center: world_center, radius }
-                    });
+                    set_marquee_selection(project, settings, SelectionShape::Circle { center: world_center, radius });
                 }
             }
         }
@@ -122,9 +146,7 @@ pub fn update(ctx: &mut ToolContext) {
 
         if (right_clicked || enter_pressed || close_to_start) && !current_stroke.is_empty() {
             let world_pts: Vec<egui::Pos2> = current_stroke.iter().map(|&p| p + ctx.render_offset).collect();
-            project.marquee_selection = Some(MarqueeSelection {
-                shape: SelectionShape::Poly(world_pts)
-            });
+            set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
             current_stroke.clear();
         }
         if !current_stroke.is_empty() {
@@ -149,14 +171,11 @@ pub fn update(ctx: &mut ToolContext) {
                 if radius > 5.0 {
                     let pts = if mode == CutMode::Star { crate::utils::get_star_points(start, radius) } else { crate::utils::get_heart_points(start, radius) };
                     let world_pts: Vec<egui::Pos2> = pts.into_iter().map(|p| p + ctx.render_offset).collect();
-                    project.marquee_selection = Some(MarqueeSelection {
-                        shape: SelectionShape::Poly(world_pts)
-                    });
+                    set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
                 }
             }
         }
     } else if mode == CutMode::MagicWand {
-        // Magic wand remains direct pixel clearing for instant use
         if left_just_pressed {
             let layer = &mut project.layers[active_layer_idx];
             let mut clicked_on_img = false;
@@ -174,9 +193,7 @@ pub fn update(ctx: &mut ToolContext) {
                         if start_color[3] > 0 {
                             let pts = magic_wand_to_selection(img, px, py, start_color, settings.magic_wand_threshold);
                             if !pts.is_empty() {
-                                project.marquee_selection = Some(MarqueeSelection {
-                                    shape: SelectionShape::Poly(pts)
-                                });
+                                set_marquee_selection(project, settings, SelectionShape::Poly(pts));
                             }
                             clicked_on_img = true;
                             break;
@@ -249,9 +266,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         let logical_pos = rect.min + egui::vec2(x as f32 / ppp, y as f32 / ppp);
                                         logical_pos + ctx.render_offset
                                     }).collect();
-                                    project.marquee_selection = Some(MarqueeSelection {
-                                        shape: SelectionShape::Poly(world_pts)
-                                    });
+                                    set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
                                 }
                             }
                         }
@@ -273,136 +288,52 @@ pub fn erase_marquee_selection(project: &mut crate::project::Project, settings: 
     
     let layer = &mut project.layers[layer_idx];
     
-    match &sel.shape {
-        SelectionShape::Rect(rect) => {
-            let rect = *rect;
-            for img in &mut layer.placed_images {
-                let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
-                if img_rect.intersects(rect) {
-                    let mut modified = false;
-                    if img.is_live && img.mask.is_none() {
-                        img.mask = Some(vec![255; img.size[0] * img.size[1]]);
-                    }
-
-                    for py in 0..img.size[1] {
-                        for px in 0..img.size[0] {
-                            let local_pos = img.position + egui::vec2(px as f32 * (disp_w / img.size[0] as f32), py as f32 * (disp_h / img.size[1] as f32));
-                            let inside = rect.contains(local_pos);
-                            let should_erase = if settings.inverted_cut { !inside } else { inside };
-                            if should_erase {
-                                let idx = py * img.size[0] + px;
-                                if img.is_live {
-                                    let mask = img.mask.as_mut().unwrap();
-                                    if mask[idx] != 0 { 
-                                        mask[idx] = 0; 
-                                        modified = true; 
-                                        img.mask_dirty = true;
-                                    }
-                                } else {
-                                    let b_idx = idx * 4;
-                                    if img.pixels[b_idx + 3] != 0 { img.pixels[b_idx + 3] = 0; modified = true; }
-                                }
-                            }
-                        }
-                    }
-                    if modified { img.texture = None; img.thumbnail_dirty = true; }
-                }
+    for img in &mut layer.placed_images {
+        let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+        let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
+        
+        let bounds = sel.bounds();
+        if img_rect.intersects(bounds) {
+            let mut modified = false;
+            if img.is_live && img.mask.is_none() {
+                img.mask = Some(vec![255; img.size[0] * img.size[1]]);
             }
-            let should_erase_point = |p: egui::Pos2| -> bool {
-                let inside = rect.contains(p);
-                if settings.inverted_cut { !inside } else { inside }
-            };
-            layer.strokes.retain(|s| !s.points.iter().any(|&p| should_erase_point(p)));
-            layer.text_annotations.retain(|t| !should_erase_point(t.position));
-        }
-        SelectionShape::Circle { center, radius } => {
-            let center = *center;
-            let radius = *radius;
-            let poly: Vec<egui::Pos2> = (0..40).map(|i| {
-                let angle = i as f32 * std::f32::consts::PI * 2.0 / 40.0;
-                center + egui::vec2(angle.cos() * radius, angle.sin() * radius)
-            }).collect();
-            
-            for img in &mut layer.placed_images {
-                let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                let mut modified = false;
-                if img.is_live && img.mask.is_none() {
-                    img.mask = Some(vec![255; img.size[0] * img.size[1]]);
-                }
 
-                for py in 0..img.size[1] {
-                    for px in 0..img.size[0] {
-                        let local_pos = img.position + egui::vec2(px as f32 * (disp_w / img.size[0] as f32), py as f32 * (disp_h / img.size[1] as f32));
-                        let inside = is_inside_poly(&poly, local_pos);
-                        let should_erase = if settings.inverted_cut { !inside } else { inside };
-                        if should_erase {
-                            let idx = py * img.size[0] + px;
-                            if img.is_live {
-                                let mask = img.mask.as_mut().unwrap();
-                                if idx < mask.len() && mask[idx] != 0 { 
-                                    mask[idx] = 0; 
-                                    modified = true; 
-                                    img.mask_dirty = true;
-                                }
-                            } else {
-                                let b_idx = idx * 4;
-                                if b_idx + 3 < img.pixels.len() && img.pixels[b_idx+3] != 0 { img.pixels[b_idx+3] = 0; modified = true; }
+            for py in 0..img.size[1] {
+                for px in 0..img.size[0] {
+                    let local_pos = img.position + egui::vec2(px as f32 * (disp_w / img.size[0] as f32), py as f32 * (disp_h / img.size[1] as f32));
+                    let inside = sel.contains(local_pos);
+                    let should_erase = if settings.inverted_cut { !inside } else { inside };
+                    if should_erase {
+                        let idx = py * img.size[0] + px;
+                        if img.is_live {
+                            let mask = img.mask.as_mut().unwrap();
+                            if idx < mask.len() && mask[idx] != 0 {
+                                mask[idx] = 0;
+                                modified = true;
+                                img.mask_dirty = true;
+                            }
+                        } else {
+                            let b_idx = idx * 4;
+                            if b_idx + 3 < img.pixels.len() && img.pixels[b_idx + 3] != 0 {
+                                img.pixels[b_idx + 3] = 0;
+                                modified = true;
                             }
                         }
                     }
                 }
-                if modified { img.texture = None; img.thumbnail_dirty = true; }
             }
-            let should_erase_point = |p: egui::Pos2| -> bool {
-                let inside = is_inside_poly(&poly, p);
-                if settings.inverted_cut { !inside } else { inside }
-            };
-            layer.strokes.retain(|s| !s.points.iter().any(|&p| should_erase_point(p)));
-            layer.text_annotations.retain(|t| !should_erase_point(t.position));
-        }
-        SelectionShape::Poly(poly) => {
-            for img in &mut layer.placed_images {
-                let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                let mut modified = false;
-                if img.is_live && img.mask.is_none() {
-                    img.mask = Some(vec![255; img.size[0] * img.size[1]]);
-                }
-
-                for py in 0..img.size[1] {
-                    for px in 0..img.size[0] {
-                        let local_pos = img.position + egui::vec2(px as f32 * (disp_w / img.size[0] as f32), py as f32 * (disp_h / img.size[1] as f32));
-                        let inside = is_inside_poly(poly, local_pos);
-                        let should_erase = if settings.inverted_cut { !inside } else { inside };
-                        if should_erase {
-                            let idx = py * img.size[0] + px;
-                            if img.is_live {
-                                let mask = img.mask.as_mut().unwrap();
-                                if idx < mask.len() && mask[idx] != 0 { 
-                                    mask[idx] = 0; 
-                                    modified = true; 
-                                    img.mask_dirty = true;
-                                }
-                            } else {
-                                let b_idx = idx * 4;
-                                if b_idx + 3 < img.pixels.len() && img.pixels[b_idx+3] != 0 { img.pixels[b_idx+3] = 0; modified = true; }
-                            }
-                        }
-                    }
-                }
-                if modified { img.texture = None; img.thumbnail_dirty = true; }
-            }
-            let should_erase_point = |p: egui::Pos2| -> bool {
-                let inside = is_inside_poly(poly, p);
-                if settings.inverted_cut { !inside } else { inside }
-            };
-            layer.strokes.retain(|s| !s.points.iter().any(|&p| should_erase_point(p)));
-            layer.text_annotations.retain(|t| !should_erase_point(t.position));
+            if modified { img.texture = None; img.thumbnail_dirty = true; }
         }
     }
+    
+    let should_erase_point = |p: egui::Pos2| -> bool {
+        let inside = sel.contains(p);
+        if settings.inverted_cut { !inside } else { inside }
+    };
+    layer.strokes.retain(|s| !s.points.iter().any(|&p| should_erase_point(p)));
+    layer.text_annotations.retain(|t| !should_erase_point(t.position));
 }
 
 
