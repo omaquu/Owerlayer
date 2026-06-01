@@ -544,8 +544,14 @@ pub fn update(ctx: &mut ToolContext) {
                                             }
                                             ObjectType::Text => {
                                                 let t = &mut layer.text_annotations[sel.object_idx];
-                                                t.scale.x *= scale.x;
-                                                t.scale.y *= scale.y;
+                                                let uniform_scale = (scale.x.abs() + scale.y.abs()) * 0.5;
+                                                if uniform_scale > 0.001 {
+                                                    t.font_size = (t.font_size * uniform_scale).max(4.0);
+                                                    t.scale.x *= scale.x / uniform_scale;
+                                                    t.scale.y *= scale.y / uniform_scale;
+                                                    t.exact_size[0] *= uniform_scale;
+                                                    t.exact_size[1] *= uniform_scale;
+                                                }
                                                 let initial_c = initial_center.unwrap();
                                                 let diff = (anchor + (initial_c - anchor) * scale) - initial_c;
                                                 t.position += diff;

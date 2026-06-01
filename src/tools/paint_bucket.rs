@@ -128,10 +128,17 @@ pub fn update(ctx: &mut ToolContext) {
         // Target the selected image
         if let Some(sel) = project.selected_object {
             if sel.object_type == ObjectType::Image && sel.layer_idx == active_layer_idx {
+                let strokes = project.layers[active_layer_idx].strokes.clone();
+                project.layers[active_layer_idx].strokes.clear();
+                
                 let img = &mut project.layers[active_layer_idx].placed_images[sel.object_idx];
                 if !img.locked {
+                    for stroke in &strokes {
+                        crate::tools::brush::rasterize_stroke_to_image(img, stroke, settings);
+                    }
+
                     let dw = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                    let dh = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+                    let dh = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1];
                     let iw = img.size[0];
                     let ih = img.size[1];
                     if iw > 0 && ih > 0 && dw > 0.0 && dh > 0.0 {

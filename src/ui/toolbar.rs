@@ -516,20 +516,31 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Snip => {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Rect, "Rect");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Circle, "Circ");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Lasso, "Lasso");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart");
-                ui.add(egui::Separator::default().vertical());
-                let static_sel = !settings.snip_live;
-                let live_sel = settings.snip_live;
-                let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
-                let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
-                if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Rect, "Rect");
+                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Circle, "Circ");
+                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Lasso, "Lasso");
+                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly");
+                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star");
+                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart");
+                    ui.add(egui::Separator::default().vertical());
+                    let static_sel = !settings.snip_live;
+                    let live_sel = settings.snip_live;
+                    let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                    let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                    if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
+                    if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
+                });
+                ui.horizontal(|ui| {
+                    ui.add(egui::Slider::new(&mut settings.blur_strength, 0.0..=300.0).prefix("Blur: "));
+                    if settings.blur_strength > 0.1 {
+                        ui.add(egui::Separator::default().vertical());
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
+                    }
+                });
             });
         }
         Tool::Cut => {
@@ -545,6 +556,12 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.checkbox(&mut settings.inverted_cut, "Invert");
                 if settings.cut_mode == CutMode::MagicWand {
                     ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: "));
+                }
+                if project.marquee_selection.is_some() {
+                    ui.add(egui::Separator::default().vertical());
+                    if ui.add(egui::Button::new(egui::RichText::new("✂ Snip").color(egui::Color32::from_rgb(100, 220, 100)).strong())).clicked() {
+                        project.request_copy = true;
+                    }
                 }
             });
         }
@@ -638,14 +655,33 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         }
                     }
                     
-                    // Blur styles when image is selected and has blur:
-                    if let ObjectType::Image = sel.object_type {
-                        let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
-                        if img.blur > 0.1 {
-                            ui.separator();
-                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Gaussian, "Gaus");
-                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Pixelate, "Pix");
-                            ui.selectable_value(&mut img.blur_effect, BlurEffect::Glitch, "VHS");
+                    // Blur styles when object is selected and has blur > 0.1:
+                    let blur_val = match sel.object_type {
+                        ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur,
+                        ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur,
+                        ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur,
+                    };
+                    if blur_val > 0.1 {
+                        ui.separator();
+                        match sel.object_type {
+                            ObjectType::Image => {
+                                let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                ui.selectable_value(&mut img.blur_effect, BlurEffect::Gaussian, "Gaus");
+                                ui.selectable_value(&mut img.blur_effect, BlurEffect::Pixelate, "Pix");
+                                ui.selectable_value(&mut img.blur_effect, BlurEffect::Glitch, "VHS");
+                            }
+                            ObjectType::Stroke => {
+                                let s = &mut project.layers[sel.layer_idx].strokes[sel.object_idx];
+                                ui.selectable_value(&mut s.blur_effect, BlurEffect::Gaussian, "Gaus");
+                                ui.selectable_value(&mut s.blur_effect, BlurEffect::Pixelate, "Pix");
+                                ui.selectable_value(&mut s.blur_effect, BlurEffect::Glitch, "VHS");
+                            }
+                            ObjectType::Text => {
+                                let t = &mut project.layers[sel.layer_idx].text_annotations[sel.object_idx];
+                                ui.selectable_value(&mut t.blur_effect, BlurEffect::Gaussian, "Gaus");
+                                ui.selectable_value(&mut t.blur_effect, BlurEffect::Pixelate, "Pix");
+                                ui.selectable_value(&mut t.blur_effect, BlurEffect::Glitch, "VHS");
+                            }
                         }
                     }
                     ui.separator();

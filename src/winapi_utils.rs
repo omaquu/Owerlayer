@@ -15,8 +15,9 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::DataExchange::{
     OpenClipboard, CloseClipboard, GetClipboardData, IsClipboardFormatAvailable,
+    EmptyClipboard, SetClipboardData,
 };
-use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock, GlobalAlloc, GMEM_MOVEABLE};
 
 #[cfg(windows)]
 pub fn force_dpi_aware() {
@@ -246,6 +247,145 @@ pub fn get_clipboard_text() -> Option<String> {
 
 #[cfg(not(windows))]
 pub fn get_clipboard_text() -> Option<String> { None }
+
+#[cfg(windows)]
+pub fn copy_image_to_clipboard(pixels: &[u8], width: usize, height: usize) {
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 { return; }
+        EmptyClipboard();
+        
+        let row_pitch = width * 4;
+        let image_size = row_pitch * height;
+        let total_size = std::mem::size_of::<BITMAPINFOHEADER>() + image_size;
+        
+        let h_mem = GlobalAlloc(GMEM_MOVEABLE, total_size);
+        if !h_mem.is_null() {
+            let ptr = GlobalLock(h_mem);
+            if !ptr.is_null() {
+                let header = BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width as i32,
+                    biHeight: height as i32,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: 0,
+                    biSizeImage: image_size as u32,
+                    biXPelsPerMeter: 0,
+                    biYPelsPerMeter: 0,
+                    biClrUsed: 0,
+                    biClrImportant: 0,
+                };
+                
+                std::ptr::copy_nonoverlapping(
+                    &header as *const BITMAPINFOHEADER as *const u8,
+                    ptr as *mut u8,
+                    std::mem::size_of::<BITMAPINFOHEADER>(),
+                );
+                
+                let dest_pixels = (ptr as *mut u8).add(std::mem::size_of::<BITMAPINFOHEADER>());
+                for y in 0..height {
+                    let src_y = height - 1 - y;
+                    let src_row_start = src_y * row_pitch;
+                    let dest_row_start = y * row_pitch;
+                    for x in 0..width {
+                        let src_idx = src_row_start + x * 4;
+                        let dest_idx = dest_row_start + x * 4;
+                        
+                        let r = pixels[src_idx];
+                        let g = pixels[src_idx + 1];
+                        let b = pixels[src_idx + 2];
+                        let a = pixels[src_idx + 3];
+                        
+                        *dest_pixels.add(dest_idx) = b;
+                        *dest_pixels.add(dest_idx + 1) = g;
+                        *dest_pixels.add(dest_idx + 2) = r;
+                        *dest_pixels.add(dest_idx + 3) = a;
+                    }
+                }
+                
+                GlobalUnlock(h_mem);
+                SetClipboardData(8, h_mem); // CF_DIB = 8
+            }
+        }
+        CloseClipboard();
+    }
+}
+
+#[cfg(not(windows))]
+pub fn copy_image_to_clipboard(_pixels: &[u8], _width: usize, _height: usize) {}
+
+#[cfg(windows)]
+pub fn get_clipboard_image() -> Option<(Vec<u8>, usize, usize)> {
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 { return None; }
+        
+        let mut result = None;
+        if IsClipboardFormatAvailable(8) != 0 { // CF_DIB = 8
+            let h_data = GetClipboardData(8);
+            if !h_data.is_null() {
+                let ptr = GlobalLock(h_data);
+                if !ptr.is_null() {
+                    let header_ptr = ptr as *const BITMAPINFOHEADER;
+                    let header = &*header_ptr;
+                    
+                    let width = header.biWidth as usize;
+                    let height = header.biHeight.abs() as usize;
+                    let is_top_down = header.biHeight < 0;
+                    
+                    if width > 0 && height > 0 {
+                        let bit_count = header.biBitCount;
+                        if bit_count == 24 || bit_count == 32 {
+                            let mut rgba_pixels = vec![255u8; width * height * 4];
+                            let pixel_data_ptr = (ptr as *const u8).add(header.biSize as usize);
+                            
+                            let bytes_per_pixel = (bit_count / 8) as usize;
+                            let row_pitch = (width * bytes_per_pixel + 3) & !3;
+                            
+                            for y in 0..height {
+                                let src_y = if is_top_down { y } else { height - 1 - y };
+                                let src_row_start = src_y * row_pitch;
+                                let dest_row_start = y * width * 4;
+                                
+                                for x in 0..width {
+                                    let src_idx = src_row_start + x * bytes_per_pixel;
+                                    let dest_idx = dest_row_start + x * 4;
+                                    
+                                    if bit_count == 32 {
+                                        let b = *pixel_data_ptr.add(src_idx);
+                                        let g = *pixel_data_ptr.add(src_idx + 1);
+                                        let r = *pixel_data_ptr.add(src_idx + 2);
+                                        let a = *pixel_data_ptr.add(src_idx + 3);
+                                        
+                                        rgba_pixels[dest_idx] = r;
+                                        rgba_pixels[dest_idx + 1] = g;
+                                        rgba_pixels[dest_idx + 2] = b;
+                                        rgba_pixels[dest_idx + 3] = a;
+                                    } else {
+                                        let b = *pixel_data_ptr.add(src_idx);
+                                        let g = *pixel_data_ptr.add(src_idx + 1);
+                                        let r = *pixel_data_ptr.add(src_idx + 2);
+                                        
+                                        rgba_pixels[dest_idx] = r;
+                                        rgba_pixels[dest_idx + 1] = g;
+                                        rgba_pixels[dest_idx + 2] = b;
+                                        rgba_pixels[dest_idx + 3] = 255;
+                                    }
+                                }
+                            }
+                            result = Some((rgba_pixels, width, height));
+                        }
+                    }
+                    GlobalUnlock(h_data);
+                }
+            }
+        }
+        CloseClipboard();
+        result
+    }
+}
+
+#[cfg(not(windows))]
+pub fn get_clipboard_image() -> Option<(Vec<u8>, usize, usize)> { None }
 
 #[cfg(windows)]
 pub fn setup_overlay_window() {

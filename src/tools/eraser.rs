@@ -256,14 +256,14 @@ pub fn update(ctx: &mut ToolContext) {
                                 let idx = py * img.size[0] + px;
                                 if img.is_live {
                                     let mask = img.mask.as_mut().unwrap();
-                                    if mask[idx] != 0 { 
+                                    if idx < mask.len() && mask[idx] != 0 { 
                                         mask[idx] = 0; 
                                         modified = true; 
                                         img.mask_dirty = true;
                                     }
                                 } else {
                                     let b_idx = idx * 4;
-                                    if img.pixels[b_idx + 3] != 0 {
+                                    if b_idx + 3 < img.pixels.len() && img.pixels[b_idx + 3] != 0 {
                                         img.pixels[b_idx + 3] = 0;
                                         modified = true;
                                     }

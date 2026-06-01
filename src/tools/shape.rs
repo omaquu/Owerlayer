@@ -36,16 +36,32 @@ pub fn update(ctx: &mut ToolContext) {
                     if (right_clicked || enter_pressed || close_to_start) && current_stroke.len() >= 2 {
                         let mut final_points = current_stroke.clone();
                         final_points.push(final_points[0]);
-                        let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity);
-                        let is_locked = layer.locked;
-                        let ask_mode = settings.auto_new_layer.is_none();
-                        if is_locked || ask_mode {
-                            *ctx.pending_stroke = Some(s);
-                            *ctx.layer_prompt_open = true;
-                        } else {
+                        
+                        let mut added_to_existing = false;
+                        if let Some(sel) = project.selected_object {
+                            if sel.layer_idx == active_layer_idx && sel.object_type == ObjectType::Stroke {
+                                if sel.object_idx < layer.strokes.len() {
+                                    let target_stroke = &mut layer.strokes[sel.object_idx];
+                                    if target_stroke.kind == StrokeKind::Poly {
+                                        target_stroke.points.push(egui::pos2(f32::NAN, f32::NAN));
+                                        target_stroke.points.extend(final_points.clone());
+                                        added_to_existing = true;
+                                        *ctx.request_history_push = Some("Add Poly to Shape".into());
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if !added_to_existing {
+                            let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity);
                             layer.strokes.push(s);
                             layer.expanded = true;
-                            *ctx.request_history_push = Some("Shape".into());
+                            project.selected_object = Some(SelectedObject {
+                                layer_idx: active_layer_idx,
+                                object_type: ObjectType::Stroke,
+                                object_idx: layer.strokes.len() - 1,
+                            });
+                            *ctx.request_history_push = Some("Shape Poly".into());
                         }
                         current_stroke.clear();
                     }

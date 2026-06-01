@@ -414,7 +414,10 @@ pub fn update(ctx: &mut ToolContext) {
             }
 
             if left_just_released && !current_stroke.is_empty() {
-                let ask_mode = settings.auto_new_layer.is_none();
+                let has_existing_canvas = project.selected_object.map_or(false, |s| {
+                    s.object_type == ObjectType::Image && s.layer_idx == active_layer_idx
+                });
+                let ask_mode = settings.auto_new_layer.is_none() || has_existing_canvas;
                 if is_locked || ask_mode {
                     let s = Stroke::new(
                         current_stroke.clone(),
@@ -737,13 +740,33 @@ pub fn update(ctx: &mut ToolContext) {
                 }
             }
             StrokeKind::Poly => {
-                if s.points.len() > 1 {
-                    if let Some(bg) = s.background_color {
-                        let mut bg_col = color32(&bg);
-                        bg_col = egui::Color32::from_rgba_unmultiplied(bg_col.r(), bg_col.g(), bg_col.b(), (bg_col.a() as f32 * l_op * s.opacity) as u8);
-                        p.add(egui::Shape::convex_polygon(pts.clone(), bg_col, egui::Stroke::NONE));
+                let mut polys = Vec::new();
+                let mut current_poly = Vec::new();
+                for pt in pts {
+                    if pt.x.is_nan() || pt.y.is_nan() {
+                        if !current_poly.is_empty() {
+                            polys.push(current_poly);
+                            current_poly = Vec::new();
+                        }
+                    } else {
+                        current_poly.push(pt);
                     }
-                    p.add(egui::Shape::line(pts, egui::Stroke::new(width, stroke_color)));
+                }
+                if !current_poly.is_empty() {
+                    polys.push(current_poly);
+                }
+
+                for poly in polys {
+                    if poly.len() > 1 {
+                        if let Some(bg) = s.background_color {
+                            let mut bg_col = color32(&bg);
+                            bg_col = egui::Color32::from_rgba_unmultiplied(bg_col.r(), bg_col.g(), bg_col.b(), (bg_col.a() as f32 * l_op * s.opacity) as u8);
+                            if poly.len() >= 3 {
+                                p.add(egui::Shape::convex_polygon(poly.clone(), bg_col, egui::Stroke::NONE));
+                            }
+                        }
+                        p.add(egui::Shape::line(poly, egui::Stroke::new(width, stroke_color)));
+                    }
                 }
             }
             StrokeKind::Line => {
@@ -807,6 +830,7 @@ pub fn update(ctx: &mut ToolContext) {
 
 pub fn draw_layer_strokes(p: &egui::Painter, layer: &crate::project::Layer, render_offset: egui::Vec2, l_op: f32) {
     for s in layer.strokes.iter() {
+        if !s.visible { continue; }
         let mut stroke_c = color32(&s.color);
         stroke_c = egui::Color32::from_rgba_unmultiplied(stroke_c.r(), stroke_c.g(), stroke_c.b(), (stroke_c.a() as f32 * l_op * s.opacity) as u8);
         stroke_c = crate::utils::apply_color_effects(stroke_c, s.grayscale, s.invert, s.sepia, false, 0.0);

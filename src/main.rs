@@ -512,18 +512,19 @@ impl eframe::App for OwerlayerApp {
                 egui::Area::new(egui::Id::new("inline_text_edit"))
                     .fixed_pos(pending.position)
                     .show(ctx, |ui| {
-                        let frame = photoshop_frame(&self.settings);
-                        frame.show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("?").color(egui::Color32::from_rgb(180, 180, 200)));
-                                let edit_resp = ui.add(egui::TextEdit::singleline(&mut pending.buffer).desired_width(200.0).hint_text("Enter to place, Esc to cancel"));
-                                edit_resp.request_focus();
-                                
-                                if ui.input(|i| i.key_pressed(egui::Key::Enter)) || (edit_resp.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape))) {
-                                    finalize = true;
-                                }
-                            });
-                        });
+                        let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
+                        let edit_resp = ui.add(
+                            egui::TextEdit::singleline(&mut pending.buffer)
+                                .frame(false)
+                                .text_color(crate::utils::color32(&self.settings.pen_color))
+                                .font(font)
+                                .desired_width(500.0)
+                        );
+                        edit_resp.request_focus();
+                        
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) || (edit_resp.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape))) {
+                            finalize = true;
+                        }
                     });
 
                 if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { cancel = true; }
@@ -583,22 +584,32 @@ impl eframe::App for OwerlayerApp {
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::S)) {
                 self.project.save();
             }
-            if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C)) {
+            let trigger_copy = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C)) || self.project.request_copy;
+            if trigger_copy {
+                self.project.request_copy = false;
                 if let Some(sel) = &self.project.marquee_selection {
                     let ppp = ctx.pixels_per_point();
                     let bounds = sel.shape.bounds();
-                    let sw = (bounds.width() * ppp).round() as i32;
-                    let sh = (bounds.height() * ppp).round() as i32;
+                    let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                    let render_offset = if self.settings.use_absolute_screen_coords {
+                        egui::vec2(wx as f32 / ppp, wy as f32 / ppp)
+                    } else {
+                        egui::Vec2::ZERO
+                    };
+                    // Bounds is in world space! Translate it to screen/window space using render_offset
+                    let screen_bounds = bounds.translate(-render_offset);
+                    let sw = (screen_bounds.width() * ppp).round() as i32;
+                    let sh = (screen_bounds.height() * ppp).round() as i32;
                     if sw > 5 && sh > 5 {
-                        let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
-                        let sx = (bounds.min.x * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
-                        let sy = (bounds.min.y * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
+                        let sx = (screen_bounds.min.x * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
+                        let sy = (screen_bounds.min.y * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
                         if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(&self.settings, sx, sy, sw, sh) {
                             // Mask non-selected area to transparent
                             for py in 0..sh as usize {
                                 for px in 0..sw as usize {
-                                    let lp = bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
-                                    if !sel.shape.contains(lp) {
+                                    let lp = screen_bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
+                                    let wp = lp + render_offset;
+                                    if !sel.shape.contains(wp) {
                                         let idx = (py * sw as usize + px) * 4;
                                         if idx + 3 < pixels.len() {
                                             pixels[idx + 3] = 0;
@@ -612,14 +623,18 @@ impl eframe::App for OwerlayerApp {
                             img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                             img.show_source_rect = true;
                             img.shadow = self.settings.snip_shadow;
+                            img.is_live = self.settings.snip_live;
+                            img.blur = self.settings.blur_strength;
+                            img.blur_effect = self.settings.blur_effect;
                             
                             // Create transparency mask if not simple rectangular selection
                             if !matches!(sel.shape, SelectionShape::Rect(_)) {
                                 let mut mask = vec![255u8; sw as usize * sh as usize];
                                 for py in 0..sh as usize {
                                     for px in 0..sw as usize {
-                                        let lp = bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
-                                        if !sel.shape.contains(lp) {
+                                        let lp = screen_bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
+                                        let wp = lp + render_offset;
+                                        if !sel.shape.contains(wp) {
                                             mask[py * sw as usize + px] = 0;
                                         }
                                     }
@@ -627,13 +642,28 @@ impl eframe::App for OwerlayerApp {
                                 img.mask = Some(mask);
                             }
                             
+                            crate::winapi_utils::copy_image_to_clipboard(&img.pixels, img.size[0], img.size[1]);
                             self.copied_image = Some(img);
                         }
                     }
                 }
             }
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
-                if let Some(img) = &self.copied_image {
+                let img_to_paste = if self.copied_image.is_some() {
+                    self.copied_image.clone()
+                } else if let Some((pixels, w, h)) = crate::winapi_utils::get_clipboard_image() {
+                    let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                    let mut img = overlay::PlacedImage::new(id, egui::pos2(100.0, 100.0), [w, h], pixels);
+                    img.display_size = Some([w as f32, h as f32]);
+                    img.source_rect = Some([100.0, 100.0, w as f32, h as f32]);
+                    img.show_source_rect = true;
+                    img.shadow = self.settings.snip_shadow;
+                    Some(img)
+                } else {
+                    None
+                };
+
+                if let Some(img) = &img_to_paste {
                     let mut img_clone = img.clone();
                     let active_layer_idx = self.project.active_layer;
                     if active_layer_idx < self.project.layers.len() {

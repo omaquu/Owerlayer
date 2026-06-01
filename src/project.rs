@@ -111,6 +111,8 @@ pub struct Project {
     pub rasterize_request: Option<crate::types::RasterizeRequest>,
     #[serde(skip)]
     pub marquee_selection: Option<crate::types::MarqueeSelection>,
+    #[serde(skip)]
+    pub request_copy: bool,
 }
 
 impl Project {
@@ -123,6 +125,7 @@ impl Project {
             last_left_down: false,
             rasterize_request: None,
             marquee_selection: None,
+            request_copy: false,
         }
     }
 

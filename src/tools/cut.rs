@@ -29,10 +29,11 @@ pub fn update(ctx: &mut ToolContext) {
     // ---- Dragging selection boundary state ----
     if left_just_pressed {
         if let Some(sel) = &project.marquee_selection {
+            let world_pos = pos + ctx.render_offset;
             let inside = match &sel.shape {
-                SelectionShape::Rect(r) => r.contains(pos),
-                SelectionShape::Circle { center, radius } => pos.distance(*center) <= *radius,
-                SelectionShape::Poly(pts) => is_inside_poly(pts, pos),
+                SelectionShape::Rect(r) => r.contains(world_pos),
+                SelectionShape::Circle { center, radius } => world_pos.distance(*center) <= *radius,
+                SelectionShape::Poly(pts) => is_inside_poly(pts, world_pos),
             };
             if inside {
                 *ctx.drag_state = 999; // Unique id for dragging selection outline
@@ -66,8 +67,9 @@ pub fn update(ctx: &mut ToolContext) {
             painter.add(egui::Shape::line(current_stroke.clone(), egui::Stroke::new(1.5, egui::Color32::WHITE)));
         }
         if left_just_released && current_stroke.len() >= 3 {
+            let world_pts: Vec<egui::Pos2> = current_stroke.iter().map(|&p| p + ctx.render_offset).collect();
             project.marquee_selection = Some(MarqueeSelection {
-                shape: SelectionShape::Poly(current_stroke.clone())
+                shape: SelectionShape::Poly(world_pts)
             });
             current_stroke.clear();
         }
@@ -82,8 +84,9 @@ pub fn update(ctx: &mut ToolContext) {
             if let Some(start) = line_start.take() {
                 let rect = egui::Rect::from_two_pos(start, pos);
                 if rect.width() > 2.0 && rect.height() > 2.0 {
+                    let world_rect = rect.translate(ctx.render_offset);
                     project.marquee_selection = Some(MarqueeSelection {
-                        shape: SelectionShape::Rect(rect)
+                        shape: SelectionShape::Rect(world_rect)
                     });
                 }
             }
@@ -102,8 +105,9 @@ pub fn update(ctx: &mut ToolContext) {
             if let Some(start) = line_start.take() {
                 let radius = start.distance(pos);
                 if radius > 5.0 {
+                    let world_center = start + ctx.render_offset;
                     project.marquee_selection = Some(MarqueeSelection {
-                        shape: SelectionShape::Circle { center: start, radius }
+                        shape: SelectionShape::Circle { center: world_center, radius }
                     });
                 }
             }
@@ -117,8 +121,9 @@ pub fn update(ctx: &mut ToolContext) {
         let close_to_start = current_stroke.len() > 2 && pos.distance(current_stroke[0]) < 15.0 && left_just_pressed;
 
         if (right_clicked || enter_pressed || close_to_start) && !current_stroke.is_empty() {
+            let world_pts: Vec<egui::Pos2> = current_stroke.iter().map(|&p| p + ctx.render_offset).collect();
             project.marquee_selection = Some(MarqueeSelection {
-                shape: SelectionShape::Poly(current_stroke.clone())
+                shape: SelectionShape::Poly(world_pts)
             });
             current_stroke.clear();
         }
@@ -143,8 +148,9 @@ pub fn update(ctx: &mut ToolContext) {
                 let radius = start.distance(pos);
                 if radius > 5.0 {
                     let pts = if mode == CutMode::Star { crate::utils::get_star_points(start, radius) } else { crate::utils::get_heart_points(start, radius) };
+                    let world_pts: Vec<egui::Pos2> = pts.into_iter().map(|p| p + ctx.render_offset).collect();
                     project.marquee_selection = Some(MarqueeSelection {
-                        shape: SelectionShape::Poly(pts)
+                        shape: SelectionShape::Poly(world_pts)
                     });
                 }
             }
@@ -154,21 +160,24 @@ pub fn update(ctx: &mut ToolContext) {
         if left_just_pressed {
             let layer = &mut project.layers[active_layer_idx];
             let mut clicked_on_img = false;
+            let world_pos = pos + ctx.render_offset;
             for img in &mut layer.placed_images {
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
                 let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
-                if img_rect.contains(pos) {
-                    let px = ((pos.x - img.position.x) * (img.size[0] as f32 / disp_w)) as i32;
-                    let py = ((pos.y - img.position.y) * (img.size[1] as f32 / disp_h)) as i32;
+                if img_rect.contains(world_pos) {
+                    let px = ((world_pos.x - img.position.x) * (img.size[0] as f32 / disp_w)) as i32;
+                    let py = ((world_pos.y - img.position.y) * (img.size[1] as f32 / disp_h)) as i32;
                     if px >= 0 && px < img.size[0] as i32 && py >= 0 && py < img.size[1] as i32 {
                         let start_idx = (py as usize * img.size[0] + px as usize) * 4;
                         let start_color = [img.pixels[start_idx], img.pixels[start_idx+1], img.pixels[start_idx+2], img.pixels[start_idx+3]];
                         if start_color[3] > 0 {
-                            magic_wand_flood_fill(img, px, py, start_color, settings.magic_wand_threshold);
-                            img.texture = None;
-                            img.thumbnail_dirty = true;
-                            *ctx.request_history_push = Some("Cut".into());
+                            let pts = magic_wand_to_selection(img, px, py, start_color, settings.magic_wand_threshold);
+                            if !pts.is_empty() {
+                                project.marquee_selection = Some(MarqueeSelection {
+                                    shape: SelectionShape::Poly(pts)
+                                });
+                            }
                             clicked_on_img = true;
                             break;
                         }
@@ -186,7 +195,7 @@ pub fn update(ctx: &mut ToolContext) {
                 if sw > 5 && sh > 5 {
                     let sx = if settings.use_absolute_screen_coords { 0 } else { wx };
                     let sy = if settings.use_absolute_screen_coords { 0 } else { wy };
-                    if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, sw, sh) {
+                    if let Some(pixels) = crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, sw, sh) {
                         let px = ((pos.x - rect.min.x) * ppp).round() as i32;
                         let py = ((pos.y - rect.min.y) * ppp).round() as i32;
                         if px >= 0 && px < sw && py >= 0 && py < sh {
@@ -222,63 +231,28 @@ pub fn update(ctx: &mut ToolContext) {
                                 }
                             }
                             
-                            // Make non-matching pixels transparent
-                            let mut min_x = sw;
-                            let mut min_y = sh;
-                            let mut max_x = 0;
-                            let mut max_y = 0;
-                            let mut found = false;
-                            
-                            for y in 0..sh {
+                            let visited: Vec<bool> = mask.iter().map(|&v| v == 255).collect();
+                            let mut start_opt = None;
+                            'outer: for y in 0..sh {
                                 for x in 0..sw {
-                                    let idx = (y * sw + x) as usize;
-                                    if mask[idx] == 255 {
-                                        min_x = min_x.min(x);
-                                        min_y = min_y.min(y);
-                                        max_x = max_x.max(x);
-                                        max_y = max_y.max(y);
-                                        found = true;
-                                    } else {
-                                        pixels[idx * 4 + 3] = 0; // Set alpha to transparent
+                                    if visited[(y * sw + x) as usize] {
+                                        start_opt = Some((x, y));
+                                        break 'outer;
                                     }
                                 }
                             }
                             
-                            if found {
-                                let crop_w = (max_x - min_x + 1) as usize;
-                                let crop_h = (max_y - min_y + 1) as usize;
-                                let mut crop_pixels = vec![0u8; crop_w * crop_h * 4];
-                                for y in 0..crop_h {
-                                    let src_y = y + min_y as usize;
-                                    let src_idx = (src_y * sw as usize + min_x as usize) * 4;
-                                    let dst_idx = y * crop_w * 4;
-                                    crop_pixels[dst_idx..dst_idx + crop_w * 4].copy_from_slice(&pixels[src_idx..src_idx + crop_w * 4]);
+                            if let Some((sx, sy)) = start_opt {
+                                let boundary_px = crate::utils::trace_boundary(&visited, sw, sh, sx, sy);
+                                if !boundary_px.is_empty() {
+                                    let world_pts: Vec<egui::Pos2> = boundary_px.into_iter().map(|(x, y)| {
+                                        let logical_pos = rect.min + egui::vec2(x as f32 / ppp, y as f32 / ppp);
+                                        logical_pos + ctx.render_offset
+                                    }).collect();
+                                    project.marquee_selection = Some(MarqueeSelection {
+                                        shape: SelectionShape::Poly(world_pts)
+                                    });
                                 }
-                                
-                                let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                                let logical_pos = rect.min + egui::vec2(min_x as f32 / ppp, min_y as f32 / ppp);
-                                let mut img = PlacedImage::new(id, logical_pos, [crop_w, crop_h], crop_pixels);
-                                img.display_size = Some([crop_w as f32 / ppp, crop_h as f32 / ppp]);
-                                img.shadow = settings.snip_shadow;
-                                
-                                // Create tight binary mask for cropping outline
-                                let mut tight_mask = vec![0u8; crop_w * crop_h];
-                                for y in 0..crop_h {
-                                    for x in 0..crop_w {
-                                        let src_idx = ((y + min_y as usize) * sw as usize + (x + min_x as usize)) as usize;
-                                        tight_mask[y * crop_w + x] = mask[src_idx];
-                                    }
-                                }
-                                img.mask = Some(tight_mask);
-                                
-                                layer.placed_images.push(img);
-                                let new_idx = layer.placed_images.len() - 1;
-                                project.selected_object = Some(SelectedObject {
-                                    layer_idx: active_layer_idx,
-                                    object_type: ObjectType::Image,
-                                    object_idx: new_idx,
-                                });
-                                *ctx.request_history_push = Some("Desktop Wand".into());
                             }
                         }
                     }
@@ -368,14 +342,14 @@ pub fn erase_marquee_selection(project: &mut crate::project::Project, settings: 
                             let idx = py * img.size[0] + px;
                             if img.is_live {
                                 let mask = img.mask.as_mut().unwrap();
-                                if mask[idx] != 0 { 
+                                if idx < mask.len() && mask[idx] != 0 { 
                                     mask[idx] = 0; 
                                     modified = true; 
                                     img.mask_dirty = true;
                                 }
                             } else {
                                 let b_idx = idx * 4;
-                                if img.pixels[b_idx+3] != 0 { img.pixels[b_idx+3] = 0; modified = true; }
+                                if b_idx + 3 < img.pixels.len() && img.pixels[b_idx+3] != 0 { img.pixels[b_idx+3] = 0; modified = true; }
                             }
                         }
                     }
@@ -407,14 +381,14 @@ pub fn erase_marquee_selection(project: &mut crate::project::Project, settings: 
                             let idx = py * img.size[0] + px;
                             if img.is_live {
                                 let mask = img.mask.as_mut().unwrap();
-                                if mask[idx] != 0 { 
+                                if idx < mask.len() && mask[idx] != 0 { 
                                     mask[idx] = 0; 
                                     modified = true; 
                                     img.mask_dirty = true;
                                 }
                             } else {
                                 let b_idx = idx * 4;
-                                if img.pixels[b_idx+3] != 0 { img.pixels[b_idx+3] = 0; modified = true; }
+                                if b_idx + 3 < img.pixels.len() && img.pixels[b_idx+3] != 0 { img.pixels[b_idx+3] = 0; modified = true; }
                             }
                         }
                     }

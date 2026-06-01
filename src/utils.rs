@@ -458,3 +458,125 @@ pub fn apply_color_effects(mut color: egui::Color32, grayscale: bool, invert: bo
 
     egui::Color32::from_rgba_premultiplied((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, color.a())
 }
+
+pub fn trace_boundary(visited: &[bool], w: i32, h: i32, start_x: i32, start_y: i32) -> Vec<(i32, i32)> {
+    let mut boundary = Vec::new();
+    let dirs = [
+        (-1, 0),  // W
+        (-1, -1), // NW
+        (0, -1),  // N
+        (1, -1),  // NE
+        (1, 0),   // E
+        (1, 1),   // SE
+        (0, 1),   // S
+        (-1, 1),  // SW
+    ];
+    
+    let is_visited = |x: i32, y: i32| -> bool {
+        if x < 0 || x >= w || y < 0 || y >= h {
+            false
+        } else {
+            visited[(y * w + x) as usize]
+        }
+    };
+
+    let mut curr = (start_x, start_y);
+    let mut backtrack_idx = 0;
+    
+    boundary.push(curr);
+    
+    let max_iterations = (w * h) as usize;
+    let mut iterations = 0;
+    
+    loop {
+        iterations += 1;
+        if iterations > max_iterations {
+            break;
+        }
+        
+        let mut found_next = false;
+        for i in 0..8 {
+            let idx = (backtrack_idx + i) % 8;
+            let neighbor = (curr.0 + dirs[idx].0, curr.1 + dirs[idx].1);
+            if is_visited(neighbor.0, neighbor.1) {
+                curr = neighbor;
+                backtrack_idx = (idx + 5) % 8; 
+                found_next = true;
+                break;
+            }
+        }
+        
+        if !found_next {
+            break;
+        }
+        
+        if curr == (start_x, start_y) {
+            break;
+        }
+        
+        boundary.push(curr);
+    }
+    
+    boundary
+}
+
+pub fn magic_wand_to_selection(img: &PlacedImage, start_x: i32, start_y: i32, target_color: [u8; 4], threshold: f32) -> Vec<egui::Pos2> {
+    let w = img.size[0] as i32;
+    let h = img.size[1] as i32;
+    let mut stack = vec![(start_x, start_y)];
+    let mut visited = vec![false; (w * h) as usize];
+    
+    let color_diff = |c1: [u8; 4], c2: [u8; 4]| -> f32 {
+        let dr = (c1[0] as f32 - c2[0] as f32).abs();
+        let dg = (c1[1] as f32 - c2[1] as f32).abs();
+        let db = (c1[2] as f32 - c2[2] as f32).abs();
+        (dr + dg + db) / 3.0
+    };
+
+    while let Some((x, y)) = stack.pop() {
+        if x < 0 || x >= w || y < 0 || y >= h { continue; }
+        let idx = (y * w + x) as usize;
+        if visited[idx] { continue; }
+        visited[idx] = true;
+
+        let pixel_idx = idx * 4;
+        let current_color = [img.pixels[pixel_idx], img.pixels[pixel_idx+1], img.pixels[pixel_idx+2], img.pixels[pixel_idx+3]];
+        
+        if current_color[3] > 0 && color_diff(current_color, target_color) <= threshold {
+            stack.push((x + 1, y));
+            stack.push((x - 1, y));
+            stack.push((x, y + 1));
+            stack.push((x, y - 1));
+        } else {
+            visited[idx] = false;
+        }
+    }
+
+    let mut start_opt = None;
+    'outer: for y in 0..h {
+        for x in 0..w {
+            if visited[(y * w + x) as usize] {
+                start_opt = Some((x, y));
+                break 'outer;
+            }
+        }
+    }
+
+    let Some((sx, sy)) = start_opt else {
+        return Vec::new();
+    };
+
+    let boundary_px = trace_boundary(&visited, w, h, sx, sy);
+    
+    let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+    let disp_h = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1];
+    let img_w = img.size[0] as f32;
+    let img_h = img.size[1] as f32;
+
+    boundary_px.into_iter().map(|(x, y)| {
+        let rx = img.position.x + (x as f32) * (disp_w / img_w);
+        let ry = img.position.y + (y as f32) * (disp_h / img_h);
+        egui::pos2(rx, ry)
+    }).collect()
+}
+

@@ -201,9 +201,10 @@ pub fn render_canvas(
                         if let Some((pixels, pw, ph)) = crate::winapi_utils::capture_window(img.hwnd) {
                             img.size = [pw, ph];
                             img.pixels = pixels;
-                            img.texture = None; // force texture rebuild
+                            img.thumbnail_dirty = true;
                         }
                     }
+                    ui.ctx().request_repaint();
                 } else if img.url.is_none() {
                     let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                     let (ox, oy) = if settings.use_absolute_screen_coords { (0, 0) } else { (wx, wy) };
@@ -244,9 +245,9 @@ pub fn render_canvas(
                     if let Some(res) = _capture_thread.get_frame(img.id) {
                         img.size = res.size;
                         img.pixels = res.pixels;
-                        img.texture = None;
                         img.thumbnail_dirty = true;
                     }
+                    ui.ctx().request_repaint();
                 }
             }
 
@@ -286,8 +287,56 @@ pub fn render_canvas(
             } else if !img.pixels.is_empty() {
                 // Static or Live Snip
                 let should_update_texture = img.texture.is_none() // First load
-                    || (img.is_live && frame_count % 3 == 0)      // Live feed update
-                    || (!img.is_live && img.thumbnail_dirty);     // Static update (filters, etc.)
+                    || img.thumbnail_dirty;                       // New frame or static update ready
+
+                // Apply mask to live image pixels on CPU so star/heart shapes work in all render paths
+                if img.is_live && should_update_texture {
+                    if let Some(mask) = &mut img.mask {
+                        let expected_mask_len = img.size[0] * img.size[1];
+                        // Regenerate mask if size changed (capture thread may return different dimensions)
+                        if mask.len() != expected_mask_len && expected_mask_len > 0 && !mask.is_empty() {
+                            let old_w = (mask.len() as f64).sqrt() as usize; // approximate old width
+                            let old_h = if old_w > 0 { mask.len() / old_w } else { 0 };
+                            let new_w = img.size[0];
+                            let new_h = img.size[1];
+                            // Try to find old dimensions from snip_points or use aspect ratio scaling
+                            if let Some(pts) = &img.snip_points {
+                                let bounds = egui::Rect::from_points(pts);
+                                let ppp_est = if bounds.width() > 0.0 { new_w as f32 / bounds.width() } else { 1.0 };
+                                let mut new_mask = vec![255u8; expected_mask_len];
+                                for py in 0..new_h {
+                                    for px in 0..new_w {
+                                        let lp = egui::pos2(px as f32 / ppp_est, py as f32 / ppp_est);
+                                        if !crate::utils::is_inside_poly(pts, lp) {
+                                            new_mask[py * new_w + px] = 0;
+                                        }
+                                    }
+                                }
+                                *mask = new_mask;
+                            } else if old_w > 0 && old_h > 0 {
+                                // Nearest-neighbor resample
+                                let mut new_mask = vec![255u8; expected_mask_len];
+                                for py in 0..new_h {
+                                    for px in 0..new_w {
+                                        let src_x = (px * old_w) / new_w;
+                                        let src_y = (py * old_h) / new_h;
+                                        let src_idx = src_y * old_w + src_x;
+                                        if src_idx < mask.len() {
+                                            new_mask[py * new_w + px] = mask[src_idx];
+                                        }
+                                    }
+                                }
+                                *mask = new_mask;
+                            }
+                            img.mask_dirty = true;
+                        }
+                        for (i, &m) in mask.iter().enumerate() {
+                            if m == 0 && i * 4 + 3 < img.pixels.len() {
+                                img.pixels[i * 4 + 3] = 0;
+                            }
+                        }
+                    }
+                }
 
                 if should_update_texture {
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.pixels);
@@ -361,6 +410,11 @@ pub fn render_canvas(
                     BlurEffect::Glitch => 3,
                 };
                 let final_effect = if img.blur > 0.1 { effect } else if layer.blur > 0.1 { layer_effect } else { 0 };
+
+                // VHS/Glitch effect needs continuous repaints so u_time advances each frame
+                if final_effect == 3 {
+                    ui.ctx().request_repaint();
+                }
 
                 // Draw helper closure
                 // apply_filters = true only for the main image pass, NOT for shadow/outline/glow silhouette passes
@@ -575,6 +629,7 @@ pub fn render_canvas(
                             ));
                         }
                     }
+                    ui.ctx().request_repaint();
                     if let Some(ref tex) = s.cached_texture {
                         // Draw shadow if enabled
                         let has_shadow = layer.shadow || s.shadow;
@@ -860,6 +915,9 @@ pub fn render_canvas(
 
     if remove_active_layer {
         project.layers.remove(project.active_layer);
+        if project.layers.is_empty() {
+            project.layers.push(crate::project::Layer::new("Layer 1"));
+        }
         project.active_layer = project.active_layer.saturating_sub(1);
         project.selected_object = None; // Prevent crash by clearing selection to removed layer
     }
