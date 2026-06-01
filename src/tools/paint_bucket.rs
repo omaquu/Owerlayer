@@ -3,6 +3,54 @@ use crate::overlay::*;
 use crate::utils::*;
 use crate::tools::ToolContext;
 
+fn expand_image_to_rect(img: &mut crate::types::PlacedImage, target_rect: egui::Rect, ppp: f32) {
+    let old_iw = img.size[0];
+    let old_ih = img.size[1];
+    if old_iw == 0 || old_ih == 0 { return; }
+
+    let new_dw = target_rect.width();
+    let new_dh = target_rect.height();
+    let new_iw = (new_dw * ppp).round() as usize;
+    let new_ih = (new_dh * ppp).round() as usize;
+    
+    if new_iw <= old_iw && new_ih <= old_ih {
+        return; // Already large enough
+    }
+    
+    let mut new_pixels = vec![0u8; new_iw * new_ih * 4];
+    
+    // Relative offset of old image top-left from new target_rect top-left in display space
+    let offset_dw = img.position.x - target_rect.min.x;
+    let offset_dh = img.position.y - target_rect.min.y;
+    
+    // Convert offsets to pixel space of the new image
+    let offset_px = (offset_dw * ppp).round() as i32;
+    let offset_py = (offset_dh * ppp).round() as i32;
+    
+    for y in 0..old_ih {
+        let dest_y = y as i32 + offset_py;
+        if dest_y < 0 || dest_y >= new_ih as i32 { continue; }
+        for x in 0..old_iw {
+            let dest_x = x as i32 + offset_px;
+            if dest_x < 0 || dest_x >= new_iw as i32 { continue; }
+            
+            let old_idx = (y * old_iw + x) * 4;
+            let new_idx = (dest_y as usize * new_iw + dest_x as usize) * 4;
+            
+            if old_idx + 3 < img.pixels.len() && new_idx + 3 < new_pixels.len() {
+                new_pixels[new_idx..new_idx+4].copy_from_slice(&img.pixels[old_idx..old_idx+4]);
+            }
+        }
+    }
+    
+    img.position = target_rect.min;
+    img.size = [new_iw, new_ih];
+    img.display_size = Some([new_dw, new_dh]);
+    img.pixels = new_pixels;
+    img.texture = None;
+    img.thumbnail_dirty = true;
+}
+
 pub fn update(ctx: &mut ToolContext) {
     if *ctx.layer_prompt_open { return; }
     
@@ -103,13 +151,34 @@ pub fn update(ctx: &mut ToolContext) {
                     object_type: ObjectType::Image,
                     object_idx: idx,
                 });
+                
+                // Expand the reused image to cover the marquee selection!
+                if let Some(sel) = &project.marquee_selection {
+                    let ppp = ctx.ui.ctx().pixels_per_point();
+                    let img = &mut project.layers[active_layer_idx].placed_images[idx];
+                    let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(
+                        img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0],
+                        img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1],
+                    ));
+                    let sel_rect = sel.bounds().expand(50.0);
+                    if !img_rect.contains(sel_rect.min) || !img_rect.contains(sel_rect.max) {
+                        let target_rect = img_rect.union(sel_rect);
+                        expand_image_to_rect(img, target_rect, ppp);
+                    }
+                }
             } else {
                 let ppp = ctx.ui.ctx().pixels_per_point();
-                let logical_w = 800.0f32;
-                let logical_h = 600.0f32;
-                let render_offset = ctx.render_offset;
-                let world_pos = pos + render_offset;
-                let img_pos = egui::pos2(world_pos.x - logical_w / 2.0, world_pos.y - logical_h / 2.0);
+                let (img_pos, logical_w, logical_h) = if let Some(sel) = &project.marquee_selection {
+                    let sel_rect = sel.bounds().expand(50.0);
+                    (sel_rect.min, sel_rect.width(), sel_rect.height())
+                } else {
+                    let render_offset = ctx.render_offset;
+                    let world_pos = pos + render_offset;
+                    let logical_w = 800.0f32;
+                    let logical_h = 600.0f32;
+                    (egui::pos2(world_pos.x - logical_w / 2.0, world_pos.y - logical_h / 2.0), logical_w, logical_h)
+                };
+                
                 let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                 let count = project.layers[active_layer_idx].placed_images.len();
                 let mut new_img = crate::tools::brush::create_new_canvas(id, img_pos, logical_w, logical_h, ppp);
@@ -122,6 +191,25 @@ pub fn update(ctx: &mut ToolContext) {
                     object_type: ObjectType::Image,
                     object_idx: new_idx,
                 });
+            }
+        } else {
+            // Reused active image already exists, expand it to cover the marquee selection!
+            if let Some(sel) = &project.marquee_selection {
+                if let Some(sel_obj) = project.selected_object {
+                    if sel_obj.object_type == ObjectType::Image && sel_obj.layer_idx == active_layer_idx {
+                        let ppp = ctx.ui.ctx().pixels_per_point();
+                        let img = &mut project.layers[active_layer_idx].placed_images[sel_obj.object_idx];
+                        let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(
+                            img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0],
+                            img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1],
+                        ));
+                        let sel_rect = sel.bounds().expand(50.0);
+                        if !img_rect.contains(sel_rect.min) || !img_rect.contains(sel_rect.max) {
+                            let target_rect = img_rect.union(sel_rect);
+                            expand_image_to_rect(img, target_rect, ppp);
+                        }
+                    }
+                }
             }
         }
         
