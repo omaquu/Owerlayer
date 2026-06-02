@@ -885,7 +885,7 @@ impl Default for BlurEffect { fn default() -> Self { Self::Gaussian } }
 
 fn default_toolbar_bg() -> [u8; 4] { [30, 30, 30, 220] }
 
-fn default_blur_strength() -> f32 { 10.0 }
+fn default_blur_strength() -> f32 { 0.0 }
 fn default_capture_fps() -> f32 { 15.0 }
 fn default_fso_fix() -> bool { true }
 fn default_polygon_sides() -> u32 { 5 }

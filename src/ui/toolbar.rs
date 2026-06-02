@@ -534,7 +534,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
                 });
                 ui.horizontal(|ui| {
-                    ui.add(egui::Slider::new(&mut settings.blur_strength, 0.0..=300.0).prefix("Blur: "));
+                    ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(1.0).range(0.0..=300.0).prefix("Blur: "));
                     if settings.blur_strength > 0.1 {
                         ui.add(egui::Separator::default().vertical());
                         ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
@@ -585,7 +585,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 });
                 
                 ui.horizontal(|ui| {
-                    ui.add(egui::Slider::new(&mut settings.blur_strength, 0.0..=300.0).prefix("Blur: "));
+                    ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(1.0).range(0.0..=300.0).prefix("Blur: "));
                     if settings.blur_strength > 0.1 {
                         ui.add(egui::Separator::default().vertical());
                         ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
@@ -609,7 +609,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Blur => {
-            ui.add(egui::DragValue::new(&mut settings.blur_strength).range(1.0..=300.0).prefix("Blur: "));
+            ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(1.0).range(1.0..=300.0).prefix("Blur: "));
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
@@ -734,7 +734,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur,
                         };
                         let mut bl_slider = bl.max(0.0);
-                        if ui.add(egui::DragValue::new(&mut bl_slider).range(0.0..=300.0).prefix("Blur: ")).changed() {
+                        if ui.add(egui::DragValue::new(&mut bl_slider).speed(1.0).range(0.0..=300.0).prefix("Blur: ")).changed() {
                             match sel.object_type {
                                 ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur = bl_slider,
                                 ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur = bl_slider,
@@ -827,7 +827,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
 
                         // Layer Blur slider
                         let mut bl_slider = layer.blur.max(0.0);
-                        if ui.add(egui::DragValue::new(&mut bl_slider).range(0.0..=300.0).prefix("Blur: ")).changed() {
+                        if ui.add(egui::DragValue::new(&mut bl_slider).speed(1.0).range(0.0..=300.0).prefix("Blur: ")).changed() {
                             layer.blur = bl_slider;
                         }
 

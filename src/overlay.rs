@@ -880,12 +880,132 @@ pub fn render_canvas(
                 }
             };
 
-            draw_selection_shape(&painter, &sel.shape, ctx.render_offset, time);
-            for op in &sel.ops {
-                match op {
-                    crate::types::SelectionOp::Add(sh) | crate::types::SelectionOp::Subtract(sh) => {
-                        draw_selection_shape(&painter, sh, ctx.render_offset, time);
+            let bounds = sel.bounds();
+            if bounds.width() > 0.1 && bounds.height() > 0.1 {
+                // Calculate dynamic step based on bounds max dimension to guarantee high performance
+                let max_dim = bounds.width().max(bounds.height());
+                let step = (max_dim / 150.0).clamp(3.0, 10.0);
+                
+                let pad = 6.0f32;
+                let min_x = bounds.min.x - pad;
+                let min_y = bounds.min.y - pad;
+                let max_x = bounds.max.x + pad;
+                let max_y = bounds.max.y + pad;
+                
+                let cols = ((max_x - min_x) / step).ceil() as i32 + 1;
+                let rows = ((max_y - min_y) / step).ceil() as i32 + 1;
+                
+                let mut grid = vec![false; (cols * rows) as usize];
+                for r in 0..rows {
+                    let y = min_y + r as f32 * step;
+                    for c in 0..cols {
+                        let x = min_x + c as f32 * step;
+                        let p = egui::pos2(x, y);
+                        grid[(r * cols + c) as usize] = sel.contains(p);
                     }
+                }
+                
+                let mut edges = std::collections::HashSet::new();
+                let mut adjacency: std::collections::HashMap<(i32, i32), Vec<(i32, i32)>> = std::collections::HashMap::new();
+                
+                let mut add_edge = |p1: (i32, i32), p2: (i32, i32)| {
+                    if p1 == p2 { return; }
+                    let edge = if p1 < p2 { (p1, p2) } else { (p2, p1) };
+                    if edges.insert(edge) {
+                        adjacency.entry(p1).or_default().push(p2);
+                        adjacency.entry(p2).or_default().push(p1);
+                    }
+                };
+                
+                for r in 0..(rows - 1) {
+                    for c in 0..(cols - 1) {
+                        let tl = grid[(r * cols + c) as usize];
+                        let tr = grid[(r * cols + (c + 1)) as usize];
+                        let br = grid[((r + 1) * cols + (c + 1)) as usize];
+                        let bl = grid[((r + 1) * cols + c) as usize];
+                        
+                        let index = ((tl as usize) << 3) | ((tr as usize) << 2) | ((br as usize) << 1) | bl as usize;
+                        if index == 0 || index == 15 {
+                            continue;
+                        }
+                        
+                        let m0 = (2 * c + 1, 2 * r);
+                        let m1 = (2 * c + 2, 2 * r + 1);
+                        let m2 = (2 * c + 1, 2 * r + 2);
+                        let m3 = (2 * c, 2 * r + 1);
+                        
+                        match index {
+                            1 => add_edge(m2, m3),
+                            2 => add_edge(m1, m2),
+                            3 => add_edge(m1, m3),
+                            4 => add_edge(m0, m1),
+                            5 => {
+                                add_edge(m0, m3);
+                                add_edge(m1, m2);
+                            }
+                            6 => add_edge(m0, m2),
+                            7 => add_edge(m0, m3),
+                            8 => add_edge(m0, m3),
+                            9 => add_edge(m0, m2),
+                            10 => {
+                                add_edge(m0, m1);
+                                add_edge(m2, m3);
+                            }
+                            11 => add_edge(m0, m1),
+                            12 => add_edge(m1, m3),
+                            13 => add_edge(m1, m2),
+                            14 => add_edge(m2, m3),
+                            _ => {}
+                        }
+                    }
+                }
+                
+                let mut loops: Vec<Vec<egui::Pos2>> = Vec::new();
+                while !edges.is_empty() {
+                    let &edge = edges.iter().next().unwrap();
+                    edges.remove(&edge);
+                    
+                    let (start, mut current) = edge;
+                    let mut path = vec![start, current];
+                    
+                    loop {
+                        let mut next_opt = None;
+                        if let Some(neighbors) = adjacency.get(&current) {
+                            for &n in neighbors {
+                                let test_edge = if current < n { (current, n) } else { (n, current) };
+                                if edges.contains(&test_edge) {
+                                    next_opt = Some((n, test_edge));
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if let Some((next, e)) = next_opt {
+                            edges.remove(&e);
+                            path.push(next);
+                            current = next;
+                        } else {
+                            let closing_edge = if current < start { (current, start) } else { (start, current) };
+                            if edges.contains(&closing_edge) {
+                                edges.remove(&closing_edge);
+                                path.push(start);
+                            }
+                            break;
+                        }
+                    }
+                    
+                    if path.len() >= 3 {
+                        let mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
+                            let screen_x = min_x + (pt.0 as f32 / 2.0) * step;
+                            let screen_y = min_y + (pt.1 as f32 / 2.0) * step;
+                            egui::pos2(screen_x - ctx.render_offset.x, screen_y - ctx.render_offset.y)
+                        }).collect();
+                        loops.push(mapped_path);
+                    }
+                }
+                
+                for path in loops {
+                    draw_dashed_path(&painter, &path, time);
                 }
             }
             
