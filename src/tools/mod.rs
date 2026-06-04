@@ -19,6 +19,7 @@ pub struct ToolContext<'a, 'b> {
     pub project: &'a mut Project,
     pub settings: &'a mut Settings,
     pub mouse: &'a MouseState,
+    pub pos: egui::Pos2,
     pub active_tool: &'a mut Tool,
     pub last_tool_used: &'a mut Option<Tool>,
     pub current_stroke: &'a mut Vec<egui::Pos2>,

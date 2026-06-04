@@ -531,6 +531,8 @@ pub struct PlacedImage {
     #[serde(skip)]
     pub mask_dirty: bool,
     pub show_source_rect: bool,
+    #[serde(default)]
+    pub snip_source_overlay: bool,
     #[serde(skip)]
     pub frames: Vec<Vec<u8>>,
     #[serde(skip)]
@@ -604,6 +606,7 @@ impl Clone for PlacedImage {
             mask_size: self.mask_size,
             mask_texture: None,
             show_source_rect: self.show_source_rect,
+            snip_source_overlay: self.snip_source_overlay,
             frames: self.frames.clone(),
             frame_durations: self.frame_durations.clone(),
             current_frame: self.current_frame,
@@ -658,6 +661,7 @@ impl PlacedImage {
             mask_size: None,
             mask_texture: None,
             show_source_rect: false,
+            snip_source_overlay: false,
             frames: Vec::new(),
             frame_durations: Vec::new(),
             current_frame: 0,
@@ -882,6 +886,8 @@ pub struct Settings {
     pub show_screen_controls: bool,
     #[serde(default)]
     pub snip_source_overlay: bool,
+    #[serde(default)]
+    pub live_performance_mode: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -892,7 +898,7 @@ impl Default for BlurEffect { fn default() -> Self { Self::Gaussian } }
 fn default_toolbar_bg() -> [u8; 4] { [30, 30, 30, 220] }
 
 fn default_blur_strength() -> f32 { 0.0 }
-fn default_capture_fps() -> f32 { 30.0 }
+fn default_capture_fps() -> f32 { 60.0 }
 fn default_fso_fix() -> bool { true }
 fn default_polygon_sides() -> u32 { 5 }
 fn default_toolbar_pos() -> egui::Pos2 { egui::pos2(40.0, 60.0) }
@@ -998,6 +1004,7 @@ impl Default for Settings {
             highlight_opacity: default_highlight_opacity(),
             show_screen_controls: default_show_screen_controls(),
             snip_source_overlay: false,
+            live_performance_mode: false,
         }
     }
 }

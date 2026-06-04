@@ -721,6 +721,7 @@ pub fn render_canvas(
         project,
         settings,
         mouse,
+        pos,
         active_tool,
         last_tool_used,
         current_stroke,
@@ -995,7 +996,12 @@ pub fn render_canvas(
             for (layer_idx, layer) in ctx.project.layers.iter_mut().enumerate() {
                 if !layer.visible { continue; }
                 for (img_idx, img) in layer.placed_images.iter().enumerate() {
-                    if img.show_source_rect && img.source_rect.is_some() {
+                    let is_selected = if let Some(sel) = &ctx.project.selected_object {
+                        sel.layer_idx == layer_idx && sel.object_type == crate::types::ObjectType::Image && sel.object_idx == img_idx
+                    } else {
+                        false
+                    };
+                    if (img.show_source_rect || is_selected) && img.source_rect.is_some() {
                         has_show_source = true;
                         let src = img.source_rect.unwrap();
                         let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));

@@ -730,7 +730,14 @@ impl eframe::App for OwerlayerApp {
 
         // ---- 3b. Update Capture Exclusion (Fix live snip mirror loop) ----
         if self.initialized {
-            let expected_exclude = self.settings.exclude_from_capture;
+            let mut expected_exclude = self.settings.exclude_from_capture;
+            if !expected_exclude {
+                let has_live = self.project.layers.iter().any(|l| l.visible && l.placed_images.iter().any(|img| img.visible && img.is_live));
+                let marquee_live = self.project.marquee_selection.is_some() && self.settings.snip_live;
+                if (has_live || marquee_live) && !self.settings.snip_source_overlay {
+                    expected_exclude = true;
+                }
+            }
             if self.prev_exclude_capture != Some(expected_exclude) {
                 winapi_utils::set_capture_exclusion(expected_exclude);
                 self.prev_exclude_capture = Some(expected_exclude);
@@ -927,6 +934,7 @@ impl eframe::App for OwerlayerApp {
                             let img = if trigger_blur {
                                 let pixels = captured_pixels.unwrap_or_default();
                                 let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
+                                new_img.snip_source_overlay = self.settings.snip_source_overlay;
                                 new_img.display_size = Some([bounds.width(), bounds.height()]);
                                 new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                 new_img.show_source_rect = false;
@@ -954,6 +962,7 @@ impl eframe::App for OwerlayerApp {
                                 }
                                 
                                 let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
+                                new_img.snip_source_overlay = self.settings.snip_source_overlay;
                                 new_img.display_size = Some([bounds.width(), bounds.height()]);
                                 new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                 new_img.show_source_rect = false;
@@ -1122,7 +1131,12 @@ impl eframe::App for OwerlayerApp {
         // ---- 5. Render UI ----
         let rasterizing = self.rasterize_phase == 1;
         let show_ui = (self.edit_mode || self.settings.keep_ui_visible) && !rasterizing;
-        self.capture_thread.set_fps(self.settings.capture_fps);
+        let fps = if self.settings.live_performance_mode {
+            10.0
+        } else {
+            self.settings.capture_fps
+        };
+        self.capture_thread.set_fps(fps);
         if show_ui {
             // println!("DEBUG: Frame {} | show_ui=true | edit_mode={} | rasterize_phase={} | req={:?}", self.frame_count, self.edit_mode, self.rasterize_phase, self.project.rasterize_request.is_some());
             overlay::render_mode_indicator(ctx, self.edit_mode, self.settings.hotkey.display_name(), self.settings.toggle_mode, &self.settings, &self.owl_icon);

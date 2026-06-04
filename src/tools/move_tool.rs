@@ -22,7 +22,7 @@ pub fn update(ctx: &mut ToolContext) {
     let ui = &mut *ctx.ui;
     let canvas_response = ctx.canvas_response;
     let painter = ui.painter_at(canvas_response.rect);
-    let pos = mouse.pos;
+    let pos = ctx.pos;
     let left_down = mouse.left_down;
     let left_just_pressed = mouse.left_just_pressed;
     let left_just_released = mouse.left_just_released;
@@ -176,53 +176,59 @@ pub fn update(ctx: &mut ToolContext) {
                      if img.source_rect.is_some() {
                          let is_selected = project.selected_object == Some(SelectedObject { layer_idx, object_type: ObjectType::Image, object_idx: img_idx });
                          
-                         if is_selected && img.show_source_rect {
-                             let src = img.source_rect.unwrap();
-                             let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
-                             
-                             if let Some(ref local_pts) = img.snip_points {
-                                 let mut current_path = Vec::new();
-                                 for p in local_pts {
-                                     if p.x.is_nan() || p.y.is_nan() {
-                                         if !current_path.is_empty() {
-                                             painter.add(egui::Shape::line(current_path.clone(), egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
-                                             current_path.clear();
-                                         }
-                                     } else {
-                                         current_path.push(egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y));
-                                     }
-                                 }
-                                 if !current_path.is_empty() {
-                                     painter.add(egui::Shape::line(current_path, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
-                                 }
-                             } else {
-                                 painter.rect_stroke(src_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
-                             }
-                             
-                             painter.text(src_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
-                             
-                             // Handles for source rect
-                             let s_corners = [src_rect.left_top(), src_rect.right_top(), src_rect.left_bottom(), src_rect.right_bottom()];
-                             for (idx, &sc) in s_corners.iter().enumerate() {
-                                 let handle_rect = egui::Rect::from_center_size(sc, egui::vec2(12.0, 12.0));
-                                 painter.rect_filled(handle_rect, 0.0, egui::Color32::from_rgb(255, 150, 50));
-                                 if left_just_pressed && handle_rect.contains(pos) {
-                                     *line_start = Some(egui::pos2(-4.0, idx as f32)); // Move source rect handle
-                                     *initial_bounds = Some(src_rect);
-                                     *dragging_source_rect = true;
-                                     clone_layer_after_loop = true;
-                                     click_consumed = true;
-                                 }
-                             }
-                              let on_border = src_rect.expand(4.0).contains(pos) && !src_rect.shrink(4.0).contains(pos);
-                              let label_rect = egui::Rect::from_min_max(src_rect.left_top() - egui::vec2(0.0, 15.0), src_rect.left_top() + egui::vec2(50.0, 0.0));
-                              if left_just_pressed && (on_border || label_rect.contains(pos)) && !*dragging_source_rect {
-                                  *line_start = Some(pos);
-                                  *initial_bounds = Some(src_rect);
-                                  *dragging_source_rect = true;
-                                  clone_layer_after_loop = true;
-                                  click_consumed = true;
+                         if is_selected {
+                              let src = img.source_rect.unwrap();
+                              let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                              
+                              let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                              let ppp = ui.ctx().pixels_per_point();
+                              let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
+                              let draw_rect = src_rect.translate(-window_origin);
+                              let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(mouse.pos - window_origin);
+
+                              if let Some(ref local_pts) = img.snip_points {
+                                  let mut current_path = Vec::new();
+                                  for p in local_pts {
+                                      if p.x.is_nan() || p.y.is_nan() {
+                                          if !current_path.is_empty() {
+                                              painter.add(egui::Shape::line(current_path.clone(), egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
+                                              current_path.clear();
+                                          }
+                                      } else {
+                                          current_path.push(egui::pos2(draw_rect.min.x + p.x, draw_rect.min.y + p.y));
+                                      }
+                                  }
+                                  if !current_path.is_empty() {
+                                      painter.add(egui::Shape::line(current_path, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
+                                  }
+                              } else {
+                                  painter.rect_stroke(draw_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
                               }
+                              
+                              painter.text(draw_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
+                              
+                              // Handles for source rect
+                              let s_corners = [draw_rect.left_top(), draw_rect.right_top(), draw_rect.left_bottom(), draw_rect.right_bottom()];
+                              for (idx, &sc) in s_corners.iter().enumerate() {
+                                  let handle_rect = egui::Rect::from_center_size(sc, egui::vec2(12.0, 12.0));
+                                  painter.rect_filled(handle_rect, 0.0, egui::Color32::from_rgb(255, 150, 50));
+                                  if left_just_pressed && handle_rect.contains(hover_pos) {
+                                      *line_start = Some(egui::pos2(-4.0, idx as f32)); // Move source rect handle
+                                      *initial_bounds = Some(src_rect);
+                                      *dragging_source_rect = true;
+                                      clone_layer_after_loop = true;
+                                      click_consumed = true;
+                                  }
+                              }
+                               let on_border = draw_rect.contains(hover_pos);
+                               let label_rect = egui::Rect::from_min_max(draw_rect.left_top() - egui::vec2(0.0, 15.0), draw_rect.left_top() + egui::vec2(50.0, 0.0));
+                               if left_just_pressed && (on_border || label_rect.contains(hover_pos)) && !*dragging_source_rect {
+                                   *line_start = Some(hover_pos);
+                                   *initial_bounds = Some(src_rect);
+                                   *dragging_source_rect = true;
+                                   clone_layer_after_loop = true;
+                                   click_consumed = true;
+                               }
                          }
                      }
                  }
@@ -605,24 +611,30 @@ pub fn update(ctx: &mut ToolContext) {
                 if let Some(start) = *line_start {
                     if left_down {
                         let world_pos = pos + render_offset;
-                                        let world_start = start + render_offset;
+                        let world_start = start + render_offset;
                         if *dragging_source_rect {
                             // Dragging Source Rect (works for both live and static snips)
                             if let Some(sel) = project.selected_object {
                                 if let ObjectType::Image = sel.object_type {
                                     let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
                                     if img.source_rect.is_some() {
+                                        let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                                        let ppp = ui.ctx().pixels_per_point();
+                                        let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
+                                        let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_else(|| if settings.use_absolute_screen_coords { pos - window_origin } else { pos });
+                                        let hover_pos_screen = hover_pos + window_origin;
+
                                         if start.x == -4.0 {
                                             // Resize handle
                                             let idx = start.y as usize;
                                             let ib = initial_bounds.unwrap();
                                             let ic = [ib.left_top(), ib.right_top(), ib.left_bottom(), ib.right_bottom()];
                                             let anchor = ic[3 - idx];
-                                            let new_rect = egui::Rect::from_two_pos(anchor, pos);
+                                            let new_rect = egui::Rect::from_two_pos(anchor, hover_pos_screen);
                                             img.source_rect = Some([new_rect.min.x, new_rect.min.y, new_rect.width(), new_rect.height()]);
                                         } else {
                                             // Move whole rect
-                                            let delta = pos - start;
+                                            let delta = hover_pos - start;
                                             let ib = initial_bounds.unwrap();
                                             img.source_rect = Some([ib.min.x + delta.x, ib.min.y + delta.y, ib.width(), ib.height()]);
                                         }

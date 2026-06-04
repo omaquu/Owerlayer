@@ -779,5 +779,158 @@ pub fn list_visible_windows() -> Vec<(usize, String)> {
     }
 }
 
+#[cfg(windows)]
+pub struct GdiCaptureCache {
+    pub mem_dc: windows_sys::Win32::Graphics::Gdi::HDC,
+    pub bitmap: windows_sys::Win32::Graphics::Gdi::HBITMAP,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[cfg(windows)]
+unsafe impl Send for GdiCaptureCache {}
+#[cfg(windows)]
+unsafe impl Sync for GdiCaptureCache {}
+
+#[cfg(windows)]
+impl Drop for GdiCaptureCache {
+    fn drop(&mut self) {
+        unsafe {
+            use windows_sys::Win32::Graphics::Gdi::*;
+            if !self.mem_dc.is_null() {
+                DeleteDC(self.mem_dc);
+            }
+            if !self.bitmap.is_null() {
+                DeleteObject(self.bitmap);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn capture_screen_rect_cached(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    cache_opt: &mut Option<GdiCaptureCache>,
+) -> Option<Vec<u8>> {
+    if width <= 0 || height <= 0 || width > 8192 || height > 8192 { return None; }
+    
+    unsafe {
+        use windows_sys::Win32::Graphics::Gdi::*;
+        
+        let screen_dc = GetDC(std::ptr::null_mut());
+        if screen_dc.is_null() { return None; }
+        
+        let mut needs_init = true;
+        if let Some(ref cache) = cache_opt {
+            if cache.width == width && cache.height == height && !cache.mem_dc.is_null() && !cache.bitmap.is_null() {
+                needs_init = false;
+            }
+        }
+        
+        if needs_init {
+            // Clean up old cache
+            *cache_opt = None;
+            
+            let mem_dc = CreateCompatibleDC(screen_dc);
+            if mem_dc.is_null() {
+                ReleaseDC(std::ptr::null_mut(), screen_dc);
+                return None;
+            }
+            let bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+            if bitmap.is_null() {
+                DeleteDC(mem_dc);
+                ReleaseDC(std::ptr::null_mut(), screen_dc);
+                return None;
+            }
+            *cache_opt = Some(GdiCaptureCache {
+                mem_dc,
+                bitmap,
+                width,
+                height,
+            });
+        }
+        
+        let cache = cache_opt.as_ref().unwrap();
+        let old_obj = SelectObject(cache.mem_dc, cache.bitmap);
+        
+        let success = BitBlt(cache.mem_dc, 0, 0, width, height, screen_dc, x, y, SRCCOPY);
+        
+        if success == 0 {
+            SelectObject(cache.mem_dc, old_obj);
+            ReleaseDC(std::ptr::null_mut(), screen_dc);
+            return None;
+        }
+        
+        let mut bmi: BITMAPINFO = std::mem::zeroed();
+        bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = -height;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB as u32;
+        
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        
+        let lines = GetDIBits(
+            cache.mem_dc,
+            cache.bitmap,
+            0,
+            height as u32,
+            pixels.as_mut_ptr() as *mut _,
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+        
+        SelectObject(cache.mem_dc, old_obj);
+        ReleaseDC(std::ptr::null_mut(), screen_dc);
+        
+        if lines == 0 { return None; }
+        
+        if pixels.len() > 2_000_000 {
+            use rayon::prelude::*;
+            pixels.par_chunks_exact_mut(4).for_each(|chunk| {
+                let b = chunk[0];
+                let g = chunk[1];
+                let r = chunk[2];
+                let a = 255;
+                chunk[0] = r;
+                chunk[1] = g;
+                chunk[2] = b;
+                chunk[3] = a;
+            });
+        } else {
+            for chunk in pixels.chunks_exact_mut(4) {
+                let b = chunk[0];
+                let g = chunk[1];
+                let r = chunk[2];
+                let a = 255;
+                chunk[0] = r;
+                chunk[1] = g;
+                chunk[2] = b;
+                chunk[3] = a;
+            }
+        }
+        
+        Some(pixels)
+    }
+}
+
+#[cfg(not(windows))]
+pub struct GdiCaptureCache;
+
+#[cfg(not(windows))]
+pub fn capture_screen_rect_cached(
+    _x: i32,
+    _y: i32,
+    _width: i32,
+    _height: i32,
+    _cache_opt: &mut Option<GdiCaptureCache>,
+) -> Option<Vec<u8>> {
+    None
+}
+
 #[cfg(not(windows))]
 pub fn list_visible_windows() -> Vec<(usize, String)> { Vec::new() }

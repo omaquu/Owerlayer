@@ -11,6 +11,13 @@ use std::time::{Duration, Instant};
 use crate::overlay::BlurEffect;
 use eframe::egui;
 
+#[cfg(windows)]
+#[link(name = "winmm")]
+extern "system" {
+    fn timeBeginPeriod(uPeriod: u32) -> u32;
+    fn timeEndPeriod(uPeriod: u32) -> u32;
+}
+
 // ── Public types ──
 
 #[derive(Clone, Debug)]
@@ -61,7 +68,15 @@ impl CaptureThread {
         let handle = thread::Builder::new()
             .name("owerlayer-capture".to_string())
             .spawn(move || {
+                #[cfg(windows)]
+                unsafe {
+                    timeBeginPeriod(1);
+                }
                 Self::capture_loop(r_requests, r_results, r_running, r_interval);
+                #[cfg(windows)]
+                unsafe {
+                    timeEndPeriod(1);
+                }
             })
             .expect("Failed to spawn capture thread");
 
@@ -121,6 +136,7 @@ impl CaptureThread {
         interval: Arc<std::sync::atomic::AtomicU64>,
     ) {
         let mut mask_cache: HashMap<usize, (Vec<u8>, [usize; 2])> = HashMap::new();
+        let mut gdi_caches: HashMap<usize, Option<crate::winapi_utils::GdiCaptureCache>> = HashMap::new();
 
         while running.load(Ordering::Relaxed) {
             let start = Instant::now();
@@ -132,6 +148,11 @@ impl CaptureThread {
                 Vec::new()
             };
 
+            // Prune caches for inactive requests
+            let active_ids: std::collections::HashSet<usize> = reqs.iter().map(|r| r.id).collect();
+            mask_cache.retain(|k, _| active_ids.contains(k));
+            gdi_caches.retain(|k, _| active_ids.contains(k));
+
             for req in &reqs {
                 if !running.load(Ordering::Relaxed) { break; }
 
@@ -140,7 +161,8 @@ impl CaptureThread {
                     Self::capture_window(req, &mut mask_cache)
                 } else {
                     // Screen rect capture
-                    Self::capture_screen(req, &mut mask_cache)
+                    let cache_entry = gdi_caches.entry(req.id).or_insert(None);
+                    Self::capture_screen(req, &mut mask_cache, cache_entry)
                 };
 
                 if let Some(result) = result {
@@ -155,7 +177,15 @@ impl CaptureThread {
             let interval_ms = interval.load(Ordering::Relaxed);
             let target = Duration::from_millis(interval_ms);
             if elapsed < target {
-                thread::sleep(target - elapsed);
+                let remaining = target - elapsed;
+                // If remaining time is more than 1.5ms, sleep for (remaining - 1ms)
+                if remaining > Duration::from_micros(1500) {
+                    thread::sleep(remaining - Duration::from_millis(1));
+                }
+                // Spin/yield until the exact time
+                while start.elapsed() < target {
+                    std::hint::spin_loop();
+                }
             }
         }
     }
@@ -256,7 +286,11 @@ impl CaptureThread {
         }
     }
 
-    fn capture_screen(req: &CaptureRequest, mask_cache: &mut HashMap<usize, (Vec<u8>, [usize; 2])>) -> Option<CaptureResult> {
+    fn capture_screen(
+        req: &CaptureRequest,
+        mask_cache: &mut HashMap<usize, (Vec<u8>, [usize; 2])>,
+        gdi_cache: &mut Option<crate::winapi_utils::GdiCaptureCache>,
+    ) -> Option<CaptureResult> {
         let (ox, oy) = if req.use_absolute { (0, 0) } else { req.window_offset };
 
         let sx = (req.source_rect[0] * req.ppp).round() as i32 + ox;
@@ -266,7 +300,7 @@ impl CaptureThread {
 
         if sw <= 0 || sh <= 0 { return None; }
 
-        let mut pixels = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh)?;
+        let mut pixels = crate::winapi_utils::capture_screen_rect_cached(sx, sy, sw, sh, gdi_cache)?;
 
         // Apply blur effect on background thread
         if req.blur > 0.1 {
@@ -281,12 +315,22 @@ impl CaptureThread {
 
         Self::apply_mask_to_captured_pixels(req, &mut pixels, sw as usize, sh as usize, mask_cache);
 
-        let color_pixels: Vec<egui::Color32> = pixels
-            .par_chunks_exact(4)
-            .map(|chunk| {
-                egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
-            })
-            .collect();
+        let color_pixels: Vec<egui::Color32> = if pixels.len() > 2_000_000 {
+            use rayon::prelude::*;
+            pixels
+                .par_chunks_exact(4)
+                .map(|chunk| {
+                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+                })
+                .collect()
+        } else {
+            pixels
+                .chunks_exact(4)
+                .map(|chunk| {
+                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+                })
+                .collect()
+        };
         let color_image = Arc::new(egui::ColorImage {
             size: [sw as usize, sh as usize],
             pixels: color_pixels,
@@ -304,12 +348,22 @@ impl CaptureThread {
         
         Self::apply_mask_to_captured_pixels(req, &mut pixels, pw, ph, mask_cache);
 
-        let color_pixels: Vec<egui::Color32> = pixels
-            .par_chunks_exact(4)
-            .map(|chunk| {
-                egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
-            })
-            .collect();
+        let color_pixels: Vec<egui::Color32> = if pixels.len() > 2_000_000 {
+            use rayon::prelude::*;
+            pixels
+                .par_chunks_exact(4)
+                .map(|chunk| {
+                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+                })
+                .collect()
+        } else {
+            pixels
+                .chunks_exact(4)
+                .map(|chunk| {
+                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+                })
+                .collect()
+        };
         let color_image = Arc::new(egui::ColorImage {
             size: [pw, ph],
             pixels: color_pixels,

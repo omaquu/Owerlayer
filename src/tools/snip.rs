@@ -6,12 +6,13 @@ use crate::tools::ToolContext;
 
 pub fn capture_screen_rect_safe(settings: &crate::types::Settings, sx: i32, sy: i32, w: i32, h: i32) -> Option<Vec<u8>> {
     let was_excluded = settings.exclude_from_capture;
-    if !was_excluded {
+    let should_exclude = !settings.snip_source_overlay && !was_excluded;
+    if should_exclude {
         crate::winapi_utils::set_capture_exclusion(true);
         std::thread::sleep(std::time::Duration::from_millis(40));
     }
     let res = crate::winapi_utils::capture_screen_rect(sx, sy, w, h);
-    if !was_excluded {
+    if should_exclude {
         crate::winapi_utils::set_capture_exclusion(false);
     }
     res
@@ -57,6 +58,7 @@ pub fn update(ctx: &mut ToolContext) {
                              if settings.snip_live {
                                  *snip_created = true;
                                  let mut img = PlacedImage::new(id, rect.min, [(w * ppp).round() as usize, (h * ppp).round() as usize], Vec::new());
+                                 img.snip_source_overlay = settings.snip_source_overlay;
                                  img.display_size = Some([w, h]);
                                  img.is_live = true;
                                  img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
@@ -82,6 +84,7 @@ pub fn update(ctx: &mut ToolContext) {
                                  if let Some(pixels) = capture_screen_rect_safe(settings, sx, sy, pw, ph) {
                                      *snip_created = true;
                                      let mut img = PlacedImage::new(id, rect.min, [pw as usize, ph as usize], pixels);
+                                     img.snip_source_overlay = settings.snip_source_overlay;
                                      img.display_size = Some([w, h]);
                                      img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                      img.show_source_rect = false;
@@ -140,6 +143,7 @@ pub fn update(ctx: &mut ToolContext) {
                             if settings.snip_live {
                                 *snip_created = true;
                                 let mut img = PlacedImage::new(id, rect.min, [pw, ph], Vec::new());
+                                img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([w, h]);
                                 img.is_live = true;
                                 img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
@@ -159,6 +163,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     *snip_created = true;
                                     for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                     let mut img = PlacedImage::new(id, rect.min, [pw, ph], pixels);
+                                    img.snip_source_overlay = settings.snip_source_overlay;
                                     img.display_size = Some([w, h]);
                                     img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                     img.show_source_rect = false;
@@ -200,6 +205,7 @@ pub fn update(ctx: &mut ToolContext) {
                         if settings.snip_live {
                             *snip_created = true;
                             let mut img = PlacedImage::new(id, bounds.min, [sw, sh], Vec::new());
+                            img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([bounds.width(), bounds.height()]);
                             img.is_live = true;
                             img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
@@ -219,6 +225,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 *snip_created = true;
                                 for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                 let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+                                img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([bounds.width(), bounds.height()]);
                                 img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                 img.show_source_rect = false;
@@ -262,6 +269,7 @@ pub fn update(ctx: &mut ToolContext) {
                         if settings.snip_live {
                             *snip_created = true;
                             let mut img = PlacedImage::new(id, bounds.min, [sw, sh], Vec::new());
+                            img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([bounds.width(), bounds.height()]);
                             img.is_live = true;
                             img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
@@ -281,6 +289,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 *snip_created = true;
                                 for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                 let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+                                img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([bounds.width(), bounds.height()]);
                                 img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                 img.show_source_rect = false;
@@ -330,6 +339,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 if settings.snip_live {
                                     *snip_created = true;
                                     let mut img = PlacedImage::new(id, bounds.min, [sw, sh], Vec::new());
+                                    img.snip_source_overlay = settings.snip_source_overlay;
                                     img.display_size = Some([bounds.width(), bounds.height()]);
                                     img.is_live = true;
                                     img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
@@ -347,6 +357,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         *snip_created = true;
                                         for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                         let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+                                        img.snip_source_overlay = settings.snip_source_overlay;
                                         img.display_size = Some([bounds.width(), bounds.height()]);
                                         img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                         img.show_source_rect = false;
@@ -378,6 +389,7 @@ pub fn update(ctx: &mut ToolContext) {
                             let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                             *snip_created = true;
                             let mut img = PlacedImage::new(id, rect.min, [(w * ppp).round() as usize, (h * ppp).round() as usize], Vec::new());
+                            img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([w, h]);
                             img.is_live = true;
                             img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
