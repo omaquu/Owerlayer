@@ -559,6 +559,8 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
                         if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
                             img.show_source_rect = !img.show_source_rect;
+                            settings.show_source_rect = img.show_source_rect;
+                            settings.save();
                         }
                     }
                 }
@@ -668,6 +670,8 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
                             if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
                                 img.show_source_rect = !img.show_source_rect;
+                                settings.show_source_rect = img.show_source_rect;
+                                settings.save();
                             }
                         }
                     }
@@ -757,6 +761,40 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                                 ObjectType::Text => { let t = &mut layer.text_annotations[sel.object_idx]; t.rotation = 0.0; t.skew = egui::Vec2::ZERO; t.perspective = [egui::Vec2::ZERO; 4]; }
                             }
                             *request_history_push = Some("Reset Transforms".into());
+                        }
+
+                        if let ObjectType::Image = sel.object_type {
+                            let (img_is_live, img_has_source_rect) = {
+                                let img = &project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                (img.is_live, img.source_rect.is_some())
+                            };
+                            if img_is_live || img_has_source_rect {
+                                ui.separator();
+                                let source_desktop = !settings.snip_source_overlay;
+                                let source_overlay = settings.snip_source_overlay;
+                                let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                                let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                                if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).clicked() {
+                                    update_snip_source_overlay(ui, project, settings, false);
+                                }
+                                if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).clicked() {
+                                    update_snip_source_overlay(ui, project, settings, true);
+                                }
+
+                                if img_is_live {
+                                    ui.separator();
+                                    let perf_mode = settings.live_performance_mode;
+                                    let real_mode = !settings.live_performance_mode;
+                                    let perf_color = if perf_mode { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
+                                    let real_color = if real_mode { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                                    if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).clicked() {
+                                        settings.live_performance_mode = true;
+                                    }
+                                    if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).clicked() {
+                                        settings.live_performance_mode = false;
+                                    }
+                                }
+                            }
                         }
                     });
 
@@ -850,53 +888,21 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                                 img.thumbnail_texture = None;
                                 if img.source_rect.is_none() {
                                     img.source_rect = Some([img.position.x, img.position.y, img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0], img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1]]);
-                                    img.show_source_rect = false;
+                                    img.show_source_rect = settings.show_source_rect;
                                 }
                             }
                             if img.is_live || img.source_rect.is_some() {
                                 let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
                                 if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
                                     img.show_source_rect = !img.show_source_rect;
+                                    settings.show_source_rect = img.show_source_rect;
+                                    settings.save();
                                 }
                             }
                         }
                     });
 
-                    if let ObjectType::Image = sel.object_type {
-                        let (img_is_live, img_has_source_rect) = {
-                            let img = &project.layers[sel.layer_idx].placed_images[sel.object_idx];
-                            (img.is_live, img.source_rect.is_some())
-                        };
-                        if img_is_live || img_has_source_rect {
-                            ui.horizontal(|ui| {
-                                // Desktop / Overlay capture source toggle
-                                let source_desktop = !settings.snip_source_overlay;
-                                let source_overlay = settings.snip_source_overlay;
-                                let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
-                                let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                                if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).clicked() {
-                                    update_snip_source_overlay(ui, project, settings, false);
-                                }
-                                if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).clicked() {
-                                    update_snip_source_overlay(ui, project, settings, true);
-                                }
 
-                                if img_is_live {
-                                    ui.separator();
-                                    let perf_mode = settings.live_performance_mode;
-                                    let real_mode = !settings.live_performance_mode;
-                                    let perf_color = if perf_mode { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
-                                    let real_color = if real_mode { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                                    if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).clicked() {
-                                        settings.live_performance_mode = true;
-                                    }
-                                    if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).clicked() {
-                                        settings.live_performance_mode = false;
-                                    }
-                                }
-                            });
-                        }
-                    }
                 } else {
                     // LAYER MODE
                     let active_layer_idx = project.active_layer;
@@ -924,6 +930,30 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         if ui.button("⎌").on_hover_text("Reset Layer Transforms").clicked() {
                             crate::utils::translate_layer(layer, -crate::utils::layer_bounds(layer).map(|b| b.min.to_vec2()).unwrap_or(egui::Vec2::ZERO));
                             *request_history_push = Some("Reset Layer".into());
+                        }
+
+                        ui.separator();
+                        let source_desktop = !settings.snip_source_overlay;
+                        let source_overlay = settings.snip_source_overlay;
+                        let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                        let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                        if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).clicked() {
+                            update_snip_source_overlay(ui, project, settings, false);
+                        }
+                        if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).clicked() {
+                            update_snip_source_overlay(ui, project, settings, true);
+                        }
+
+                        ui.separator();
+                        let perf_mode = settings.live_performance_mode;
+                        let real_mode = !settings.live_performance_mode;
+                        let perf_color = if perf_mode { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
+                        let real_color = if real_mode { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                        if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).clicked() {
+                            settings.live_performance_mode = true;
+                        }
+                        if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).clicked() {
+                            settings.live_performance_mode = false;
                         }
                     });
                     

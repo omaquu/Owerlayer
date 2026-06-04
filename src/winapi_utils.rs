@@ -889,31 +889,6 @@ pub fn capture_screen_rect_cached(
         
         if lines == 0 { return None; }
         
-        if pixels.len() > 2_000_000 {
-            use rayon::prelude::*;
-            pixels.par_chunks_exact_mut(4).for_each(|chunk| {
-                let b = chunk[0];
-                let g = chunk[1];
-                let r = chunk[2];
-                let a = 255;
-                chunk[0] = r;
-                chunk[1] = g;
-                chunk[2] = b;
-                chunk[3] = a;
-            });
-        } else {
-            for chunk in pixels.chunks_exact_mut(4) {
-                let b = chunk[0];
-                let g = chunk[1];
-                let r = chunk[2];
-                let a = 255;
-                chunk[0] = r;
-                chunk[1] = g;
-                chunk[2] = b;
-                chunk[3] = a;
-            }
-        }
-        
         Some(pixels)
     }
 }

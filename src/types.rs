@@ -888,6 +888,8 @@ pub struct Settings {
     pub snip_source_overlay: bool,
     #[serde(default)]
     pub live_performance_mode: bool,
+    #[serde(default)]
+    pub show_source_rect: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -1005,6 +1007,7 @@ impl Default for Settings {
             show_screen_controls: default_show_screen_controls(),
             snip_source_overlay: false,
             live_performance_mode: false,
+            show_source_rect: false,
         }
     }
 }

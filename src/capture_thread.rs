@@ -302,6 +302,15 @@ impl CaptureThread {
 
         let mut pixels = crate::winapi_utils::capture_screen_rect_cached(sx, sy, sw, sh, gdi_cache)?;
 
+        // Swap BGRA to RGBA in place
+        for chunk in pixels.chunks_exact_mut(4) {
+            let b = chunk[0];
+            let r = chunk[2];
+            chunk[0] = r;
+            chunk[2] = b;
+            chunk[3] = 255;
+        }
+
         // Apply blur effect on background thread
         if req.blur > 0.1 {
             let w = sw as usize;
@@ -315,22 +324,11 @@ impl CaptureThread {
 
         Self::apply_mask_to_captured_pixels(req, &mut pixels, sw as usize, sh as usize, mask_cache);
 
-        let color_pixels: Vec<egui::Color32> = if pixels.len() > 2_000_000 {
-            use rayon::prelude::*;
-            pixels
-                .par_chunks_exact(4)
-                .map(|chunk| {
-                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
-                })
-                .collect()
-        } else {
-            pixels
-                .chunks_exact(4)
-                .map(|chunk| {
-                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
-                })
-                .collect()
-        };
+        let mut color_pixels = Vec::with_capacity(pixels.len() / 4);
+        for chunk in pixels.chunks_exact(4) {
+            color_pixels.push(egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3]));
+        }
+
         let color_image = Arc::new(egui::ColorImage {
             size: [sw as usize, sh as usize],
             pixels: color_pixels,
