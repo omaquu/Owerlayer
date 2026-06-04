@@ -96,9 +96,13 @@ pub fn update(ctx: &mut ToolContext) {
         if current_stroke.len() >= 2 {
             painter.add(egui::Shape::line(current_stroke.clone(), egui::Stroke::new(1.5, egui::Color32::WHITE)));
         }
-        if left_just_released && current_stroke.len() >= 3 {
-            let world_pts: Vec<egui::Pos2> = current_stroke.iter().map(|&p| p + ctx.render_offset).collect();
-            set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
+        if left_just_released {
+            if current_stroke.len() >= 3 {
+                let world_pts: Vec<egui::Pos2> = current_stroke.iter().map(|&p| p + ctx.render_offset).collect();
+                set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
+            } else {
+                project.marquee_selection = None;
+            }
             current_stroke.clear();
         }
     } else if mode == CutMode::Rect {
@@ -111,9 +115,11 @@ pub fn update(ctx: &mut ToolContext) {
         if left_just_released {
             if let Some(start) = line_start.take() {
                 let rect = egui::Rect::from_two_pos(start, pos);
-                if rect.width() > 2.0 && rect.height() > 2.0 {
+                if rect.width() > 6.0 && rect.height() > 6.0 {
                     let world_rect = rect.translate(ctx.render_offset);
                     set_marquee_selection(project, settings, SelectionShape::Rect(world_rect));
+                } else {
+                    project.marquee_selection = None;
                 }
             }
         }
@@ -130,9 +136,11 @@ pub fn update(ctx: &mut ToolContext) {
         if left_just_released {
             if let Some(start) = line_start.take() {
                 let radius = start.distance(pos);
-                if radius > 5.0 {
+                if radius > 6.0 {
                     let world_center = start + ctx.render_offset;
                     set_marquee_selection(project, settings, SelectionShape::Circle { center: world_center, radius });
+                } else {
+                    project.marquee_selection = None;
                 }
             }
         }
@@ -145,8 +153,12 @@ pub fn update(ctx: &mut ToolContext) {
         let close_to_start = current_stroke.len() > 2 && pos.distance(current_stroke[0]) < 15.0 && left_just_pressed;
 
         if (right_clicked || enter_pressed || close_to_start) && !current_stroke.is_empty() {
-            let world_pts: Vec<egui::Pos2> = current_stroke.iter().map(|&p| p + ctx.render_offset).collect();
-            set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
+            if current_stroke.len() >= 3 {
+                let world_pts: Vec<egui::Pos2> = current_stroke.iter().map(|&p| p + ctx.render_offset).collect();
+                set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
+            } else {
+                project.marquee_selection = None;
+            }
             current_stroke.clear();
         }
         if !current_stroke.is_empty() {
@@ -168,10 +180,12 @@ pub fn update(ctx: &mut ToolContext) {
         if left_just_released {
             if let Some(start) = line_start.take() {
                 let radius = start.distance(pos);
-                if radius > 5.0 {
+                if radius > 6.0 {
                     let pts = if mode == CutMode::Star { crate::utils::get_star_points(start, radius) } else { crate::utils::get_heart_points(start, radius) };
                     let world_pts: Vec<egui::Pos2> = pts.into_iter().map(|p| p + ctx.render_offset).collect();
                     set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
+                } else {
+                    project.marquee_selection = None;
                 }
             }
         }
@@ -189,14 +203,16 @@ pub fn update(ctx: &mut ToolContext) {
                     let py = ((world_pos.y - img.position.y) * (img.size[1] as f32 / disp_h)) as i32;
                     if px >= 0 && px < img.size[0] as i32 && py >= 0 && py < img.size[1] as i32 {
                         let start_idx = (py as usize * img.size[0] + px as usize) * 4;
-                        let start_color = [img.pixels[start_idx], img.pixels[start_idx+1], img.pixels[start_idx+2], img.pixels[start_idx+3]];
-                        if start_color[3] > 0 {
-                            let pts = magic_wand_to_selection(img, px, py, start_color, settings.magic_wand_threshold);
-                            if !pts.is_empty() {
-                                set_marquee_selection(project, settings, SelectionShape::Poly(pts));
+                        if start_idx + 3 < img.pixels.len() {
+                            let start_color = [img.pixels[start_idx], img.pixels[start_idx+1], img.pixels[start_idx+2], img.pixels[start_idx+3]];
+                            if start_color[3] > 0 {
+                                let pts = magic_wand_to_selection(img, px, py, start_color, settings.magic_wand_threshold);
+                                if !pts.is_empty() {
+                                    set_marquee_selection(project, settings, SelectionShape::Poly(pts));
+                                }
+                                clicked_on_img = true;
+                                break;
                             }
-                            clicked_on_img = true;
-                            break;
                         }
                     }
                 }
@@ -217,56 +233,60 @@ pub fn update(ctx: &mut ToolContext) {
                         let py = ((pos.y - rect.min.y) * ppp).round() as i32;
                         if px >= 0 && px < sw && py >= 0 && py < sh {
                             let start_idx = (py * sw + px) as usize * 4;
-                            let target_color = [pixels[start_idx], pixels[start_idx+1], pixels[start_idx+2], pixels[start_idx+3]];
-                            
-                            let color_diff = |c1: [u8; 4], c2: [u8; 4]| -> f32 {
-                                let dr = (c1[0] as f32 - c2[0] as f32).abs();
-                                let dg = (c1[1] as f32 - c2[1] as f32).abs();
-                                let db = (c1[2] as f32 - c2[2] as f32).abs();
-                                (dr + dg + db) / 3.0
-                            };
-                            
-                            let mut mask = vec![0u8; (sw * sh) as usize];
-                            let mut stack = vec![(px, py)];
-                            mask[(py * sw + px) as usize] = 255;
-                            
-                            while let Some((cx, cy)) = stack.pop() {
-                                for (dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                                    let nx = cx + dx;
-                                    let ny = cy + dy;
-                                    if nx >= 0 && nx < sw && ny >= 0 && ny < sh {
-                                        let nidx = (ny * sw + nx) as usize;
-                                        if mask[nidx] == 0 {
-                                            let pixel_idx = nidx * 4;
-                                            let current_color = [pixels[pixel_idx], pixels[pixel_idx+1], pixels[pixel_idx+2], pixels[pixel_idx+3]];
-                                            if color_diff(current_color, target_color) <= settings.magic_wand_threshold {
-                                                mask[nidx] = 255;
-                                                stack.push((nx, ny));
+                            if start_idx + 3 < pixels.len() {
+                                let target_color = [pixels[start_idx], pixels[start_idx+1], pixels[start_idx+2], pixels[start_idx+3]];
+                                
+                                let color_diff = |c1: [u8; 4], c2: [u8; 4]| -> f32 {
+                                    let dr = (c1[0] as f32 - c2[0] as f32).abs();
+                                    let dg = (c1[1] as f32 - c2[1] as f32).abs();
+                                    let db = (c1[2] as f32 - c2[2] as f32).abs();
+                                    (dr + dg + db) / 3.0
+                                };
+                                
+                                let mut mask = vec![0u8; (sw * sh) as usize];
+                                let mut stack = vec![(px, py)];
+                                mask[(py * sw + px) as usize] = 255;
+                                
+                                while let Some((cx, cy)) = stack.pop() {
+                                    for (dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                                        let nx = cx + dx;
+                                        let ny = cy + dy;
+                                        if nx >= 0 && nx < sw && ny >= 0 && ny < sh {
+                                            let nidx = (ny * sw + nx) as usize;
+                                            if mask[nidx] == 0 {
+                                                let pixel_idx = nidx * 4;
+                                                if pixel_idx + 3 < pixels.len() {
+                                                    let current_color = [pixels[pixel_idx], pixels[pixel_idx+1], pixels[pixel_idx+2], pixels[pixel_idx+3]];
+                                                    if color_diff(current_color, target_color) <= settings.magic_wand_threshold {
+                                                        mask[nidx] = 255;
+                                                        stack.push((nx, ny));
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            
-                            let visited: Vec<bool> = mask.iter().map(|&v| v == 255).collect();
-                            let mut start_opt = None;
-                            'outer: for y in 0..sh {
-                                for x in 0..sw {
-                                    if visited[(y * sw + x) as usize] {
-                                        start_opt = Some((x, y));
-                                        break 'outer;
+                                
+                                let visited: Vec<bool> = mask.iter().map(|&v| v == 255).collect();
+                                let mut start_opt = None;
+                                'outer: for y in 0..sh {
+                                    for x in 0..sw {
+                                        if visited[(y * sw + x) as usize] {
+                                            start_opt = Some((x, y));
+                                            break 'outer;
+                                        }
                                     }
                                 }
-                            }
-                            
-                            if let Some((sx, sy)) = start_opt {
-                                let boundary_px = crate::utils::trace_boundary(&visited, sw, sh, sx, sy);
-                                if !boundary_px.is_empty() {
-                                    let world_pts: Vec<egui::Pos2> = boundary_px.into_iter().map(|(x, y)| {
-                                        let logical_pos = rect.min + egui::vec2(x as f32 / ppp, y as f32 / ppp);
-                                        logical_pos + ctx.render_offset
-                                    }).collect();
-                                    set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
+                                
+                                if let Some((sx, sy)) = start_opt {
+                                    let boundary_px = crate::utils::trace_boundary(&visited, sw, sh, sx, sy);
+                                    if !boundary_px.is_empty() {
+                                        let world_pts: Vec<egui::Pos2> = boundary_px.into_iter().map(|(x, y)| {
+                                            let logical_pos = rect.min + egui::vec2(x as f32 / ppp, y as f32 / ppp);
+                                            logical_pos + ctx.render_offset
+                                        }).collect();
+                                        set_marquee_selection(project, settings, SelectionShape::Poly(world_pts));
+                                    }
                                 }
                             }
                         }
@@ -298,6 +318,7 @@ pub fn erase_marquee_selection(project: &mut crate::project::Project, settings: 
             let mut modified = false;
             if img.is_live && img.mask.is_none() {
                 img.mask = Some(vec![255; img.size[0] * img.size[1]]);
+                img.mask_size = Some(img.size);
             }
 
             for py in 0..img.size[1] {

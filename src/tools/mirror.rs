@@ -62,6 +62,10 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.is_live = true;
                                 img.source_rect = Some([rect.min.x, rect.min.y, rect.width(), rect.height()]);
                                 img.mask = mask;
+                                if img.mask.is_some() {
+                                    let ppp = ui.ctx().pixels_per_point();
+                                    img.mask_size = Some([((rect.width() * ppp) as usize).max(1), ((rect.height() * ppp) as usize).max(1)]);
+                                }
                                 layer.placed_images.push(img);
                                 *new_selection = Some(SelectedObject {
                                     layer_idx: active_layer_idx,
@@ -103,6 +107,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.is_live = true;
                                 img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                 img.mask = Some(mask);
+                                img.mask_size = Some([((w * ppp) as usize).max(1), ((h * ppp) as usize).max(1)]);
                                 layer.placed_images.push(img);
                                 *new_selection = Some(SelectedObject {
                                     layer_idx: active_layer_idx,
@@ -144,6 +149,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         img.is_live = true;
                                         img.source_rect = Some([rect.min.x, rect.min.y, rect.width(), rect.height()]);
                                         img.mask = Some(mask);
+                                        img.mask_size = Some([((rect.width() * ppp) as usize).max(1), ((rect.height() * ppp) as usize).max(1)]);
                                         layer.placed_images.push(img);
                                         *new_selection = Some(SelectedObject {
                                             layer_idx: active_layer_idx,
@@ -192,6 +198,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.is_live = true;
                             img.source_rect = Some([rect.min.x, rect.min.y, rect.width(), rect.height()]);
                             img.mask = Some(mask);
+                            img.mask_size = Some([((rect.width() * ppp) as usize).max(1), ((rect.height() * ppp) as usize).max(1)]);
                             layer.placed_images.push(img);
                             *new_selection = Some(SelectedObject {
                                 layer_idx: active_layer_idx,

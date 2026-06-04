@@ -28,7 +28,7 @@ use crate::ui::toolbar::{apply_box_blur, apply_pixelate, apply_vhs_glitch};
 // ──────────────────────────────────────────────────────────────
 
 pub fn render_mode_indicator(ctx: &egui::Context, edit_mode: bool, hotkey_name: &str, toggle_mode: bool, settings: &Settings, owl_icon: &Option<egui::TextureHandle>) {
-    if !edit_mode || settings.hide_edit_info { return; }
+    if !edit_mode || settings.hide_edit_info || settings.hide_all { return; }
     let hint = if toggle_mode {
         format!("EDIT MODE  |  press {} to exit", hotkey_name)
     } else {
@@ -171,7 +171,6 @@ pub fn render_canvas(
     // ── Layers Rendering ──
     let rasterize_req = project.rasterize_request;
     for (i, layer) in project.layers.iter_mut().enumerate().filter(|(_, l)| l.visible) {
-        if settings.hide_all && rasterize_phase == 0 { continue; }
         // During rasterize capture, only render the target layer
         if rasterize_phase == 1 {
             if let Some(req) = &rasterize_req {
@@ -238,6 +237,10 @@ pub fn render_canvas(
                         window_offset: (ox, oy),
                         use_absolute: settings.use_absolute_screen_coords,
                         hwnd: img.hwnd,
+                        mask: img.mask.clone(),
+                        mask_size: img.mask_size.unwrap_or(img.size),
+                        exclude_from_capture: settings.exclude_from_capture,
+                        snip_points: img.snip_points.clone(),
                     };
                     
                     _capture_thread.update_request(img.id, req);
@@ -246,17 +249,24 @@ pub fn render_canvas(
                         img.size = res.size;
                         img.pixels = res.pixels;
                         img.thumbnail_dirty = true;
+                        if let Some(tex) = &mut img.texture {
+                            tex.set(egui::ImageData::Color(res.color_image), egui::TextureOptions::LINEAR);
+                        } else {
+                            img.texture = Some(ui.ctx().load_texture(
+                                format!("snip_{}_{}", layer.name, img.id),
+                                egui::ImageData::Color(res.color_image),
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        }
                     }
                     ui.ctx().request_repaint();
                 }
             }
 
-            // --- Thumbnail Update (Static Snip) ---
+            // --- Thumbnail Update (Static Snapshot for Live Snip) ---
             if img.is_live && img.thumbnail_dirty && !img.pixels.is_empty() {
-                let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.pixels);
-                if let Some(tex) = &mut img.thumbnail_texture {
-                    tex.set(color_image, egui::TextureOptions::LINEAR);
-                } else {
+                if img.thumbnail_texture.is_none() {
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.pixels);
                     img.thumbnail_texture = Some(ui.ctx().load_texture(
                         format!("thumb_{}_{}", layer.name, img.id),
                         color_image,
@@ -287,56 +297,9 @@ pub fn render_canvas(
             } else if !img.pixels.is_empty() {
                 // Static or Live Snip
                 let should_update_texture = img.texture.is_none() // First load
-                    || img.thumbnail_dirty;                       // New frame or static update ready
+                    || (!img.is_live && img.thumbnail_dirty);                       // New frame or static update ready
 
-                // Apply mask to live image pixels on CPU so star/heart shapes work in all render paths
-                if img.is_live && should_update_texture {
-                    if let Some(mask) = &mut img.mask {
-                        let expected_mask_len = img.size[0] * img.size[1];
-                        // Regenerate mask if size changed (capture thread may return different dimensions)
-                        if mask.len() != expected_mask_len && expected_mask_len > 0 && !mask.is_empty() {
-                            let old_w = (mask.len() as f64).sqrt() as usize; // approximate old width
-                            let old_h = if old_w > 0 { mask.len() / old_w } else { 0 };
-                            let new_w = img.size[0];
-                            let new_h = img.size[1];
-                            // Try to find old dimensions from snip_points or use aspect ratio scaling
-                            if let Some(pts) = &img.snip_points {
-                                let bounds = egui::Rect::from_points(pts);
-                                let ppp_est = if bounds.width() > 0.0 { new_w as f32 / bounds.width() } else { 1.0 };
-                                let mut new_mask = vec![255u8; expected_mask_len];
-                                for py in 0..new_h {
-                                    for px in 0..new_w {
-                                        let lp = egui::pos2(px as f32 / ppp_est, py as f32 / ppp_est);
-                                        if !crate::utils::is_inside_poly(pts, lp) {
-                                            new_mask[py * new_w + px] = 0;
-                                        }
-                                    }
-                                }
-                                *mask = new_mask;
-                            } else if old_w > 0 && old_h > 0 {
-                                // Nearest-neighbor resample
-                                let mut new_mask = vec![255u8; expected_mask_len];
-                                for py in 0..new_h {
-                                    for px in 0..new_w {
-                                        let src_x = (px * old_w) / new_w;
-                                        let src_y = (py * old_h) / new_h;
-                                        let src_idx = src_y * old_w + src_x;
-                                        if src_idx < mask.len() {
-                                            new_mask[py * new_w + px] = mask[src_idx];
-                                        }
-                                    }
-                                }
-                                *mask = new_mask;
-                            }
-                            img.mask_dirty = true;
-                        }
-                        for (i, &m) in mask.iter().enumerate() {
-                            if m == 0 && i * 4 + 3 < img.pixels.len() {
-                                img.pixels[i * 4 + 3] = 0;
-                            }
-                        }
-                    }
-                }
+
 
                 if should_update_texture {
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.pixels);
@@ -614,6 +577,10 @@ pub fn render_canvas(
                         window_offset: (ox, oy),
                         use_absolute: settings.use_absolute_screen_coords,
                         hwnd: 0,
+                        mask: None,
+                        mask_size: [0, 0],
+                        exclude_from_capture: settings.exclude_from_capture,
+                        snip_points: None,
                     };
                     _capture_thread.update_request(s.id, req);
 
@@ -780,7 +747,7 @@ pub fn render_canvas(
     };
 
     // ── Live preview (skip during rasterize) ──
-    if rasterize_phase == 0 {
+    if rasterize_phase == 0 && !ctx.settings.hide_all {
         match *ctx.active_tool {
             Tool::Brush => crate::tools::brush::render_preview(&mut ctx),
             Tool::Shape => crate::tools::shape::render_preview(&mut ctx),
@@ -794,222 +761,359 @@ pub fn render_canvas(
             crate::tools::move_tool::render(&mut ctx);
         }
 
-        // Render marquee selection outline (marching ants)
-        if let Some(sel) = &ctx.project.marquee_selection {
-            let time = ctx.ui.input(|i| i.time);
-            let painter = ctx.ui.painter_at(ctx.canvas_response.rect);
+        // Helper for drawing dashed path
+        fn simplify_path(points: &[egui::Pos2], epsilon: f32) -> Vec<egui::Pos2> {
+            if points.len() < 3 {
+                return points.to_vec();
+            }
             
-            // Helper for drawing dashed path
-            let draw_dashed_path = |painter: &egui::Painter, points: &[egui::Pos2], time: f64| {
-                if points.len() < 2 { return; }
-                let dash_len = 6.0f32;
-                let speed = 15.0f32;
+            let mut dmax = 0.0;
+            let mut index = 0;
+            let end = points.len() - 1;
+            
+            let p_start = points[0];
+            let p_end = points[end];
+            let line_vec = p_end - p_start;
+            let line_len_sq = line_vec.length_sq();
+            
+            for i in 1..end {
+                let p = points[i];
+                let dist = if line_len_sq < 1e-6 {
+                    (p - p_start).length()
+                } else {
+                    let t = ((p - p_start).dot(line_vec) / line_len_sq).clamp(0.0, 1.0);
+                    let projection = p_start + line_vec * t;
+                    (p - projection).length()
+                };
                 
-                // First draw solid black line under the path to ensure perfect contrast and prevent flashing
+                if dist > dmax {
+                    index = i;
+                    dmax = dist;
+                }
+            }
+            
+            if dmax > epsilon {
+                let mut rec_results1 = simplify_path(&points[..=index], epsilon);
+                let rec_results2 = simplify_path(&points[index..], epsilon);
+                if !rec_results1.is_empty() {
+                    rec_results1.pop();
+                }
+                rec_results1.extend(rec_results2);
+                rec_results1
+            } else {
+                vec![p_start, p_end]
+            }
+        }
+
+        let draw_dashed_path = |painter: &egui::Painter, points: &[egui::Pos2], time: f64| {
+            if points.len() < 2 { return; }
+            let simplified = if points.len() > 10 {
+                simplify_path(points, 2.0)
+            } else {
+                points.to_vec()
+            };
+            if simplified.len() < 2 { return; }
+            let points = &simplified;
+            
+            let mut perimeter = 0.0f32;
+            for i in 0..points.len() - 1 {
+                perimeter += (points[i+1] - points[i]).length();
+            }
+            
+            if perimeter < 20.0 {
                 painter.add(egui::Shape::line(
                     points.to_vec(),
                     egui::Stroke::new(2.0, egui::Color32::BLACK)
                 ));
+                painter.add(egui::Shape::line(
+                    points.to_vec(),
+                    egui::Stroke::new(1.2, egui::Color32::WHITE)
+                ));
+                return;
+            }
+            
+            let dash_len = 6.0f32;
+            let speed = 8.0f32; // Crawl slowly and gracefully (changed from 0.4)
+            
+            // First draw solid black line under the path to ensure perfect contrast and prevent flashing
+            painter.add(egui::Shape::line(
+                points.to_vec(),
+                egui::Stroke::new(2.0, egui::Color32::BLACK)
+            ));
+            
+            let mut current_offset = (time as f32 * speed) % (dash_len * 2.0);
+            let mut draw_white = current_offset < dash_len;
+            if !draw_white {
+                current_offset -= dash_len;
+            }
+            
+            for i in 0..points.len() - 1 {
+                let p1 = points[i];
+                let p2 = points[i+1];
+                let dir = p2 - p1;
+                let dist = dir.length();
+                if dist < 0.001 { continue; }
                 
-                let mut current_offset = (time as f32 * speed) % (dash_len * 2.0);
-                let mut draw_white = current_offset < dash_len;
-                if !draw_white {
-                    current_offset -= dash_len;
-                }
+                let dir = dir / dist;
+                let mut t = 0.0f32;
                 
-                for i in 0..points.len() - 1 {
-                    let p1 = points[i];
-                    let p2 = points[i+1];
-                    let dir = p2 - p1;
-                    let dist = dir.length();
-                    if dist < 0.001 { continue; }
+                while t < dist {
+                    let dash_left = dash_len - current_offset;
+                    let step = dash_left.min(dist - t);
                     
-                    let dir = dir / dist;
-                    let mut t = 0.0f32;
+                    let start = p1 + dir * t;
+                    let end = p1 + dir * (t + step);
                     
-                    while t < dist {
-                        let dash_left = dash_len - current_offset;
-                        let step = dash_left.min(dist - t);
-                        
-                        let start = p1 + dir * t;
-                        let end = p1 + dir * (t + step);
-                        
-                        if draw_white {
-                            painter.line_segment([start, end], egui::Stroke::new(1.2, egui::Color32::WHITE));
-                        }
-                        
-                        t += step;
-                        current_offset += step;
-                        if current_offset >= dash_len {
-                            current_offset = 0.0;
-                            draw_white = !draw_white;
-                        }
+                    if draw_white {
+                        painter.line_segment([start, end], egui::Stroke::new(1.2, egui::Color32::WHITE));
+                    }
+                    
+                    t += step;
+                    current_offset += step;
+                    if current_offset >= dash_len {
+                        current_offset = 0.0;
+                        draw_white = !draw_white;
                     }
                 }
-            };
+            }
+        };
 
-            let draw_selection_shape = |painter: &egui::Painter, shape: &crate::types::SelectionShape, render_offset: egui::Vec2, time: f64| {
-                match shape {
-                    crate::types::SelectionShape::Rect(rect) => {
-                        let r = rect.translate(-render_offset);
-                        let pts = vec![
-                            r.left_top(),
-                            r.right_top(),
-                            r.right_bottom(),
-                            r.left_bottom(),
-                            r.left_top(),
-                        ];
-                        draw_dashed_path(painter, &pts, time);
+        let draw_selection_shape = |painter: &egui::Painter, shape: &crate::types::SelectionShape, render_offset: egui::Vec2, time: f64| {
+            match shape {
+                crate::types::SelectionShape::Rect(rect) => {
+                    let r = rect.translate(-render_offset);
+                    let pts = vec![
+                        r.left_top(),
+                        r.right_top(),
+                        r.right_bottom(),
+                        r.left_bottom(),
+                        r.left_top(),
+                    ];
+                    draw_dashed_path(painter, &pts, time);
+                }
+                crate::types::SelectionShape::Circle { center, radius } => {
+                    let c = *center - render_offset;
+                    let mut pts = Vec::with_capacity(61);
+                    for i in 0..=60 {
+                        let angle = i as f32 * std::f32::consts::TAU / 60.0;
+                        pts.push(c + egui::vec2(angle.cos() * radius, angle.sin() * radius));
                     }
-                    crate::types::SelectionShape::Circle { center, radius } => {
-                        let c = *center - render_offset;
-                        let mut pts = Vec::with_capacity(61);
-                        for i in 0..=60 {
-                            let angle = i as f32 * std::f32::consts::TAU / 60.0;
-                            pts.push(c + egui::vec2(angle.cos() * radius, angle.sin() * radius));
-                        }
-                        draw_dashed_path(painter, &pts, time);
-                    }
-                    crate::types::SelectionShape::Poly(pts) => {
-                        if pts.len() >= 2 {
-                            let mut closed_pts: Vec<egui::Pos2> = pts.iter().map(|&p| p - render_offset).collect();
-                            closed_pts.push(pts[0] - render_offset);
-                            draw_dashed_path(painter, &closed_pts, time);
-                        }
+                    draw_dashed_path(painter, &pts, time);
+                }
+                crate::types::SelectionShape::Poly(pts) => {
+                    if pts.len() >= 2 {
+                        let mut closed_pts: Vec<egui::Pos2> = pts.iter().map(|&p| p - render_offset).collect();
+                        closed_pts.push(pts[0] - render_offset);
+                        draw_dashed_path(painter, &closed_pts, time);
                     }
                 }
-            };
+            }
+        };
 
-            let bounds = sel.bounds();
-            if bounds.width() > 0.1 && bounds.height() > 0.1 {
-                // Calculate dynamic step based on bounds max dimension to guarantee high performance
-                let max_dim = bounds.width().max(bounds.height());
-                let step = (max_dim / 150.0).clamp(3.0, 10.0);
-                
-                let pad = 6.0f32;
-                let min_x = bounds.min.x - pad;
-                let min_y = bounds.min.y - pad;
-                let max_x = bounds.max.x + pad;
-                let max_y = bounds.max.y + pad;
-                
-                let cols = ((max_x - min_x) / step).ceil() as i32 + 1;
-                let rows = ((max_y - min_y) / step).ceil() as i32 + 1;
-                
-                let mut grid = vec![false; (cols * rows) as usize];
-                for r in 0..rows {
-                    let y = min_y + r as f32 * step;
-                    for c in 0..cols {
-                        let x = min_x + c as f32 * step;
-                        let p = egui::pos2(x, y);
-                        grid[(r * cols + c) as usize] = sel.contains(p);
-                    }
-                }
-                
-                let mut edges = std::collections::HashSet::new();
-                let mut adjacency: std::collections::HashMap<(i32, i32), Vec<(i32, i32)>> = std::collections::HashMap::new();
-                
-                let mut add_edge = |p1: (i32, i32), p2: (i32, i32)| {
-                    if p1 == p2 { return; }
-                    let edge = if p1 < p2 { (p1, p2) } else { (p2, p1) };
-                    if edges.insert(edge) {
-                        adjacency.entry(p1).or_default().push(p2);
-                        adjacency.entry(p2).or_default().push(p1);
-                    }
-                };
-                
-                for r in 0..(rows - 1) {
-                    for c in 0..(cols - 1) {
-                        let tl = grid[(r * cols + c) as usize];
-                        let tr = grid[(r * cols + (c + 1)) as usize];
-                        let br = grid[((r + 1) * cols + (c + 1)) as usize];
-                        let bl = grid[((r + 1) * cols + c) as usize];
+        let time = ctx.ui.input(|i| i.time);
+        let painter = ctx.ui.painter_at(ctx.canvas_response.rect);
+
+        // 1. Render marquee selection outline (marching ants)
+        if edit_mode && !ctx.settings.hide_all {
+            if let Some(sel) = &ctx.project.marquee_selection {
+                let bounds = sel.bounds();
+                if bounds.width() > 0.1 && bounds.height() > 0.1 {
+                    if sel.ops.is_empty() {
+                        draw_selection_shape(&painter, &sel.shape, ctx.render_offset, time);
+                    } else {
+                        let max_dim = bounds.width().max(bounds.height());
+                        let step = (max_dim / 150.0).clamp(3.0, 10.0);
                         
-                        let index = ((tl as usize) << 3) | ((tr as usize) << 2) | ((br as usize) << 1) | bl as usize;
-                        if index == 0 || index == 15 {
-                            continue;
+                        let pad = 6.0f32;
+                        let min_x = bounds.min.x - pad;
+                        let min_y = bounds.min.y - pad;
+                        let max_x = bounds.max.x + pad;
+                        let max_y = bounds.max.y + pad;
+                        
+                        let cols = ((max_x - min_x) / step).ceil() as i32 + 1;
+                        let rows = ((max_y - min_y) / step).ceil() as i32 + 1;
+                        
+                        let mut grid = vec![false; (cols * rows) as usize];
+                        for r in 0..rows {
+                            let y = min_y + r as f32 * step;
+                            for c in 0..cols {
+                                let x = min_x + c as f32 * step;
+                                let p = egui::pos2(x, y);
+                                grid[(r * cols + c) as usize] = sel.contains(p);
+                            }
                         }
                         
-                        let m0 = (2 * c + 1, 2 * r);
-                        let m1 = (2 * c + 2, 2 * r + 1);
-                        let m2 = (2 * c + 1, 2 * r + 2);
-                        let m3 = (2 * c, 2 * r + 1);
+                        let mut edges = std::collections::HashSet::new();
+                        let mut adjacency: std::collections::HashMap<(i32, i32), Vec<(i32, i32)>> = std::collections::HashMap::new();
                         
-                        match index {
-                            1 => add_edge(m2, m3),
-                            2 => add_edge(m1, m2),
-                            3 => add_edge(m1, m3),
-                            4 => add_edge(m0, m1),
-                            5 => {
-                                add_edge(m0, m3);
-                                add_edge(m1, m2);
+                        let mut add_edge = |p1: (i32, i32), p2: (i32, i32)| {
+                            if p1 == p2 { return; }
+                            let edge = if p1 < p2 { (p1, p2) } else { (p2, p1) };
+                            if edges.insert(edge) {
+                                adjacency.entry(p1).or_default().push(p2);
+                                adjacency.entry(p2).or_default().push(p1);
                             }
-                            6 => add_edge(m0, m2),
-                            7 => add_edge(m0, m3),
-                            8 => add_edge(m0, m3),
-                            9 => add_edge(m0, m2),
-                            10 => {
-                                add_edge(m0, m1);
-                                add_edge(m2, m3);
-                            }
-                            11 => add_edge(m0, m1),
-                            12 => add_edge(m1, m3),
-                            13 => add_edge(m1, m2),
-                            14 => add_edge(m2, m3),
-                            _ => {}
-                        }
-                    }
-                }
-                
-                let mut loops: Vec<Vec<egui::Pos2>> = Vec::new();
-                while !edges.is_empty() {
-                    let &edge = edges.iter().next().unwrap();
-                    edges.remove(&edge);
-                    
-                    let (start, mut current) = edge;
-                    let mut path = vec![start, current];
-                    
-                    loop {
-                        let mut next_opt = None;
-                        if let Some(neighbors) = adjacency.get(&current) {
-                            for &n in neighbors {
-                                let test_edge = if current < n { (current, n) } else { (n, current) };
-                                if edges.contains(&test_edge) {
-                                    next_opt = Some((n, test_edge));
-                                    break;
+                        };
+                        
+                        for r in 0..(rows - 1) {
+                            for c in 0..(cols - 1) {
+                                let tl = grid[(r * cols + c) as usize];
+                                let tr = grid[(r * cols + (c + 1)) as usize];
+                                let br = grid[((r + 1) * cols + (c + 1)) as usize];
+                                let bl = grid[((r + 1) * cols + c) as usize];
+                                
+                                let index = ((tl as usize) << 3) | ((tr as usize) << 2) | ((br as usize) << 1) | bl as usize;
+                                if index == 0 || index == 15 {
+                                    continue;
+                                }
+                                
+                                let m0 = (2 * c + 1, 2 * r);
+                                let m1 = (2 * c + 2, 2 * r + 1);
+                                let m2 = (2 * c + 1, 2 * r + 2);
+                                let m3 = (2 * c, 2 * r + 1);
+                                
+                                match index {
+                                    1 => add_edge(m2, m3),
+                                    2 => add_edge(m1, m2),
+                                    3 => add_edge(m1, m3),
+                                    4 => add_edge(m0, m1),
+                                    5 => {
+                                        add_edge(m0, m3);
+                                        add_edge(m1, m2);
+                                    }
+                                    6 => add_edge(m0, m2),
+                                    7 => add_edge(m0, m3),
+                                    8 => add_edge(m0, m3),
+                                    9 => add_edge(m0, m2),
+                                    10 => {
+                                        add_edge(m0, m1);
+                                        add_edge(m2, m3);
+                                    }
+                                    11 => add_edge(m0, m1),
+                                    12 => add_edge(m1, m3),
+                                    13 => add_edge(m1, m2),
+                                    14 => add_edge(m2, m3),
+                                    _ => {}
                                 }
                             }
                         }
                         
-                        if let Some((next, e)) = next_opt {
-                            edges.remove(&e);
-                            path.push(next);
-                            current = next;
-                        } else {
-                            let closing_edge = if current < start { (current, start) } else { (start, current) };
-                            if edges.contains(&closing_edge) {
-                                edges.remove(&closing_edge);
-                                path.push(start);
+                        let mut loops: Vec<Vec<egui::Pos2>> = Vec::new();
+                        while !edges.is_empty() {
+                            let &edge = edges.iter().next().unwrap();
+                            edges.remove(&edge);
+                            
+                            let (start, mut current) = edge;
+                            let mut path = vec![start, current];
+                            
+                            loop {
+                                let mut next_opt = None;
+                                if let Some(neighbors) = adjacency.get(&current) {
+                                    for &n in neighbors {
+                                        let test_edge = if current < n { (current, n) } else { (n, current) };
+                                        if edges.contains(&test_edge) {
+                                            next_opt = Some((n, test_edge));
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                if let Some((next, e)) = next_opt {
+                                    edges.remove(&e);
+                                    path.push(next);
+                                    current = next;
+                                } else {
+                                    let closing_edge = if current < start { (current, start) } else { (start, current) };
+                                    if edges.contains(&closing_edge) {
+                                        edges.remove(&closing_edge);
+                                        path.push(start);
+                                    }
+                                    break;
+                                }
                             }
-                            break;
+                            
+                            if path.len() >= 3 {
+                                let mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
+                                    let screen_x = min_x + (pt.0 as f32 / 2.0) * step;
+                                    let screen_y = min_y + (pt.1 as f32 / 2.0) * step;
+                                    egui::pos2(screen_x - ctx.render_offset.x, screen_y - ctx.render_offset.y)
+                                }).collect();
+                                loops.push(mapped_path);
+                            }
+                        }
+                        
+                        // Draw all loops simplified and crawled gracefully
+                        for path in &loops {
+                            draw_dashed_path(&painter, path, time);
                         }
                     }
-                    
-                    if path.len() >= 3 {
-                        let mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
-                            let screen_x = min_x + (pt.0 as f32 / 2.0) * step;
-                            let screen_y = min_y + (pt.1 as f32 / 2.0) * step;
-                            egui::pos2(screen_x - ctx.render_offset.x, screen_y - ctx.render_offset.y)
-                        }).collect();
-                        loops.push(mapped_path);
+                }
+                ctx.ui.ctx().request_repaint();
+            }
+        }
+
+        // 2. Draw show source outlines for all visible layers and placed images (solid orange line style)
+        if edit_mode && !ctx.settings.hide_all {
+            let mut has_show_source = false;
+            for (layer_idx, layer) in ctx.project.layers.iter_mut().enumerate() {
+                if !layer.visible { continue; }
+                for (img_idx, img) in layer.placed_images.iter().enumerate() {
+                    if img.show_source_rect && img.source_rect.is_some() {
+                        has_show_source = true;
+                        let src = img.source_rect.unwrap();
+                        let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                        
+                        let is_selected = if let Some(sel) = &ctx.project.selected_object {
+                            sel.layer_idx == layer_idx && sel.object_type == crate::types::ObjectType::Image && sel.object_idx == img_idx
+                        } else {
+                            false
+                        };
+
+                        let stroke_color = if is_selected {
+                            egui::Color32::from_rgb(255, 140, 0) // Orange
+                        } else {
+                            egui::Color32::from_rgb(200, 100, 0) // Muted orange-gray
+                        };
+
+                        let stroke_width = if is_selected { 2.5f32 } else { 1.5f32 };
+                        let back_stroke = egui::Stroke::new(stroke_width + 1.0, egui::Color32::BLACK);
+                        let fore_stroke = egui::Stroke::new(stroke_width, stroke_color);
+                        
+                        if let Some(ref local_pts) = img.snip_points {
+                            let mut current_path = Vec::new();
+                            for p in local_pts {
+                                if p.x.is_nan() || p.y.is_nan() {
+                                    if !current_path.is_empty() {
+                                        painter.add(egui::Shape::line(current_path.clone(), back_stroke));
+                                        painter.add(egui::Shape::line(current_path.clone(), fore_stroke));
+                                        current_path.clear();
+                                    }
+                                } else {
+                                    current_path.push(egui::pos2(src_rect.min.x + p.x - ctx.render_offset.x, src_rect.min.y + p.y - ctx.render_offset.y));
+                                }
+                            }
+                            if !current_path.is_empty() {
+                                painter.add(egui::Shape::line(current_path.clone(), back_stroke));
+                                painter.add(egui::Shape::line(current_path.clone(), fore_stroke));
+                            }
+                        } else {
+                            let r = src_rect.translate(-ctx.render_offset);
+                            let pts = vec![
+                                r.left_top(),
+                                r.right_top(),
+                                r.right_bottom(),
+                                r.left_bottom(),
+                                r.left_top(),
+                            ];
+                            painter.add(egui::Shape::line(pts.clone(), back_stroke));
+                            painter.add(egui::Shape::line(pts.clone(), fore_stroke));
+                        }
                     }
                 }
-                
-                for path in loops {
-                    draw_dashed_path(&painter, &path, time);
-                }
             }
-            
-            ctx.ui.ctx().request_repaint();
+            if has_show_source {
+                ctx.ui.ctx().request_repaint();
+            }
         }
     }
 

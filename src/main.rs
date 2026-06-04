@@ -24,57 +24,150 @@ use ui::layer_menu::render_layers_window;
 use ui::filter_menu::render_filter_menu;
 
 fn marquee_to_local_points(sel: &crate::types::MarqueeSelection, bounds_min: egui::Pos2) -> Vec<egui::Pos2> {
-    let mut pts = Vec::new();
+    let bounds = sel.bounds();
+    if bounds.width() <= 0.1 || bounds.height() <= 0.1 {
+        return Vec::new();
+    }
     
-    let push_shape = |pts: &mut Vec<egui::Pos2>, shape: &crate::types::SelectionShape| {
-        match shape {
-            crate::types::SelectionShape::Rect(r) => {
-                pts.push(egui::pos2(r.left_top().x - bounds_min.x, r.left_top().y - bounds_min.y));
-                pts.push(egui::pos2(r.right_top().x - bounds_min.x, r.right_top().y - bounds_min.y));
-                pts.push(egui::pos2(r.right_bottom().x - bounds_min.x, r.right_bottom().y - bounds_min.y));
-                pts.push(egui::pos2(r.left_bottom().x - bounds_min.x, r.left_bottom().y - bounds_min.y));
-                pts.push(egui::pos2(r.left_top().x - bounds_min.x, r.left_top().y - bounds_min.y));
-            }
-            crate::types::SelectionShape::Circle { center, radius } => {
-                let segments = 64;
-                for i in 0..=segments {
-                    let angle = (i as f32) * 2.0 * std::f32::consts::PI / (segments as f32);
-                    let p = egui::pos2(
-                        center.x + radius * angle.cos() - bounds_min.x,
-                        center.y + radius * angle.sin() - bounds_min.y,
-                    );
-                    pts.push(p);
-                }
-            }
-            crate::types::SelectionShape::Poly(poly_pts) => {
-                if !poly_pts.is_empty() {
-                    for p in poly_pts {
-                        pts.push(egui::pos2(p.x - bounds_min.x, p.y - bounds_min.y));
-                    }
-                    if poly_pts.first() != poly_pts.last() {
-                        let first = poly_pts[0];
-                        pts.push(egui::pos2(first.x - bounds_min.x, first.y - bounds_min.y));
-                    }
-                }
-            }
-        }
-    };
+    let step = 3.0f32;
+    let pad = 6.0f32;
+    let min_x = bounds.min.x - pad;
+    let min_y = bounds.min.y - pad;
+    let max_x = bounds.max.x + pad;
+    let max_y = bounds.max.y + pad;
     
-    push_shape(&mut pts, &sel.shape);
+    let cols = ((max_x - min_x) / step).ceil() as i32 + 1;
+    let rows = ((max_y - min_y) / step).ceil() as i32 + 1;
     
-    for op in &sel.ops {
-        pts.push(egui::Pos2::new(f32::NAN, f32::NAN));
-        match op {
-            crate::types::SelectionOp::Add(sh) => push_shape(&mut pts, sh),
-            crate::types::SelectionOp::Subtract(sh) => push_shape(&mut pts, sh),
+    let mut grid = vec![false; (cols * rows) as usize];
+    for r in 0..rows {
+        let y = min_y + r as f32 * step;
+        for c in 0..cols {
+            let x = min_x + c as f32 * step;
+            grid[(r * cols + c) as usize] = sel.contains(egui::pos2(x, y));
         }
     }
     
-    pts
+    let mut edges = std::collections::HashSet::new();
+    let mut adjacency: std::collections::HashMap<(i32, i32), Vec<(i32, i32)>> = std::collections::HashMap::new();
+    
+    let mut add_edge = |p1: (i32, i32), p2: (i32, i32)| {
+        if p1 == p2 { return; }
+        let edge = if p1 < p2 { (p1, p2) } else { (p2, p1) };
+        if edges.insert(edge) {
+            adjacency.entry(p1).or_default().push(p2);
+            adjacency.entry(p2).or_default().push(p1);
+        }
+    };
+    
+    for r in 0..(rows - 1) {
+        for c in 0..(cols - 1) {
+            let tl = grid[(r * cols + c) as usize];
+            let tr = grid[(r * cols + (c + 1)) as usize];
+            let br = grid[((r + 1) * cols + (c + 1)) as usize];
+            let bl = grid[((r + 1) * cols + c) as usize];
+            
+            let index = ((tl as usize) << 3) | ((tr as usize) << 2) | ((br as usize) << 1) | bl as usize;
+            if index == 0 || index == 15 {
+                continue;
+            }
+            
+            let m0 = (2 * c + 1, 2 * r);
+            let m1 = (2 * c + 2, 2 * r + 1);
+            let m2 = (2 * c + 1, 2 * r + 2);
+            let m3 = (2 * c, 2 * r + 1);
+            
+            match index {
+                1 => add_edge(m2, m3),
+                2 => add_edge(m1, m2),
+                3 => add_edge(m1, m3),
+                4 => add_edge(m0, m1),
+                5 => {
+                    add_edge(m0, m3);
+                    add_edge(m1, m2);
+                }
+                6 => add_edge(m0, m2),
+                7 => add_edge(m0, m3),
+                8 => add_edge(m0, m3),
+                9 => add_edge(m0, m2),
+                10 => {
+                    add_edge(m0, m1);
+                    add_edge(m2, m3);
+                }
+                11 => add_edge(m0, m1),
+                12 => add_edge(m1, m3),
+                13 => add_edge(m1, m2),
+                14 => add_edge(m2, m3),
+                _ => {}
+            }
+        }
+    }
+    
+    let mut loops = Vec::new();
+    while !edges.is_empty() {
+        let &edge = edges.iter().next().unwrap();
+        edges.remove(&edge);
+        
+        let (start, mut current) = edge;
+        let mut path = vec![start, current];
+        
+        loop {
+            let mut next_opt = None;
+            if let Some(neighbors) = adjacency.get(&current) {
+                for &n in neighbors {
+                    let test_edge = if current < n { (current, n) } else { (n, current) };
+                    if edges.contains(&test_edge) {
+                        next_opt = Some((n, test_edge));
+                        break;
+                    }
+                }
+            }
+            
+            if let Some((next, e)) = next_opt {
+                edges.remove(&e);
+                path.push(next);
+                current = next;
+            } else {
+                let closing_edge = if current < start { (current, start) } else { (start, current) };
+                if edges.contains(&closing_edge) {
+                    edges.remove(&closing_edge);
+                    path.push(start);
+                }
+                break;
+            }
+        }
+        
+        if path.len() >= 3 {
+            let mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
+                let screen_x = min_x + (pt.0 as f32 / 2.0) * step;
+                let screen_y = min_y + (pt.1 as f32 / 2.0) * step;
+                egui::pos2(screen_x - bounds_min.x, screen_y - bounds_min.y)
+            }).collect();
+            loops.push(mapped_path);
+        }
+    }
+    
+    let mut result = Vec::new();
+    for (i, path) in loops.into_iter().enumerate() {
+        if i > 0 {
+            result.push(egui::Pos2::new(f32::NAN, f32::NAN));
+        }
+        result.extend(path);
+    }
+    result
+}
+
+#[derive(Clone)]
+struct MarqueeCaptureRequest {
+    trigger_copy: bool,
+    trigger_cut: bool,
+    trigger_blur: bool,
+    marquee_selection: crate::types::MarqueeSelection,
 }
 
 struct OwerlayerApp {
     pub edit_mode: bool,
+    marquee_capture_request: Option<MarqueeCaptureRequest>,
     pub embed_url: String,
     pub embed_trigger: bool,
     pub active_tool: overlay::Tool,
@@ -107,6 +200,7 @@ struct OwerlayerApp {
     frame_count: u64,
     show_debug_window: bool,
     prev_passthrough: bool,
+    prev_exclude_capture: Option<bool>,
     last_tool_used: Option<Tool>,
     last_action_time: std::time::Instant,
     filters_open: Option<usize>,
@@ -141,6 +235,7 @@ impl OwerlayerApp {
 
         Self {
             edit_mode: true,
+            marquee_capture_request: None,
             embed_url: String::new(),
             embed_trigger: false,
             active_tool: overlay::Tool::Brush,
@@ -169,6 +264,7 @@ impl OwerlayerApp {
             frame_count: 0,
             show_debug_window: false,
             prev_passthrough: true, // Initially transparent
+            prev_exclude_capture: None,
             last_tool_used: None,
             last_action_time: std::time::Instant::now(),
             filters_open: None,
@@ -195,6 +291,120 @@ impl OwerlayerApp {
             rasterize_bbox: None,
             rasterize_capture: rasterize::new_capture_buffer(),
             copied_image: None,
+        }
+    }
+
+    fn finalize_marquee_capture(&mut self, frame: crate::rasterize::CapturedFrame, m_req: MarqueeCaptureRequest, ctx: &egui::Context) {
+        let ppp = ctx.pixels_per_point();
+        let sel = &m_req.marquee_selection;
+        let bounds = sel.bounds();
+        let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+        let render_offset = if self.settings.use_absolute_screen_coords {
+            egui::vec2(wx as f32 / ppp, wy as f32 / ppp)
+        } else {
+            egui::Vec2::ZERO
+        };
+        let screen_bounds = bounds.translate(-render_offset);
+        let sw = frame.width as usize;
+        let sh = frame.height as usize;
+        let mut pixels = frame.pixels;
+        
+        let mut mask = vec![255u8; sw * sh];
+        for py in 0..sh {
+            for px in 0..sw {
+                let lp = screen_bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
+                let wp = lp + render_offset;
+                if !sel.contains(wp) {
+                    mask[py * sw + px] = 0;
+                }
+            }
+        }
+        
+        let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+        let mut img = if m_req.trigger_blur {
+            let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+            new_img.display_size = Some([bounds.width(), bounds.height()]);
+            new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+            new_img.show_source_rect = true;
+            new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
+            new_img.shadow = self.settings.snip_shadow;
+            new_img.is_live = self.settings.snip_live;
+            new_img.blur = self.settings.blur_strength;
+            new_img.blur_effect = self.settings.blur_effect;
+            new_img.mask = Some(mask);
+            new_img.mask_size = Some([sw, sh]);
+            new_img.mask_dirty = true;
+            new_img.name = format!("Blur Area {}", id % 100);
+            new_img
+        } else {
+            for py in 0..sh {
+                for px in 0..sw {
+                    if mask[py * sw + px] == 0 {
+                        let idx = (py * sw + px) * 4;
+                        if idx + 3 < pixels.len() {
+                            pixels[idx + 3] = 0;
+                        }
+                    }
+                }
+            }
+            
+            let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+            new_img.display_size = Some([bounds.width(), bounds.height()]);
+            new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+            new_img.show_source_rect = true;
+            new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
+            new_img.shadow = self.settings.snip_shadow;
+            new_img.is_live = self.settings.snip_live;
+            new_img.blur = self.settings.blur_strength;
+            new_img.blur_effect = self.settings.blur_effect;
+            
+            let is_rect = matches!(sel.shape, SelectionShape::Rect(_)) && sel.ops.is_empty();
+            if !is_rect {
+                new_img.mask = Some(mask);
+                new_img.mask_size = Some([sw, sh]);
+                new_img.mask_dirty = true;
+            }
+            
+            crate::winapi_utils::copy_image_to_clipboard(&new_img.pixels, new_img.size[0], new_img.size[1]);
+            self.copied_image = Some(new_img.clone());
+            new_img
+        };
+        
+        if m_req.trigger_cut {
+            self.history.push(&self.project, "Cut Selection");
+            crate::tools::cut::erase_marquee_selection(&mut self.project, &self.settings);
+            self.project.save();
+        } else {
+            let active_layer_idx = self.project.active_layer;
+            if active_layer_idx < self.project.layers.len() {
+                let is_locked = self.project.layers[active_layer_idx].locked;
+                let ask_mode = self.settings.auto_new_layer.is_none();
+                
+                if is_locked || ask_mode {
+                    self.project.layers[active_layer_idx].placed_images.push(img);
+                    self.project.layers[active_layer_idx].expanded = true;
+                    self.layer_prompt_open = true;
+                } else {
+                    let to_layer = match self.settings.auto_new_layer {
+                        Some(true) => {
+                            self.project.layers.push(crate::project::Layer::new(&format!("Layer {}", self.project.layers.len() + 1)));
+                            self.project.active_layer = self.project.layers.len() - 1;
+                            self.project.layers.len() - 1
+                        }
+                        _ => active_layer_idx,
+                    };
+                    self.project.layers[to_layer].placed_images.push(img);
+                    self.project.layers[to_layer].expanded = true;
+                }
+                
+                let action_name = if m_req.trigger_blur {
+                    "Blur Area"
+                } else {
+                    "Snip Selection"
+                };
+                self.history.push(&self.project, action_name);
+                self.project.save();
+            }
         }
     }
 
@@ -518,6 +728,15 @@ impl eframe::App for OwerlayerApp {
             self.prev_passthrough = passthrough;
         }
 
+        // ---- 3b. Update Capture Exclusion (Fix live snip mirror loop) ----
+        if self.initialized {
+            let expected_exclude = self.settings.exclude_from_capture;
+            if self.prev_exclude_capture != Some(expected_exclude) {
+                winapi_utils::set_capture_exclusion(expected_exclude);
+                self.prev_exclude_capture = Some(expected_exclude);
+            }
+        }
+
         // ---- 4. On mode change & Initial Focus ----
         if self.edit_mode != was_edit || self.frame_count < 5 {
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
@@ -673,103 +892,115 @@ impl eframe::App for OwerlayerApp {
                     let sw = (screen_bounds.width() * ppp).round() as i32;
                     let sh = (screen_bounds.height() * ppp).round() as i32;
                     if sw > 5 && sh > 5 {
-                        let sx = (screen_bounds.min.x * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
-                        let sy = (screen_bounds.min.y * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
-                        
-                        let captured_pixels = if trigger_copy || trigger_cut || !self.settings.snip_live {
-                            crate::tools::snip::capture_screen_rect_safe(&self.settings, sx, sy, sw, sh)
+                        if self.settings.snip_source_overlay {
+                            self.rasterize_bbox = Some([screen_bounds.min.x, screen_bounds.min.y, screen_bounds.max.x, screen_bounds.max.y]);
+                            self.marquee_capture_request = Some(MarqueeCaptureRequest {
+                                trigger_copy,
+                                trigger_cut,
+                                trigger_blur,
+                                marquee_selection: sel.clone(),
+                            });
+                            self.rasterize_phase = 1;
+                            ctx.request_repaint();
                         } else {
-                            None
-                        };
-                        
-                        let mut mask = vec![255u8; sw as usize * sh as usize];
-                        for py in 0..sh as usize {
-                            for px in 0..sw as usize {
-                                let lp = screen_bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
-                                let wp = lp + render_offset;
-                                if !sel.contains(wp) {
-                                    mask[py * sw as usize + px] = 0;
-                                }
-                            }
-                        }
-                        
-                        let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                        let mut img = if trigger_blur {
-                            let pixels = captured_pixels.unwrap_or_default();
-                            let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
-                            new_img.display_size = Some([bounds.width(), bounds.height()]);
-                            new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
-                            new_img.show_source_rect = true;
-                            new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
-                            new_img.shadow = self.settings.snip_shadow;
-                            new_img.is_live = self.settings.snip_live;
-                            new_img.blur = self.settings.blur_strength;
-                            new_img.blur_effect = self.settings.blur_effect;
-                            new_img.mask = Some(mask);
-                            new_img.mask_dirty = true;
-                            new_img.name = format!("Blur Area {}", id % 100);
-                            new_img
-                        } else {
-                            let mut pixels = captured_pixels.unwrap_or_default();
+                            let sx = (screen_bounds.min.x * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
+                            let sy = (screen_bounds.min.y * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
+                            
+                            let captured_pixels = if trigger_copy || trigger_cut || !self.settings.snip_live {
+                                crate::tools::snip::capture_screen_rect_safe(&self.settings, sx, sy, sw, sh)
+                            } else {
+                                None
+                            };
+                            
+                            let mut mask = vec![255u8; sw as usize * sh as usize];
                             for py in 0..sh as usize {
                                 for px in 0..sw as usize {
-                                    if mask[py * sw as usize + px] == 0 {
-                                        let idx = (py * sw as usize + px) * 4;
-                                        if idx + 3 < pixels.len() {
-                                            pixels[idx + 3] = 0;
-                                        }
+                                    let lp = screen_bounds.min + egui::vec2(px as f32 / ppp, py as f32 / ppp);
+                                    let wp = lp + render_offset;
+                                    if !sel.contains(wp) {
+                                        mask[py * sw as usize + px] = 0;
                                     }
                                 }
                             }
                             
-                            let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
-                            new_img.display_size = Some([bounds.width(), bounds.height()]);
-                            new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
-                            new_img.show_source_rect = true;
-                            new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
-                            new_img.shadow = self.settings.snip_shadow;
-                            new_img.is_live = self.settings.snip_live;
-                            new_img.blur = self.settings.blur_strength;
-                            new_img.blur_effect = self.settings.blur_effect;
-                            
-                            let is_rect = matches!(sel.shape, SelectionShape::Rect(_)) && sel.ops.is_empty();
-                            if !is_rect {
+                            let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                            let img = if trigger_blur {
+                                let pixels = captured_pixels.unwrap_or_default();
+                                let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
+                                new_img.display_size = Some([bounds.width(), bounds.height()]);
+                                new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                new_img.show_source_rect = true;
+                                new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
+                                new_img.shadow = self.settings.snip_shadow;
+                                new_img.is_live = self.settings.snip_live;
+                                new_img.blur = self.settings.blur_strength;
+                                new_img.blur_effect = self.settings.blur_effect;
                                 new_img.mask = Some(mask);
+                                new_img.mask_size = Some([sw as usize, sh as usize]);
                                 new_img.mask_dirty = true;
-                            }
-                            
-                            crate::winapi_utils::copy_image_to_clipboard(&new_img.pixels, new_img.size[0], new_img.size[1]);
-                            self.copied_image = Some(new_img.clone());
-                            new_img
-                        };
-                        
-                        if trigger_cut {
-                            self.history.push(&self.project, "Cut Selection");
-                            crate::tools::cut::erase_marquee_selection(&mut self.project, &self.settings);
-                        }
-                        
-                        let active_layer_idx = self.project.active_layer;
-                        if active_layer_idx < self.project.layers.len() {
-                            let is_locked = self.project.layers[active_layer_idx].locked;
-                            let ask_mode = self.settings.auto_new_layer.is_none();
-                            
-                            if is_locked || ask_mode {
-                                self.project.layers[active_layer_idx].placed_images.push(img);
-                                self.project.layers[active_layer_idx].expanded = true;
-                                self.layer_prompt_open = true;
+                                new_img.name = format!("Blur Area {}", id % 100);
+                                new_img
                             } else {
-                                self.project.layers[active_layer_idx].placed_images.push(img);
-                                self.project.layers[active_layer_idx].expanded = true;
+                                let mut pixels = captured_pixels.unwrap_or_default();
+                                for py in 0..sh as usize {
+                                    for px in 0..sw as usize {
+                                        if mask[py * sw as usize + px] == 0 {
+                                            let idx = (py * sw as usize + px) * 4;
+                                            if idx + 3 < pixels.len() {
+                                                pixels[idx + 3] = 0;
+                                            }
+                                        }
+                                    }
+                                }
                                 
-                                let action_name = if trigger_blur {
-                                    "Blur Area"
-                                } else if trigger_cut {
-                                    "Cut Selection"
-                                } else {
-                                    "Snip Selection"
-                                };
-                                self.history.push(&self.project, action_name);
+                                let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
+                                new_img.display_size = Some([bounds.width(), bounds.height()]);
+                                new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                new_img.show_source_rect = true;
+                                new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
+                                new_img.shadow = self.settings.snip_shadow;
+                                new_img.is_live = self.settings.snip_live;
+                                new_img.blur = self.settings.blur_strength;
+                                new_img.blur_effect = self.settings.blur_effect;
+                                
+                                let is_rect = matches!(sel.shape, SelectionShape::Rect(_)) && sel.ops.is_empty();
+                                if !is_rect {
+                                    new_img.mask = Some(mask);
+                                    new_img.mask_size = Some([sw as usize, sh as usize]);
+                                    new_img.mask_dirty = true;
+                                }
+                                
+                                crate::winapi_utils::copy_image_to_clipboard(&new_img.pixels, new_img.size[0], new_img.size[1]);
+                                self.copied_image = Some(new_img.clone());
+                                new_img
+                            };
+                            if trigger_cut {
+                                self.history.push(&self.project, "Cut Selection");
+                                crate::tools::cut::erase_marquee_selection(&mut self.project, &self.settings);
                                 self.project.save();
+                            } else {
+                                let active_layer_idx = self.project.active_layer;
+                                if active_layer_idx < self.project.layers.len() {
+                                    let is_locked = self.project.layers[active_layer_idx].locked;
+                                    let ask_mode = self.settings.auto_new_layer.is_none();
+                                    
+                                    if is_locked || ask_mode {
+                                        self.project.layers[active_layer_idx].placed_images.push(img);
+                                        self.project.layers[active_layer_idx].expanded = true;
+                                        self.layer_prompt_open = true;
+                                    } else {
+                                        self.project.layers[active_layer_idx].placed_images.push(img);
+                                        self.project.layers[active_layer_idx].expanded = true;
+                                        
+                                        let action_name = if trigger_blur {
+                                            "Blur Area"
+                                        } else {
+                                            "Snip Selection"
+                                        };
+                                        self.history.push(&self.project, action_name);
+                                        self.project.save();
+                                    }
+                                }
                             }
                         }
                     }
@@ -866,10 +1097,9 @@ impl eframe::App for OwerlayerApp {
                 }
             }
         } else if self.rasterize_phase == 2 {
-            println!("DEBUG: Entering Phase 2. Taking request.");
             let captured = if let Ok(mut buf) = self.rasterize_capture.lock() { buf.take() } else { None };
-            let req_opt = self.project.rasterize_request.take();
             if let Some(frame) = captured {
+                let req_opt = self.project.rasterize_request.take();
                 if let Some(req) = req_opt {
                     let ppp = self.settings.ui_scale;
                     let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
@@ -878,11 +1108,15 @@ impl eframe::App for OwerlayerApp {
                     } else { egui::Vec2::ZERO };
                     rasterize::finalize_rasterize(&mut self.project, &req, frame, render_offset);
                     self.history.push(&self.project, "Rasterize");
+                } else if let Some(m_req) = self.marquee_capture_request.take() {
+                    self.finalize_marquee_capture(frame, m_req, ctx);
                 }
+                self.rasterize_phase = 0;
+                self.rasterize_bbox = None;
+                self.settings.fx_open = None;
+            } else {
+                ctx.request_repaint();
             }
-            self.rasterize_phase = 0;
-            self.rasterize_bbox = None;
-            self.settings.fx_open = None;
         }
 
         // ---- 5. Render UI ----
@@ -890,7 +1124,7 @@ impl eframe::App for OwerlayerApp {
         let show_ui = (self.edit_mode || self.settings.keep_ui_visible) && !rasterizing;
         self.capture_thread.set_fps(self.settings.capture_fps);
         if show_ui {
-            println!("DEBUG: Frame {} | show_ui=true | edit_mode={} | rasterize_phase={} | req={:?}", self.frame_count, self.edit_mode, self.rasterize_phase, self.project.rasterize_request.is_some());
+            // println!("DEBUG: Frame {} | show_ui=true | edit_mode={} | rasterize_phase={} | req={:?}", self.frame_count, self.edit_mode, self.rasterize_phase, self.project.rasterize_request.is_some());
             overlay::render_mode_indicator(ctx, self.edit_mode, self.settings.hotkey.display_name(), self.settings.toggle_mode, &self.settings, &self.owl_icon);
             let mut embed_trigger = false;
             render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger, &mut self.show_history_panel, &mut self.request_history_push, &mut self.filters_open);
@@ -933,7 +1167,7 @@ impl eframe::App for OwerlayerApp {
                 }
             }
             if self.show_layers_panel && self.edit_mode {
-                println!("DEBUG: Rendering Layers window");
+                // println!("DEBUG: Rendering Layers window");
                 render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.active_tool, &mut self.show_layers_panel, &mut self.filters_open, &mut self.load_picker_open);
             }
             if self.show_history_panel && self.edit_mode {
@@ -1000,7 +1234,11 @@ impl eframe::App for OwerlayerApp {
                     };
 
                     let new_content_is_in_placed_images = self.pending_stroke.is_none();
-                    let has_merge_target = if let Some(sel) = self.project.selected_object {
+                    let has_merge_target = if self.pending_stroke.is_some() {
+                        self.project.layers.get(layer_idx).map_or(false, |l| {
+                            l.strokes.iter().any(|st| st.kind == crate::types::StrokeKind::Freehand)
+                        })
+                    } else if let Some(sel) = self.project.selected_object {
                         let limit = if new_content_is_in_placed_images {
                             self.project.layers.get(layer_idx).map_or(0, |l| l.placed_images.len()).saturating_sub(1)
                         } else {
@@ -1160,7 +1398,27 @@ impl eframe::App for OwerlayerApp {
                             2 => {
                                 if layer_idx < self.project.layers.len() {
                                     if is_vector {
+                                        let mut s = s;
+                                        let count = if let Some(layer) = self.project.layers.get(layer_idx) {
+                                            let mut names = std::collections::HashSet::new();
+                                            for stroke in &layer.strokes {
+                                                if stroke.kind == crate::types::StrokeKind::Freehand {
+                                                    names.insert(&stroke.name);
+                                                }
+                                            }
+                                            names.len()
+                                        } else {
+                                            0
+                                        };
+                                        s.name = format!("Brush Stroke {}", count + 1);
                                         self.project.layers[layer_idx].strokes.push(s);
+                                        
+                                        let new_idx = self.project.layers[layer_idx].strokes.len() - 1;
+                                        self.project.selected_object = Some(SelectedObject {
+                                            layer_idx,
+                                            object_type: crate::overlay::ObjectType::Stroke,
+                                            object_idx: new_idx,
+                                        });
                                     } else {
                                         let ppp = ctx.pixels_per_point();
                                         let logical_w = 800.0f32;
@@ -1213,41 +1471,62 @@ impl eframe::App for OwerlayerApp {
                             4 => {
                                 // Same Object: rasterize pending stroke into existing image
                                 if layer_idx < self.project.layers.len() {
-                                    let new_content_is_in_placed_images = false;
-                                    let limit = if new_content_is_in_placed_images {
-                                        self.project.layers[layer_idx].placed_images.len().saturating_sub(1)
-                                    } else {
-                                        self.project.layers[layer_idx].placed_images.len()
-                                    };
-
-                                    let mut target_idx = None;
-                                    if let Some(sel) = self.project.selected_object {
-                                        if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image
-                                            && sel.object_idx < limit {
-                                            target_idx = Some(sel.object_idx);
+                                    if is_vector {
+                                        let mut s = s;
+                                        let mut target_name = None;
+                                        if let Some(sel) = self.project.selected_object {
+                                            if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Stroke {
+                                                if let Some(stroke) = self.project.layers[layer_idx].strokes.get(sel.object_idx) {
+                                                    if stroke.kind == crate::types::StrokeKind::Freehand {
+                                                        target_name = Some(stroke.name.clone());
+                                                    }
+                                                }
+                                            }
                                         }
-                                    }
-                                    if target_idx.is_none() {
-                                        if limit > 0 {
-                                            target_idx = self.project.layers[layer_idx].placed_images[..limit]
-                                                .iter()
-                                                .rposition(|img| !img.locked);
+                                        if target_name.is_none() {
+                                            if let Some(stroke) = self.project.layers[layer_idx].strokes.iter().rfind(|st| st.kind == crate::types::StrokeKind::Freehand) {
+                                                target_name = Some(stroke.name.clone());
+                                            }
                                         }
-                                    }
-                                    if let Some(idx) = target_idx {
-                                        let img = &mut self.project.layers[layer_idx].placed_images[idx];
-                                        img.locked = false;
-                                        crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
-                                        self.project.selected_object = Some(SelectedObject {
-                                            layer_idx,
-                                            object_type: crate::overlay::ObjectType::Image,
-                                            object_idx: idx,
-                                        });
-                                    } else {
-                                        // Fallback: create new object
-                                        if is_vector {
-                                            self.project.layers[layer_idx].strokes.push(s);
+                                        if let Some(name) = target_name {
+                                            s.name = name;
                                         } else {
+                                            s.name = "Brush Stroke 1".to_string();
+                                        }
+                                        self.project.layers[layer_idx].strokes.push(s);
+                                    } else {
+                                        let new_content_is_in_placed_images = false;
+                                        let limit = if new_content_is_in_placed_images {
+                                            self.project.layers[layer_idx].placed_images.len().saturating_sub(1)
+                                        } else {
+                                            self.project.layers[layer_idx].placed_images.len()
+                                        };
+
+                                        let mut target_idx = None;
+                                        if let Some(sel) = self.project.selected_object {
+                                            if sel.layer_idx == layer_idx && sel.object_type == crate::overlay::ObjectType::Image
+                                                && sel.object_idx < limit {
+                                                target_idx = Some(sel.object_idx);
+                                            }
+                                        }
+                                        if target_idx.is_none() {
+                                            if limit > 0 {
+                                                target_idx = self.project.layers[layer_idx].placed_images[..limit]
+                                                    .iter()
+                                                    .rposition(|img| !img.locked);
+                                            }
+                                        }
+                                        if let Some(idx) = target_idx {
+                                            let img = &mut self.project.layers[layer_idx].placed_images[idx];
+                                            img.locked = false;
+                                            crate::tools::brush::rasterize_stroke_to_image(img, &s, &self.settings);
+                                            self.project.selected_object = Some(SelectedObject {
+                                                layer_idx,
+                                                object_type: crate::overlay::ObjectType::Image,
+                                                object_idx: idx,
+                                            });
+                                        } else {
+                                            // Fallback: create new object
                                             let ppp = ctx.pixels_per_point();
                                             let logical_w = 800.0f32;
                                             let logical_h = 600.0f32;

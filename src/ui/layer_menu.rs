@@ -291,10 +291,20 @@ pub fn render_layers_window(
                                             });
                                         });
                                     }
-                                    let mut freehand_indices = Vec::new();
+                                    // Collect freehand strokes by name
+                                    let mut freehand_groups: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+                                    let mut freehand_group_order: Vec<String> = Vec::new();
+                                    for (s_idx, s) in layer.strokes.iter().enumerate() {
+                                        if s.kind == crate::overlay::StrokeKind::Freehand {
+                                            if !freehand_groups.contains_key(&s.name) {
+                                                freehand_group_order.push(s.name.clone());
+                                            }
+                                            freehand_groups.entry(s.name.clone()).or_default().push(s_idx);
+                                        }
+                                    }
+
                                     for (s_idx, s) in layer.strokes.iter_mut().enumerate() {
                                         if s.kind == crate::overlay::StrokeKind::Freehand {
-                                            freehand_indices.push(s_idx);
                                             continue;
                                         }
                                         let is_sel = project.selected_object == Some(SelectedObject { layer_idx: i, object_type: ObjectType::Stroke, object_idx: s_idx });
@@ -338,47 +348,65 @@ pub fn render_layers_window(
                                             });
                                         });
                                     }
-                                    if !freehand_indices.is_empty() {
-                                        ui.horizontal(|ui: &mut egui::Ui| {
-                                            let mut all_locked = layer.strokes[freehand_indices[0]].locked;
-                                            if ui.add(egui::Button::new(if all_locked { "🔒" } else { "🔓" }).frame(false)).clicked() {
-                                                all_locked = !all_locked;
-                                                for &idx in &freehand_indices { layer.strokes[idx].locked = all_locked; }
-                                            }
-                                            let is_sel = project.selected_object.map_or(false, |sel| sel.layer_idx == i && sel.object_type == ObjectType::Stroke && freehand_indices.contains(&sel.object_idx));
-                                            let mut all_visible = layer.strokes[freehand_indices[0]].visible;
-                                            if ui.checkbox(&mut all_visible, "").changed() {
-                                                for &idx in &freehand_indices { layer.strokes[idx].visible = all_visible; }
-                                            }
-                                            if ui.selectable_label(is_sel, "🖌 Brush Strokes").clicked() {
-                                                object_to_select = Some((i, ObjectType::Stroke, freehand_indices[0]));
-                                            }
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
-                                                if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).on_hover_text("Delete All Strokes").clicked() {
-                                                    object_to_delete = Some((i, ObjectType::Stroke, usize::MAX));
-                                                }
-                                                if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone All").clicked() { object_to_clone = Some((i, ObjectType::Stroke, usize::MAX)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, freehand_indices[0], -1)); }
-                                                if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() { object_to_move = Some((i, ObjectType::Stroke, freehand_indices[0], 1)); }
-                                                let is_open = settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: freehand_indices[0] });
-                                                    let mut btn = egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(is_open);
-                                                    let first_stroke = &layer.strokes[freehand_indices[0]];
-                                                    if first_stroke.shadow || first_stroke.glow || first_stroke.outline || first_stroke.grayscale || first_stroke.invert || first_stroke.sepia { btn = btn.fill(egui::Color32::from_rgb(100, 140, 200)); }
-                                                    if ui.add(btn).clicked() {
-                                                    let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: freehand_indices[0] };
-                                                    if settings.fx_open == Some(target) { settings.fx_open = None; }
-                                                    else { settings.fx_open = Some(target); }
-                                                    object_to_select = Some((i, ObjectType::Stroke, freehand_indices[0]));
-                                                    project.active_layer = i;
-                                                    *active_tool = crate::overlay::Tool::Move;
-                                                }
-                                                let mut op_val = (layer.strokes[freehand_indices[0]].opacity * 100.0) as i32;
-                                                if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() {
-                                                    let new_op = op_val as f32 / 100.0;
-                                                    for &idx in &freehand_indices { layer.strokes[idx].opacity = new_op; }
-                                                }
+
+                                    // Render grouped freehand strokes
+                                    for name in &freehand_group_order {
+                                        if let Some(indices) = freehand_groups.get(name) {
+                                            if indices.is_empty() { continue; }
+                                            let is_sel = project.selected_object.map_or(false, |sel| {
+                                                sel.layer_idx == i && sel.object_type == ObjectType::Stroke && indices.contains(&sel.object_idx)
                                             });
-                                        });
+                                            let bg_color = if is_sel { egui::Color32::from_rgba_premultiplied(40, 80, 180, 180) } else { egui::Color32::TRANSPARENT };
+                                            egui::Frame::NONE.fill(bg_color).inner_margin(egui::Margin::symmetric(4, 2)).corner_radius(4.0).show(ui, |ui| {
+                                                ui.horizontal(|ui: &mut egui::Ui| {
+                                                    let mut all_locked = layer.strokes[indices[0]].locked;
+                                                    if ui.add(egui::Button::new(if all_locked { "🔒" } else { "🔓" }).frame(false)).clicked() {
+                                                        all_locked = !all_locked;
+                                                        for &idx in indices { layer.strokes[idx].locked = all_locked; }
+                                                    }
+                                                    let mut all_visible = layer.strokes[indices[0]].visible;
+                                                    if ui.checkbox(&mut all_visible, "").changed() {
+                                                        for &idx in indices { layer.strokes[idx].visible = all_visible; }
+                                                    }
+                                                    if ui.selectable_label(is_sel, format!("🖌 {}", name)).clicked() {
+                                                        object_to_select = Some((i, ObjectType::Stroke, indices[0]));
+                                                    }
+                                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui: &mut egui::Ui| {
+                                                        if ui.add(egui::Button::new(egui::RichText::new("✖").color(egui::Color32::RED).size(10.0)).frame(false)).on_hover_text("Delete All Strokes").clicked() {
+                                                            object_to_delete = Some((i, ObjectType::Stroke, indices[0]));
+                                                        }
+                                                        if ui.add(egui::Button::new(egui::RichText::new("⎘").size(10.0)).frame(false)).on_hover_text("Clone All").clicked() {
+                                                            object_to_clone = Some((i, ObjectType::Stroke, indices[0]));
+                                                        }
+                                                        if ui.add(egui::Button::new(egui::RichText::new("⬇").size(10.0)).frame(false)).clicked() {
+                                                            object_to_move = Some((i, ObjectType::Stroke, indices[0], -1));
+                                                        }
+                                                        if ui.add(egui::Button::new(egui::RichText::new("⬆").size(10.0)).frame(false)).clicked() {
+                                                            object_to_move = Some((i, ObjectType::Stroke, indices[0], 1));
+                                                        }
+                                                        let is_open = settings.fx_open == Some(crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: indices[0] });
+                                                        let mut btn = egui::Button::new(egui::RichText::new("fx").size(10.0)).frame(is_open);
+                                                        let first_stroke = &layer.strokes[indices[0]];
+                                                        if first_stroke.shadow || first_stroke.glow || first_stroke.outline || first_stroke.grayscale || first_stroke.invert || first_stroke.sepia {
+                                                            btn = btn.fill(egui::Color32::from_rgb(100, 140, 200));
+                                                        }
+                                                        if ui.add(btn).clicked() {
+                                                            let target = crate::types::SelectedObject { layer_idx: i, object_type: crate::types::ObjectType::Stroke, object_idx: indices[0] };
+                                                            if settings.fx_open == Some(target) { settings.fx_open = None; }
+                                                            else { settings.fx_open = Some(target); }
+                                                            object_to_select = Some((i, ObjectType::Stroke, indices[0]));
+                                                            project.active_layer = i;
+                                                            *active_tool = crate::overlay::Tool::Move;
+                                                        }
+                                                        let mut op_val = (layer.strokes[indices[0]].opacity * 100.0) as i32;
+                                                        if ui.add(egui::DragValue::new(&mut op_val).range(0..=100).suffix("%")).changed() {
+                                                            let new_op = op_val as f32 / 100.0;
+                                                            for &idx in indices { layer.strokes[idx].opacity = new_op; }
+                                                        }
+                                                    });
+                                                });
+                                            });
+                                        }
                                     }
                                 });
                             }
@@ -469,7 +497,13 @@ pub fn render_layers_window(
                             if o_idx == usize::MAX {
                                 project.layers[l_idx].strokes.retain(|s| s.kind != crate::overlay::StrokeKind::Freehand);
                             } else {
-                                project.layers[l_idx].strokes.remove(o_idx);
+                                let is_freehand = project.layers[l_idx].strokes.get(o_idx).map_or(false, |s| s.kind == crate::overlay::StrokeKind::Freehand);
+                                if is_freehand {
+                                    let name = project.layers[l_idx].strokes[o_idx].name.clone();
+                                    project.layers[l_idx].strokes.retain(|s| s.name != name);
+                                } else {
+                                    project.layers[l_idx].strokes.remove(o_idx);
+                                }
                             }
                         }
                         ObjectType::Text => { project.layers[l_idx].text_annotations.remove(o_idx); }
@@ -488,9 +522,30 @@ pub fn render_layers_window(
                                 }
                                 project.layers[l_idx].strokes.append(&mut freehand);
                             } else {
-                                let mut cloned = project.layers[l_idx].strokes[o_idx].clone();
-                                cloned.points.iter_mut().for_each(|p| { p.x += 10.0; p.y += 10.0; });
-                                project.layers[l_idx].strokes.push(cloned);
+                                let is_freehand = project.layers[l_idx].strokes.get(o_idx).map_or(false, |s| s.kind == crate::overlay::StrokeKind::Freehand);
+                                if is_freehand {
+                                    let group_name = project.layers[l_idx].strokes[o_idx].name.clone();
+                                    let mut group_strokes: Vec<_> = project.layers[l_idx].strokes.iter().filter(|s| s.name == group_name).cloned().collect();
+                                    let count = {
+                                        let mut names = std::collections::HashSet::new();
+                                        for stroke in &project.layers[l_idx].strokes {
+                                            if stroke.kind == crate::overlay::StrokeKind::Freehand {
+                                                names.insert(&stroke.name);
+                                            }
+                                        }
+                                        names.len()
+                                    };
+                                    let new_group_name = format!("Brush Stroke {}", count + 1);
+                                    for s in &mut group_strokes {
+                                        s.name = new_group_name.clone();
+                                        s.points.iter_mut().for_each(|p| { p.x += 10.0; p.y += 10.0; });
+                                    }
+                                    project.layers[l_idx].strokes.append(&mut group_strokes);
+                                } else {
+                                    let mut cloned = project.layers[l_idx].strokes[o_idx].clone();
+                                    cloned.points.iter_mut().for_each(|p| { p.x += 10.0; p.y += 10.0; });
+                                    project.layers[l_idx].strokes.push(cloned);
+                                }
                             }
                         }
                         ObjectType::Image => {

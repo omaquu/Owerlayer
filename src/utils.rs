@@ -47,9 +47,12 @@ pub fn get_heart_points(center: egui::Pos2, radius: f32) -> Vec<egui::Pos2> {
 pub fn magic_wand_flood_fill(img: &mut PlacedImage, start_x: i32, start_y: i32, target_color: [u8; 4], threshold: f32) {
     let w = img.size[0] as i32;
     let h = img.size[1] as i32;
-    let mut stack = vec![(start_x, start_y)];
-    let mut visited = vec![false; (w * h) as usize];
+    if w <= 0 || h <= 0 { return; }
+    if start_x < 0 || start_x >= w || start_y < 0 || start_y >= h { return; }
     
+    let expected_len = (w * h * 4) as usize;
+    if img.pixels.len() < expected_len { return; }
+
     let color_diff = |c1: [u8; 4], c2: [u8; 4]| -> f32 {
         let dr = (c1[0] as f32 - c2[0] as f32).abs();
         let dg = (c1[1] as f32 - c2[1] as f32).abs();
@@ -57,21 +60,42 @@ pub fn magic_wand_flood_fill(img: &mut PlacedImage, start_x: i32, start_y: i32, 
         (dr + dg + db) / 3.0
     };
 
-    while let Some((x, y)) = stack.pop() {
-        if x < 0 || x >= w || y < 0 || y >= h { continue; }
+    let matches = |x: i32, y: i32, pixels: &[u8]| -> bool {
+        if x < 0 || x >= w || y < 0 || y >= h { return false; }
         let idx = (y * w + x) as usize;
-        if visited[idx] { continue; }
-        visited[idx] = true;
-
         let pixel_idx = idx * 4;
-        let current_color = [img.pixels[pixel_idx], img.pixels[pixel_idx+1], img.pixels[pixel_idx+2], img.pixels[pixel_idx+3]];
-        
-        if current_color[3] > 0 && color_diff(current_color, target_color) <= threshold {
+        if pixel_idx + 3 >= pixels.len() { return false; }
+        let current_color = [
+            pixels[pixel_idx],
+            pixels[pixel_idx+1],
+            pixels[pixel_idx+2],
+            pixels[pixel_idx+3]
+        ];
+        current_color[3] > 0 && color_diff(current_color, target_color) <= threshold
+    };
+
+    if !matches(start_x, start_y, &img.pixels) { return; }
+
+    let mut stack = vec![(start_x, start_y)];
+    let mut visited = vec![false; (w * h) as usize];
+    visited[(start_y * w + start_x) as usize] = true;
+
+    while let Some((x, y)) = stack.pop() {
+        let idx = (y * w + x) as usize;
+        let pixel_idx = idx * 4;
+        if pixel_idx + 3 < img.pixels.len() {
             img.pixels[pixel_idx + 3] = 0; // Erase
-            stack.push((x + 1, y));
-            stack.push((x - 1, y));
-            stack.push((x, y + 1));
-            stack.push((x, y - 1));
+        }
+
+        let neighbors = [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)];
+        for &(nx, ny) in &neighbors {
+            if nx >= 0 && nx < w && ny >= 0 && ny < h {
+                let nidx = (ny * w + nx) as usize;
+                if !visited[nidx] && matches(nx, ny, &img.pixels) {
+                    visited[nidx] = true;
+                    stack.push((nx, ny));
+                }
+            }
         }
     }
 }
@@ -523,9 +547,12 @@ pub fn trace_boundary(visited: &[bool], w: i32, h: i32, start_x: i32, start_y: i
 pub fn magic_wand_to_selection(img: &PlacedImage, start_x: i32, start_y: i32, target_color: [u8; 4], threshold: f32) -> Vec<egui::Pos2> {
     let w = img.size[0] as i32;
     let h = img.size[1] as i32;
-    let mut stack = vec![(start_x, start_y)];
-    let mut visited = vec![false; (w * h) as usize];
+    if w <= 0 || h <= 0 { return Vec::new(); }
+    if start_x < 0 || start_x >= w || start_y < 0 || start_y >= h { return Vec::new(); }
     
+    let expected_len = (w * h * 4) as usize;
+    if img.pixels.len() < expected_len { return Vec::new(); }
+
     let color_diff = |c1: [u8; 4], c2: [u8; 4]| -> f32 {
         let dr = (c1[0] as f32 - c2[0] as f32).abs();
         let dg = (c1[1] as f32 - c2[1] as f32).abs();
@@ -533,22 +560,36 @@ pub fn magic_wand_to_selection(img: &PlacedImage, start_x: i32, start_y: i32, ta
         (dr + dg + db) / 3.0
     };
 
-    while let Some((x, y)) = stack.pop() {
-        if x < 0 || x >= w || y < 0 || y >= h { continue; }
+    let matches = |x: i32, y: i32, pixels: &[u8]| -> bool {
+        if x < 0 || x >= w || y < 0 || y >= h { return false; }
         let idx = (y * w + x) as usize;
-        if visited[idx] { continue; }
-        visited[idx] = true;
-
         let pixel_idx = idx * 4;
-        let current_color = [img.pixels[pixel_idx], img.pixels[pixel_idx+1], img.pixels[pixel_idx+2], img.pixels[pixel_idx+3]];
-        
-        if current_color[3] > 0 && color_diff(current_color, target_color) <= threshold {
-            stack.push((x + 1, y));
-            stack.push((x - 1, y));
-            stack.push((x, y + 1));
-            stack.push((x, y - 1));
-        } else {
-            visited[idx] = false;
+        if pixel_idx + 3 >= pixels.len() { return false; }
+        let current_color = [
+            pixels[pixel_idx],
+            pixels[pixel_idx+1],
+            pixels[pixel_idx+2],
+            pixels[pixel_idx+3]
+        ];
+        current_color[3] > 0 && color_diff(current_color, target_color) <= threshold
+    };
+
+    if !matches(start_x, start_y, &img.pixels) { return Vec::new(); }
+
+    let mut stack = vec![(start_x, start_y)];
+    let mut visited = vec![false; (w * h) as usize];
+    visited[(start_y * w + start_x) as usize] = true;
+
+    while let Some((x, y)) = stack.pop() {
+        let neighbors = [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)];
+        for &(nx, ny) in &neighbors {
+            if nx >= 0 && nx < w && ny >= 0 && ny < h {
+                let nidx = (ny * w + nx) as usize;
+                if !visited[nidx] && matches(nx, ny, &img.pixels) {
+                    visited[nidx] = true;
+                    stack.push((nx, ny));
+                }
+            }
         }
     }
 

@@ -112,6 +112,12 @@ pub fn render_settings_window(
                 crate::winapi_utils::set_capture_exclusion(settings.exclude_from_capture);
             }
 
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Live Snip Capture FPS:");
+                ui.add(egui::Slider::new(&mut settings.capture_fps, 15.0..=120.0).show_value(true));
+            });
+
             ui.add_space(12.0);
             ui.add(egui::Separator::default().spacing(6.0));
 

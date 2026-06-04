@@ -517,31 +517,51 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Snip => {
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Rect, "Rect");
-                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Circle, "Circ");
-                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Lasso, "Lasso");
-                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly");
-                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star");
-                    ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Rect, "Rect");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Circle, "Circ");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Lasso, "Lasso");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart");
+                ui.add(egui::Separator::default().vertical());
+                let static_sel = !settings.snip_live;
+                let live_sel = settings.snip_live;
+                let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
+                if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
+                ui.add(egui::Separator::default().vertical());
+                ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0));
+                if settings.blur_strength > 0.1 {
                     ui.add(egui::Separator::default().vertical());
-                    let static_sel = !settings.snip_live;
-                    let live_sel = settings.snip_live;
-                    let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
-                    let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                    if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
-                    if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
-                });
-                ui.horizontal(|ui| {
-                    ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(1.0).range(0.0..=300.0).prefix("Blur: "));
-                    if settings.blur_strength > 0.1 {
-                        ui.add(egui::Separator::default().vertical());
-                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
-                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
-                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
+                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
+                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
+                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
+                }
+                
+                let active_layer_idx = project.active_layer;
+                if active_layer_idx < project.layers.len() {
+                    let layer = &mut project.layers[active_layer_idx];
+                    let mut found_img = None;
+                    if let Some(sel) = project.selected_object {
+                        if let ObjectType::Image = sel.object_type {
+                            if sel.layer_idx == active_layer_idx && sel.object_idx < layer.placed_images.len() {
+                                found_img = Some(&mut layer.placed_images[sel.object_idx]);
+                            }
+                        }
                     }
-                });
+                    if found_img.is_none() {
+                        found_img = layer.placed_images.iter_mut().rev().find(|img| img.source_rect.is_some());
+                    }
+                    if let Some(img) = found_img {
+                        ui.add(egui::Separator::default().vertical());
+                        let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                        if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
+                            img.show_source_rect = !img.show_source_rect;
+                        }
+                    }
+                }
             });
         }
         Tool::Cut => {
@@ -555,13 +575,16 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     ui.selectable_value(&mut settings.cut_mode, CutMode::Polygon, "Poly");
                     ui.selectable_value(&mut settings.cut_mode, CutMode::MagicWand, "Wand");
                     ui.add(egui::Separator::default().vertical());
-                    ui.checkbox(&mut settings.inverted_cut, "Invert");
-                    if settings.cut_mode == CutMode::MagicWand {
-                        ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: "));
+                    
+                    // Invert button instead of checkbox
+                    let inv_color = if settings.inverted_cut { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                    if ui.add(egui::Button::new(egui::RichText::new("Invert").color(inv_color).strong()).selected(settings.inverted_cut)).clicked() {
+                        settings.inverted_cut = !settings.inverted_cut;
                     }
-                });
-                
-                ui.horizontal(|ui| {
+                    
+                    ui.add(egui::Separator::default().vertical());
+                    
+                    // New, Add, Subtract selection mode buttons
                     let new_sel = settings.selection_mode == SelectionMode::New;
                     let add_sel = settings.selection_mode == SelectionMode::Add;
                     let sub_sel = settings.selection_mode == SelectionMode::Subtract;
@@ -570,22 +593,38 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     let add_color = if add_sel { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
                     let sub_color = if sub_sel { egui::Color32::from_rgb(255, 100, 100) } else { egui::Color32::from_gray(140) };
                     
-                    if ui.add(egui::Button::new(egui::RichText::new("🟥 New").color(new_color).strong()).selected(new_sel)).clicked() { settings.selection_mode = SelectionMode::New; }
-                    if ui.add(egui::Button::new(egui::RichText::new("➕ Add").color(add_color).strong()).selected(add_sel)).clicked() { settings.selection_mode = SelectionMode::Add; }
-                    if ui.add(egui::Button::new(egui::RichText::new("➖ Subtract").color(sub_color).strong()).selected(sub_sel)).clicked() { settings.selection_mode = SelectionMode::Subtract; }
+                    if ui.add(egui::Button::new(egui::RichText::new("New").color(new_color).strong()).selected(new_sel)).clicked() { settings.selection_mode = SelectionMode::New; }
+                    if ui.add(egui::Button::new(egui::RichText::new("Add").color(add_color).strong()).selected(add_sel)).clicked() { settings.selection_mode = SelectionMode::Add; }
+                    if ui.add(egui::Button::new(egui::RichText::new("Sub").color(sub_color).strong()).selected(sub_sel)).clicked() { settings.selection_mode = SelectionMode::Subtract; }
                     
                     ui.add(egui::Separator::default().vertical());
                     
+                    if settings.cut_mode == CutMode::MagicWand {
+                        ui.add(egui::Separator::default().vertical());
+                        ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: "));
+                    }
+                });
+                
+                ui.horizontal(|ui| {
                     let static_sel = !settings.snip_live;
                     let live_sel = settings.snip_live;
                     let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
                     let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                    if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
-                    if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
-                });
-                
-                ui.horizontal(|ui| {
-                    ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(1.0).range(0.0..=300.0).prefix("Blur: "));
+                    if ui.add(egui::Button::new(egui::RichText::new("Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
+                    if ui.add(egui::Button::new(egui::RichText::new("Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
+                    
+                    ui.add(egui::Separator::default().vertical());
+
+                    // Desktop / Overlay capture source toggle
+                    let source_desktop = !settings.snip_source_overlay;
+                    let source_overlay = settings.snip_source_overlay;
+                    let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                    let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                    if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).clicked() { settings.snip_source_overlay = false; }
+                    if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).clicked() { settings.snip_source_overlay = true; }
+                    
+                    ui.add(egui::Separator::default().vertical());
+                    ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0));
                     if settings.blur_strength > 0.1 {
                         ui.add(egui::Separator::default().vertical());
                         ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
@@ -605,11 +644,34 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             project.request_blur = true;
                         }
                     }
+                    
+                    let active_layer_idx = project.active_layer;
+                    if active_layer_idx < project.layers.len() {
+                        let layer = &mut project.layers[active_layer_idx];
+                        let mut found_img = None;
+                        if let Some(sel) = project.selected_object {
+                            if let ObjectType::Image = sel.object_type {
+                                if sel.layer_idx == active_layer_idx && sel.object_idx < layer.placed_images.len() {
+                                    found_img = Some(&mut layer.placed_images[sel.object_idx]);
+                                }
+                            }
+                        }
+                        if found_img.is_none() {
+                            found_img = layer.placed_images.iter_mut().rev().find(|img| img.source_rect.is_some());
+                        }
+                        if let Some(img) = found_img {
+                            ui.add(egui::Separator::default().vertical());
+                            let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                            if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
+                                img.show_source_rect = !img.show_source_rect;
+                            }
+                        }
+                    }
                 });
             });
         }
         Tool::Blur => {
-            ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(1.0).range(1.0..=300.0).prefix("Blur: "));
+            ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0));
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
@@ -646,7 +708,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             }
                             *request_history_push = Some("Rotate".into());
                         }
-                        if ui.button("↔").on_hover_text("Flip H").clicked() {
+                        if ui.button("⬌").on_hover_text("Flip H").clicked() {
                             let layer = &mut project.layers[sel.layer_idx];
                             match sel.object_type {
                                 ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_h = !layer.placed_images[sel.object_idx].flipped_h; }
@@ -655,7 +717,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             }
                             *request_history_push = Some("Flip H".into());
                         }
-                        if ui.button("↕").on_hover_text("Flip V").clicked() {
+                        if ui.button("⬍").on_hover_text("Flip V").clicked() {
                             let layer = &mut project.layers[sel.layer_idx];
                             match sel.object_type {
                                 ObjectType::Image => { layer.placed_images[sel.object_idx].flipped_v = !layer.placed_images[sel.object_idx].flipped_v; }
@@ -683,7 +745,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         }
                         ui.separator();
                         
-                        if ui.button("⎌").on_hover_text("Reset Transforms").clicked() {
+                        if ui.button("↺").on_hover_text("Reset Transforms").clicked() {
                             let layer = &mut project.layers[sel.layer_idx];
                             match sel.object_type {
                                 ObjectType::Image => { let img = &mut layer.placed_images[sel.object_idx]; img.rotation = 0.0; img.skew = egui::Vec2::ZERO; img.perspective = [egui::Vec2::ZERO; 4]; }
@@ -734,7 +796,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].blur,
                         };
                         let mut bl_slider = bl.max(0.0);
-                        if ui.add(egui::DragValue::new(&mut bl_slider).speed(1.0).range(0.0..=300.0).prefix("Blur: ")).changed() {
+                        if ui.add(egui::DragValue::new(&mut bl_slider).speed(0.2).range(0.0..=300.0).prefix("Object Blur: ").max_decimals(0)).changed() {
                             match sel.object_type {
                                 ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].blur = bl_slider,
                                 ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].blur = bl_slider,
@@ -775,16 +837,23 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         if let ObjectType::Image = sel.object_type {
                             let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
                             ui.separator();
-                            if ui.selectable_label(!img.is_live, "Static").clicked() { img.is_live = false; }
+                            if ui.selectable_label(!img.is_live, "Static").clicked() {
+                                img.is_live = false;
+                                img.thumbnail_texture = None;
+                            }
                             if ui.selectable_label(img.is_live, "Live").clicked() {
                                 img.is_live = true;
+                                img.thumbnail_texture = None;
                                 if img.source_rect.is_none() {
                                     img.source_rect = Some([img.position.x, img.position.y, img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0], img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1]]);
                                     img.show_source_rect = true;
                                 }
                             }
                             if img.is_live || img.source_rect.is_some() {
-                                ui.checkbox(&mut img.show_source_rect, "Show Source");
+                                let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                                if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
+                                    img.show_source_rect = !img.show_source_rect;
+                                }
                             }
                         }
                     });
@@ -798,8 +867,23 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).prefix("Op: ").suffix("%")).changed() {
                             layer.opacity = op / 100.0;
                         }
+                        ui.separator();
+                        if ui.button("⬌").on_hover_text("Flip Layer Horizontal").clicked() {
+                            for img in &mut layer.placed_images { img.flipped_h = !img.flipped_h; }
+                            for s in &mut layer.strokes { s.flipped_h = !s.flipped_h; }
+                            for ann in &mut layer.text_annotations { ann.flipped_h = !ann.flipped_h; }
+                            *request_history_push = Some("Flip Layer H".into());
+                        }
+                        if ui.button("⬍").on_hover_text("Flip Layer Vertical").clicked() {
+                            for img in &mut layer.placed_images { img.flipped_v = !img.flipped_v; }
+                            for s in &mut layer.strokes { s.flipped_v = !s.flipped_v; }
+                            for ann in &mut layer.text_annotations { ann.flipped_v = !ann.flipped_v; }
+                            *request_history_push = Some("Flip Layer V".into());
+                        }
+                        ui.separator();
                         if ui.button("⎌").on_hover_text("Reset Layer Transforms").clicked() {
                             crate::utils::translate_layer(layer, -crate::utils::layer_bounds(layer).map(|b| b.min.to_vec2()).unwrap_or(egui::Vec2::ZERO));
+                            *request_history_push = Some("Reset Layer".into());
                         }
                     });
                     
@@ -827,7 +911,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
 
                         // Layer Blur slider
                         let mut bl_slider = layer.blur.max(0.0);
-                        if ui.add(egui::DragValue::new(&mut bl_slider).speed(1.0).range(0.0..=300.0).prefix("Blur: ")).changed() {
+                        if ui.add(egui::DragValue::new(&mut bl_slider).speed(0.2).range(0.0..=300.0).prefix("Layer Blur: ").max_decimals(0)).changed() {
                             layer.blur = bl_slider;
                         }
 

@@ -130,6 +130,7 @@ pub fn update(ctx: &mut ToolContext) {
             img.blur = settings.blur_strength;
             img.blur_effect = settings.blur_effect;
             img.mask = mask;
+            img.mask_size = img.mask.as_ref().map(|_| [img.size[0], img.size[1]]);
             img.mask_dirty = img.mask.is_some();
             img.snip_points = snip_points;
             

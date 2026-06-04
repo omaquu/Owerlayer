@@ -87,57 +87,63 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                         }
                 
-                // --- Highlight Mirror Source Rect ---
-                for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
-                    if img.source_rect.is_some() {
-                        let is_selected = project.selected_object == Some(SelectedObject { layer_idx, object_type: ObjectType::Image, object_idx: img_idx });
-                        
-                        if is_selected && img.show_source_rect {
-                            let src = img.source_rect.unwrap();
-                            let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
-                            
-                            if let Some(ref local_pts) = img.snip_points {
-                                let mut current_path = Vec::new();
-                                for p in local_pts {
-                                    if p.x.is_nan() || p.y.is_nan() {
-                                        if !current_path.is_empty() {
-                                            painter.add(egui::Shape::line(current_path.clone(), egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
-                                            current_path.clear();
-                                        }
-                                    } else {
-                                        current_path.push(egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y));
-                                    }
-                                }
-                                if !current_path.is_empty() {
-                                    painter.add(egui::Shape::line(current_path, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
-                                }
-                            } else {
-                                painter.rect_stroke(src_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
-                            }
-                            
-                            painter.text(src_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
-                            
-                            // Handles for source rect
-                            let s_corners = [src_rect.left_top(), src_rect.right_top(), src_rect.left_bottom(), src_rect.right_bottom()];
-                            for (idx, &sc) in s_corners.iter().enumerate() {
-                                let handle_rect = egui::Rect::from_center_size(sc, egui::vec2(12.0, 12.0));
-                                painter.rect_filled(handle_rect, 0.0, egui::Color32::from_rgb(255, 150, 50));
-                                if left_just_pressed && handle_rect.contains(pos) {
-                                    *line_start = Some(egui::pos2(-4.0, idx as f32)); // Move source rect handle
-                                    *initial_bounds = Some(src_rect);
-                                    *dragging_source_rect = true;
-                                    click_consumed = true;
-                                }
-                            }
-                            if left_just_pressed && src_rect.contains(pos) && !*dragging_source_rect {
-                                *line_start = Some(pos);
-                                *initial_bounds = Some(src_rect);
-                                *dragging_source_rect = true;
-                                click_consumed = true;
-                            }
-                        }
-                    }
-                }
+                 // --- Highlight Mirror Source Rect ---
+                 let mut clone_layer_after_loop = false;
+                 for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
+                     if img.source_rect.is_some() {
+                         let is_selected = project.selected_object == Some(SelectedObject { layer_idx, object_type: ObjectType::Image, object_idx: img_idx });
+                         
+                         if is_selected && img.show_source_rect {
+                             let src = img.source_rect.unwrap();
+                             let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                             
+                             if let Some(ref local_pts) = img.snip_points {
+                                 let mut current_path = Vec::new();
+                                 for p in local_pts {
+                                     if p.x.is_nan() || p.y.is_nan() {
+                                         if !current_path.is_empty() {
+                                             painter.add(egui::Shape::line(current_path.clone(), egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
+                                             current_path.clear();
+                                         }
+                                     } else {
+                                         current_path.push(egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y));
+                                     }
+                                 }
+                                 if !current_path.is_empty() {
+                                     painter.add(egui::Shape::line(current_path, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
+                                 }
+                             } else {
+                                 painter.rect_stroke(src_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
+                             }
+                             
+                             painter.text(src_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
+                             
+                             // Handles for source rect
+                             let s_corners = [src_rect.left_top(), src_rect.right_top(), src_rect.left_bottom(), src_rect.right_bottom()];
+                             for (idx, &sc) in s_corners.iter().enumerate() {
+                                 let handle_rect = egui::Rect::from_center_size(sc, egui::vec2(12.0, 12.0));
+                                 painter.rect_filled(handle_rect, 0.0, egui::Color32::from_rgb(255, 150, 50));
+                                 if left_just_pressed && handle_rect.contains(pos) {
+                                     *line_start = Some(egui::pos2(-4.0, idx as f32)); // Move source rect handle
+                                     *initial_bounds = Some(src_rect);
+                                     *dragging_source_rect = true;
+                                     clone_layer_after_loop = true;
+                                     click_consumed = true;
+                                 }
+                             }
+                             if left_just_pressed && src_rect.contains(pos) && !*dragging_source_rect {
+                                 *line_start = Some(pos);
+                                 *initial_bounds = Some(src_rect);
+                                 *dragging_source_rect = true;
+                                 clone_layer_after_loop = true;
+                                 click_consumed = true;
+                             }
+                         }
+                     }
+                 }
+                 if clone_layer_after_loop {
+                     *initial_layer = Some(layer.clone());
+                 }
 
 
                 // Draw selection rect — amber border for locked objects
@@ -514,7 +520,7 @@ pub fn update(ctx: &mut ToolContext) {
                 if let Some(start) = *line_start {
                     if left_down {
                         let world_pos = pos + render_offset;
-                        let world_start = start + render_offset;
+                                        let world_start = start + render_offset;
                         if *dragging_source_rect {
                             // Dragging Source Rect (works for both live and static snips)
                             if let Some(sel) = project.selected_object {
@@ -534,6 +540,80 @@ pub fn update(ctx: &mut ToolContext) {
                                             let delta = pos - start;
                                             let ib = initial_bounds.unwrap();
                                             img.source_rect = Some([ib.min.x + delta.x, ib.min.y + delta.y, ib.width(), ib.height()]);
+                                        }
+
+                                        // NOW: Update shape (mask, mask_size, snip_points) during drag!
+                                        if let Some(base_layer) = initial_layer.as_ref() {
+                                            if let Some(base_img) = base_layer.placed_images.get(sel.object_idx) {
+                                                if let Some(base_src) = base_img.source_rect {
+                                                    let curr_src = img.source_rect.unwrap();
+                                                    let w_init = base_src[2];
+                                                    let h_init = base_src[3];
+                                                    let w_curr = curr_src[2];
+                                                    let h_curr = curr_src[3];
+                                                    if w_init > 0.0 && h_init > 0.0 && w_curr > 0.0 && h_curr > 0.0 {
+                                                        let scale_x = w_curr / w_init;
+                                                        let scale_y = h_curr / h_init;
+
+                                                        // 1. Scale snip points if present
+                                                        if let Some(ref base_pts) = base_img.snip_points {
+                                                            let mut scaled_pts = base_pts.clone();
+                                                            for p in &mut scaled_pts {
+                                                                if !p.x.is_nan() && !p.y.is_nan() {
+                                                                    p.x *= scale_x;
+                                                                    p.y *= scale_y;
+                                                                }
+                                                            }
+                                                            img.snip_points = Some(scaled_pts);
+                                                        }
+
+                                                        // 2. Scale mask/mask_size if present
+                                                        if base_img.mask.is_some() {
+                                                            let ppp = ui.ctx().pixels_per_point();
+                                                            let new_w = (w_curr * ppp).round() as usize;
+                                                            let new_h = (h_curr * ppp).round() as usize;
+
+                                                            if new_w > 0 && new_h > 0 {
+                                                                img.mask_size = Some([new_w, new_h]);
+
+                                                                // Regenerate or resample mask
+                                                                if let Some(ref pts) = img.snip_points {
+                                                                    // Shape has snip points, we can regenerate losslessly
+                                                                    let mut new_mask = vec![255u8; new_w * new_h];
+                                                                    for y in 0..new_h {
+                                                                        for x in 0..new_w {
+                                                                            let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                                                                            if !crate::utils::is_inside_poly(pts, lp) {
+                                                                                new_mask[y * new_w + x] = 0;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    img.mask = Some(new_mask);
+                                                                } else if let Some(ref base_mask) = base_img.mask {
+                                                                    // Nearest neighbor fallback
+                                                                    let old_w = base_img.mask_size.unwrap_or(base_img.size)[0];
+                                                                    let old_h = base_img.mask_size.unwrap_or(base_img.size)[1];
+                                                                    if old_w > 0 && old_h > 0 {
+                                                                        let mut new_mask = vec![0u8; new_w * new_h];
+                                                                        for y in 0..new_h {
+                                                                            let old_y = (y * old_h) / new_h;
+                                                                            for x in 0..new_w {
+                                                                                let old_x = (x * old_w) / new_w;
+                                                                                if old_y * old_w + old_x < base_mask.len() {
+                                                                                    new_mask[y * new_w + x] = base_mask[old_y * old_w + old_x];
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        img.mask = Some(new_mask);
+                                                                    }
+                                                                }
+                                                                img.mask_dirty = true;
+                                                                img.texture = None;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -714,8 +794,8 @@ pub fn update(ctx: &mut ToolContext) {
                                         let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                         let sx = (src[0] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                         let sy = (src[1] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                        let sw = (src[2] * ppp) as i32;
-                                        let sh = (src[3] * ppp) as i32;
+                                        let sw = (src[2] * ppp).round() as i32;
+                                        let sh = (src[3] * ppp).round() as i32;
                                         if sw > 0 && sh > 0 {
                                             if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, sw, sh) {
                                                 // Apply mask if present
@@ -726,7 +806,7 @@ pub fn update(ctx: &mut ToolContext) {
                                                         }
                                                     }
                                                 }
-                                                img.size = [src[2].round() as usize, src[3].round() as usize];
+                                                img.size = [sw as usize, sh as usize];
                                                 img.pixels = pixels;
                                                 img.texture = None;
                                                 img.thumbnail_dirty = true;

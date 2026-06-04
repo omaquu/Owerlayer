@@ -588,16 +588,29 @@ pub fn capture_screen_rect(x: i32, y: i32, width: i32, height: i32) -> Option<Ve
         
         if lines == 0 { return None; }
         
-        // GDI outputs BGRA, we need to swizzle it to RGBA for egui
-        for chunk in pixels.chunks_exact_mut(4) {
-            let b = chunk[0];
-            let g = chunk[1];
-            let r = chunk[2];
-            let a = 255; // Force alpha to 255 (desktop might have 0 alpha)
-            chunk[0] = r;
-            chunk[1] = g;
-            chunk[2] = b;
-            chunk[3] = a;
+        if pixels.len() > 200_000 {
+            use rayon::prelude::*;
+            pixels.par_chunks_exact_mut(4).for_each(|chunk| {
+                let b = chunk[0];
+                let g = chunk[1];
+                let r = chunk[2];
+                let a = 255;
+                chunk[0] = r;
+                chunk[1] = g;
+                chunk[2] = b;
+                chunk[3] = a;
+            });
+        } else {
+            for chunk in pixels.chunks_exact_mut(4) {
+                let b = chunk[0];
+                let g = chunk[1];
+                let r = chunk[2];
+                let a = 255;
+                chunk[0] = r;
+                chunk[1] = g;
+                chunk[2] = b;
+                chunk[3] = a;
+            }
         }
         
         Some(pixels)
@@ -699,12 +712,21 @@ pub fn capture_window(hwnd: usize) -> Option<(Vec<u8>, usize, usize)> {
 
         if lines == 0 { return None; }
 
-        // GDI gives BGRA → swizzle to RGBA
-        for chunk in pixels.chunks_exact_mut(4) {
-            let b = chunk[0];
-            chunk[0] = chunk[2]; // R
-            chunk[2] = b;        // B
-            chunk[3] = 255;      // Force opaque
+        if pixels.len() > 200_000 {
+            use rayon::prelude::*;
+            pixels.par_chunks_exact_mut(4).for_each(|chunk| {
+                let b = chunk[0];
+                chunk[0] = chunk[2]; // R
+                chunk[2] = b;        // B
+                chunk[3] = 255;      // Force opaque
+            });
+        } else {
+            for chunk in pixels.chunks_exact_mut(4) {
+                let b = chunk[0];
+                chunk[0] = chunk[2]; // R
+                chunk[2] = b;        // B
+                chunk[3] = 255;      // Force opaque
+            }
         }
 
         Some((pixels, w as usize, h as usize))

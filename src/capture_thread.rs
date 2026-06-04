@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::overlay::BlurEffect;
+use eframe::egui;
 
 // ── Public types ──
 
@@ -23,12 +24,17 @@ pub struct CaptureRequest {
     pub use_absolute: bool,
     /// If non-zero, capture from a specific window HWND instead of screen rect
     pub hwnd: usize,
+    pub mask: Option<Vec<u8>>,
+    pub mask_size: [usize; 2],
+    pub exclude_from_capture: bool,
+    pub snip_points: Option<Vec<egui::Pos2>>,
 }
 
 #[derive(Clone)]
 pub struct CaptureResult {
     pub pixels: Vec<u8>,
     pub size: [usize; 2],
+    pub color_image: Arc<egui::ColorImage>,
 }
 
 pub struct CaptureThread {
@@ -36,7 +42,7 @@ pub struct CaptureThread {
     results: Arc<Mutex<HashMap<usize, CaptureResult>>>,
     running: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
-    capture_interval_ms: u64,
+    capture_interval_ms: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl CaptureThread {
@@ -45,15 +51,17 @@ impl CaptureThread {
         let requests: Arc<Mutex<HashMap<usize, CaptureRequest>>> = Arc::new(Mutex::new(HashMap::new()));
         let results: Arc<Mutex<HashMap<usize, CaptureResult>>> = Arc::new(Mutex::new(HashMap::new()));
         let running = Arc::new(AtomicBool::new(true));
+        let capture_interval_ms = Arc::new(std::sync::atomic::AtomicU64::new(interval));
 
         let r_requests = Arc::clone(&requests);
         let r_results = Arc::clone(&results);
         let r_running = Arc::clone(&running);
+        let r_interval = Arc::clone(&capture_interval_ms);
 
         let handle = thread::Builder::new()
             .name("owerlayer-capture".to_string())
             .spawn(move || {
-                Self::capture_loop(r_requests, r_results, r_running, interval);
+                Self::capture_loop(r_requests, r_results, r_running, r_interval);
             })
             .expect("Failed to spawn capture thread");
 
@@ -62,7 +70,7 @@ impl CaptureThread {
             results,
             running,
             handle: Some(handle),
-            capture_interval_ms: interval,
+            capture_interval_ms,
         }
     }
 
@@ -103,15 +111,17 @@ impl CaptureThread {
 
     /// Update the capture FPS
     pub fn set_fps(&mut self, fps: f32) {
-        self.capture_interval_ms = (1000.0 / fps.clamp(5.0, 240.0)) as u64;
+        self.capture_interval_ms.store((1000.0 / fps.clamp(5.0, 240.0)) as u64, Ordering::Relaxed);
     }
 
     fn capture_loop(
         requests: Arc<Mutex<HashMap<usize, CaptureRequest>>>,
         results: Arc<Mutex<HashMap<usize, CaptureResult>>>,
         running: Arc<AtomicBool>,
-        interval_ms: u64,
+        interval: Arc<std::sync::atomic::AtomicU64>,
     ) {
+        let mut mask_cache: HashMap<usize, (Vec<u8>, [usize; 2])> = HashMap::new();
+
         while running.load(Ordering::Relaxed) {
             let start = Instant::now();
 
@@ -127,10 +137,10 @@ impl CaptureThread {
 
                 let result = if req.hwnd != 0 {
                     // Window capture
-                    Self::capture_window(req)
+                    Self::capture_window(req, &mut mask_cache)
                 } else {
                     // Screen rect capture
-                    Self::capture_screen(req)
+                    Self::capture_screen(req, &mut mask_cache)
                 };
 
                 if let Some(result) = result {
@@ -142,6 +152,7 @@ impl CaptureThread {
 
             // Sleep until next interval
             let elapsed = start.elapsed();
+            let interval_ms = interval.load(Ordering::Relaxed);
             let target = Duration::from_millis(interval_ms);
             if elapsed < target {
                 thread::sleep(target - elapsed);
@@ -149,7 +160,103 @@ impl CaptureThread {
         }
     }
 
-    fn capture_screen(req: &CaptureRequest) -> Option<CaptureResult> {
+    fn resize_mask(mask: &[u8], old_w: usize, old_h: usize, new_w: usize, new_h: usize) -> Vec<u8> {
+        let expected_mask_len = new_w * new_h;
+        if mask.len() == expected_mask_len && old_w == new_w && old_h == new_h {
+            return mask.to_vec();
+        }
+        let mut resized_mask = vec![255u8; expected_mask_len];
+        if old_w > 0 && old_h > 0 && new_w > 0 && new_h > 0 {
+            for py in 0..new_h {
+                for px in 0..new_w {
+                    let src_x = (px * old_w) / new_w;
+                    let src_y = (py * old_h) / new_h;
+                    let src_idx = src_y * old_w + src_x;
+                    if src_idx < mask.len() {
+                        resized_mask[py * new_w + px] = mask[src_idx];
+                    }
+                }
+            }
+        }
+        resized_mask
+    }
+
+    fn apply_mask_to_captured_pixels(
+        req: &CaptureRequest,
+        pixels: &mut [u8],
+        sw: usize,
+        sh: usize,
+        mask_cache: &mut HashMap<usize, (Vec<u8>, [usize; 2])>,
+    ) {
+        if let Some(ref pts) = req.snip_points {
+            let final_mask = if let Some((cached_mask, cached_size)) = mask_cache.get(&req.id) {
+                if *cached_size == [sw, sh] {
+                    cached_mask
+                } else {
+                    let mut new_mask = vec![255u8; sw * sh];
+                    let ppp = req.ppp;
+                    for y in 0..sh {
+                        for x in 0..sw {
+                            let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                            if !crate::utils::is_inside_poly(pts, lp) {
+                                new_mask[y * sw + x] = 0;
+                            }
+                        }
+                    }
+                    mask_cache.insert(req.id, (new_mask, [sw, sh]));
+                    &mask_cache.get(&req.id).unwrap().0
+                }
+            } else {
+                let mut new_mask = vec![255u8; sw * sh];
+                let ppp = req.ppp;
+                for y in 0..sh {
+                    for x in 0..sw {
+                        let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                        if !crate::utils::is_inside_poly(pts, lp) {
+                            new_mask[y * sw + x] = 0;
+                        }
+                    }
+                }
+                mask_cache.insert(req.id, (new_mask, [sw, sh]));
+                &mask_cache.get(&req.id).unwrap().0
+            };
+            
+            pixels.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
+                if i < final_mask.len() && final_mask[i] == 0 {
+                    if chunk.len() >= 4 {
+                        chunk[3] = 0;
+                    }
+                }
+            });
+        } else if let Some(mask) = &req.mask {
+            // Reuse cached resized mask if it matches target size
+            let final_mask = if let Some((cached_mask, cached_size)) = mask_cache.get(&req.id) {
+                if *cached_size == [sw, sh] {
+                    cached_mask
+                } else {
+                    let new_mask = Self::resize_mask(mask, req.mask_size[0], req.mask_size[1], sw, sh);
+                    mask_cache.insert(req.id, (new_mask, [sw, sh]));
+                    &mask_cache.get(&req.id).unwrap().0
+                }
+            } else {
+                let new_mask = Self::resize_mask(mask, req.mask_size[0], req.mask_size[1], sw, sh);
+                mask_cache.insert(req.id, (new_mask, [sw, sh]));
+                &mask_cache.get(&req.id).unwrap().0
+            };
+            
+            pixels.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
+                if i < final_mask.len() && final_mask[i] == 0 {
+                    if chunk.len() >= 4 {
+                        chunk[3] = 0;
+                    }
+                }
+            });
+        } else {
+            mask_cache.remove(&req.id);
+        }
+    }
+
+    fn capture_screen(req: &CaptureRequest, mask_cache: &mut HashMap<usize, (Vec<u8>, [usize; 2])>) -> Option<CaptureResult> {
         let (ox, oy) = if req.use_absolute { (0, 0) } else { req.window_offset };
 
         let sx = (req.source_rect[0] * req.ppp).round() as i32 + ox;
@@ -172,17 +279,46 @@ impl CaptureThread {
             }
         }
 
+        Self::apply_mask_to_captured_pixels(req, &mut pixels, sw as usize, sh as usize, mask_cache);
+
+        let color_pixels: Vec<egui::Color32> = pixels
+            .par_chunks_exact(4)
+            .map(|chunk| {
+                egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+            })
+            .collect();
+        let color_image = Arc::new(egui::ColorImage {
+            size: [sw as usize, sh as usize],
+            pixels: color_pixels,
+        });
+
         Some(CaptureResult {
             pixels,
             size: [sw as usize, sh as usize],
+            color_image,
         })
     }
 
-    fn capture_window(req: &CaptureRequest) -> Option<CaptureResult> {
-        let (pixels, pw, ph) = crate::winapi_utils::capture_window(req.hwnd)?;
+    fn capture_window(req: &CaptureRequest, mask_cache: &mut HashMap<usize, (Vec<u8>, [usize; 2])>) -> Option<CaptureResult> {
+        let (mut pixels, pw, ph) = crate::winapi_utils::capture_window(req.hwnd)?;
+        
+        Self::apply_mask_to_captured_pixels(req, &mut pixels, pw, ph, mask_cache);
+
+        let color_pixels: Vec<egui::Color32> = pixels
+            .par_chunks_exact(4)
+            .map(|chunk| {
+                egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+            })
+            .collect();
+        let color_image = Arc::new(egui::ColorImage {
+            size: [pw, ph],
+            pixels: color_pixels,
+        });
+
         Some(CaptureResult {
             pixels,
             size: [pw, ph],
+            color_image,
         })
     }
 }

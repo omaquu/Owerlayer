@@ -144,6 +144,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.is_live = true;
                                 img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                 img.mask = Some(mask);
+                                img.mask_size = Some([pw, ph]);
                                 img.blur = settings.blur_strength;
                                 img.blur_effect = settings.blur_effect;
                                 img.show_source_rect = true;
@@ -162,6 +163,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
                                     img.show_source_rect = true;
                                     img.mask = Some(mask);
+                                    img.mask_size = Some([pw, ph]);
                                     img.shadow = settings.snip_shadow;
                                     img.snip_points = Some(local_pts);
                                     layer.placed_images.push(img);
@@ -202,6 +204,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.is_live = true;
                             img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                             img.mask = Some(mask);
+                            img.mask_size = Some([sw, sh]);
                             img.blur = settings.blur_strength;
                             img.blur_effect = settings.blur_effect;
                             img.show_source_rect = true;
@@ -220,6 +223,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                 img.show_source_rect = true;
                                 img.mask = Some(mask);
+                                img.mask_size = Some([sw, sh]);
                                 img.shadow = settings.snip_shadow;
                                 img.snip_points = Some(poly.clone());
                                 layer.placed_images.push(img);
@@ -262,6 +266,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.is_live = true;
                             img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                             img.mask = Some(mask);
+                            img.mask_size = Some([sw, sh]);
                             img.blur = settings.blur_strength;
                             img.blur_effect = settings.blur_effect;
                             img.show_source_rect = true;
@@ -280,6 +285,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                 img.show_source_rect = true;
                                 img.mask = Some(mask);
+                                img.mask_size = Some([sw, sh]);
                                 img.shadow = settings.snip_shadow;
                                 img.snip_points = Some(poly.clone());
                                 layer.placed_images.push(img);
@@ -328,6 +334,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     img.is_live = true;
                                     img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                     img.mask = Some(mask);
+                                    img.mask_size = Some([sw, sh]);
                                     img.show_source_rect = true;
                                     img.shadow = settings.snip_shadow;
                                     img.snip_points = Some(poly.clone());
@@ -344,6 +351,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
                                         img.show_source_rect = true;
                                         img.mask = Some(mask);
+                                        img.mask_size = Some([sw, sh]);
                                         img.shadow = settings.snip_shadow;
                                         img.snip_points = Some(poly.clone());
                                         layer.placed_images.push(img);

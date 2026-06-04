@@ -231,6 +231,7 @@ pub fn update(ctx: &mut ToolContext) {
                     let mut modified = false;
                     if img.is_live && img.mask.is_none() {
                         img.mask = Some(vec![255; img.size[0] * img.size[1]]);
+                        img.mask_size = Some(img.size);
                     }
                     
                     let scale_x = img.size[0] as f32 / disp_w;

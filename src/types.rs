@@ -525,6 +525,8 @@ pub struct PlacedImage {
     #[serde(skip)]
     pub mask: Option<Vec<u8>>,
     #[serde(skip)]
+    pub mask_size: Option<[usize; 2]>,
+    #[serde(skip)]
     pub mask_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     pub mask_dirty: bool,
@@ -599,6 +601,7 @@ impl Clone for PlacedImage {
             blur: self.blur,
             blur_effect: self.blur_effect,
             mask: self.mask.clone(),
+            mask_size: self.mask_size,
             mask_texture: None,
             show_source_rect: self.show_source_rect,
             frames: self.frames.clone(),
@@ -652,6 +655,7 @@ impl PlacedImage {
             blur: 0.0,
             blur_effect: BlurEffect::Gaussian,
             mask: None,
+            mask_size: None,
             mask_texture: None,
             show_source_rect: false,
             frames: Vec::new(),
@@ -876,6 +880,8 @@ pub struct Settings {
     pub highlight_opacity: f32,
     #[serde(default = "default_show_screen_controls")]
     pub show_screen_controls: bool,
+    #[serde(default)]
+    pub snip_source_overlay: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -886,7 +892,7 @@ impl Default for BlurEffect { fn default() -> Self { Self::Gaussian } }
 fn default_toolbar_bg() -> [u8; 4] { [30, 30, 30, 220] }
 
 fn default_blur_strength() -> f32 { 0.0 }
-fn default_capture_fps() -> f32 { 15.0 }
+fn default_capture_fps() -> f32 { 30.0 }
 fn default_fso_fix() -> bool { true }
 fn default_polygon_sides() -> u32 { 5 }
 fn default_toolbar_pos() -> egui::Pos2 { egui::pos2(40.0, 60.0) }
@@ -991,18 +997,24 @@ impl Default for Settings {
             spray_density: default_spray_density(),
             highlight_opacity: default_highlight_opacity(),
             show_screen_controls: default_show_screen_controls(),
+            snip_source_overlay: false,
         }
     }
 }
 
 impl Settings {
     pub fn load() -> Self {
-        if let Some(path) = Self::config_path() {
+        let mut settings = if let Some(path) = Self::config_path() {
             if let Ok(data) = std::fs::read_to_string(&path) {
-                if let Ok(s) = serde_json::from_str(&data) { return s; }
+                if let Ok(s) = serde_json::from_str::<Self>(&data) { s } else { Self::default() }
+            } else {
+                Self::default()
             }
-        }
-        Self::default()
+        } else {
+            Self::default()
+        };
+        settings.blur_strength = 0.0; // Blur should start 0 always
+        settings
     }
     pub fn save(&self) {
         if let Some(path) = Self::config_path() {
