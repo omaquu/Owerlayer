@@ -56,6 +56,7 @@ pub fn update(ctx: &mut ToolContext) {
     if active_layer_idx >= project.layers.len() { return; }
 
     let mode = settings.cut_mode;
+    let time = ui.input(|i| i.time);
     
     // ---- Dragging selection boundary state ----
     if left_just_pressed {
@@ -94,7 +95,7 @@ pub fn update(ctx: &mut ToolContext) {
     if mode == CutMode::Lasso {
         if left_down { current_stroke.push(pos); }
         if current_stroke.len() >= 2 {
-            painter.add(egui::Shape::line(current_stroke.clone(), egui::Stroke::new(1.5, egui::Color32::WHITE)));
+            crate::utils::draw_dashed_path(&painter, current_stroke, time);
         }
         if left_just_released {
             if current_stroke.len() >= 3 {
@@ -109,7 +110,8 @@ pub fn update(ctx: &mut ToolContext) {
         if left_just_pressed { *line_start = Some(pos); }
         if let Some(start) = *line_start {
             let rect = egui::Rect::from_two_pos(start, pos);
-            painter.rect_stroke(rect, 0.0, egui::Stroke::new(1.5, egui::Color32::WHITE), egui::StrokeKind::Middle);
+            let rect_pts = vec![rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()];
+            crate::utils::draw_dashed_path(&painter, &rect_pts, time);
             painter.rect_filled(rect, 0.0, egui::Color32::from_white_alpha(15));
         }
         if left_just_released {
@@ -131,7 +133,7 @@ pub fn update(ctx: &mut ToolContext) {
                 let angle = i as f32 * std::f32::consts::PI * 2.0 / 40.0;
                 start + egui::vec2(angle.cos() * radius, angle.sin() * radius)
             }).collect();
-            painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, egui::Color32::WHITE)));
+            crate::utils::draw_dashed_path(&painter, &pts, time);
         }
         if left_just_released {
             if let Some(start) = line_start.take() {
@@ -164,7 +166,7 @@ pub fn update(ctx: &mut ToolContext) {
         if !current_stroke.is_empty() {
             let mut pts = current_stroke.clone();
             pts.push(pos);
-            painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, egui::Color32::WHITE)));
+            crate::utils::draw_dashed_path(&painter, &pts, time);
         }
     } else if mode == CutMode::Star || mode == CutMode::Heart {
         if left_just_pressed { *line_start = Some(pos); }
@@ -174,7 +176,7 @@ pub fn update(ctx: &mut ToolContext) {
                 let pts = if mode == CutMode::Star { crate::utils::get_star_points(start, radius) } else { crate::utils::get_heart_points(start, radius) };
                 let mut closed_pts = pts.clone();
                 if !closed_pts.is_empty() { closed_pts.push(pts[0]); }
-                painter.add(egui::Shape::line(closed_pts, egui::Stroke::new(1.5, egui::Color32::WHITE)));
+                crate::utils::draw_dashed_path(&painter, &closed_pts, time);
             }
         }
         if left_just_released {

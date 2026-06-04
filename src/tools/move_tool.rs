@@ -29,6 +29,89 @@ pub fn update(ctx: &mut ToolContext) {
     let render_offset = ctx.render_offset;
     let active_layer_idx = project.active_layer;
 
+    let is_double_click = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
+    if is_double_click {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+        let world_pos = pos + render_offset;
+        let mut found_objects = Vec::new();
+        
+        for (l_idx, l) in project.layers.iter().enumerate() {
+            if !l.visible { continue; }
+            
+            for (img_idx, _img) in l.placed_images.iter().enumerate() {
+                if let Some(rect) = crate::utils::object_bounds(l, ObjectType::Image, img_idx) {
+                    if rect.contains(world_pos) {
+                        found_objects.push(SelectedObject {
+                            layer_idx: l_idx, object_type: ObjectType::Image, object_idx: img_idx
+                        });
+                    }
+                }
+            }
+            
+            for (txt_idx, _txt) in l.text_annotations.iter().enumerate() {
+                if let Some(rect) = crate::utils::object_bounds(l, ObjectType::Text, txt_idx) {
+                    if rect.contains(world_pos) {
+                        found_objects.push(SelectedObject {
+                            layer_idx: l_idx, object_type: ObjectType::Text, object_idx: txt_idx
+                        });
+                    }
+                }
+            }
+
+            for (s_idx, s) in l.strokes.iter().enumerate() {
+                let hit = if s.points.len() < 2 {
+                    s.points.iter().any(|p| p.distance(world_pos) < s.width + 10.0)
+                } else {
+                    let mut hit_line = false;
+                    for w in s.points.windows(2) {
+                        let (p0, p1) = (w[0], w[1]);
+                        let len_sq = p0.distance_sq(p1);
+                        if len_sq > 0.0 {
+                            let t = ((world_pos.x - p0.x) * (p1.x - p0.x) + (world_pos.y - p0.y) * (p1.y - p0.y)) / len_sq;
+                            let t = t.clamp(0.0, 1.0);
+                            let proj = p0 + (p1 - p0) * t;
+                            if world_pos.distance(proj) < s.width * 0.5 + 5.0 {
+                                hit_line = true; break;
+                            }
+                        }
+                    }
+                    hit_line
+                };
+                if hit {
+                    found_objects.push(SelectedObject {
+                        layer_idx: l_idx, object_type: ObjectType::Stroke, object_idx: s_idx
+                    });
+                }
+            }
+        }
+        
+        if found_objects.is_empty() {
+            project.selected_object = None;
+        } else {
+            found_objects.sort_by(|a, b| b.layer_idx.cmp(&a.layer_idx));
+            let top = found_objects[0];
+            project.selected_object = Some(top);
+            project.active_layer = top.layer_idx;
+            
+            if top.object_type == ObjectType::Text {
+                let layer = &mut project.layers[top.layer_idx];
+                if top.object_idx < layer.text_annotations.len() {
+                    let txt = layer.text_annotations.remove(top.object_idx);
+                    settings.pen_color      = txt.color;
+                    settings.text_font      = txt.font;
+                    settings.font_size      = txt.font_size;
+                    settings.text_shadow    = txt.shadow;
+                    settings.text_outline   = txt.outline;
+                    settings.text_wave_warp = txt.wave_warp;
+                    *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
+                    *active_tool = crate::overlay::Tool::Text;
+                    project.selected_object = None;
+                }
+            }
+        }
+        return;
+    }
+
                 let mut click_consumed = false;
 
                 let is_layer_mode = project.selected_object.is_none();
@@ -131,13 +214,15 @@ pub fn update(ctx: &mut ToolContext) {
                                      click_consumed = true;
                                  }
                              }
-                             if left_just_pressed && src_rect.contains(pos) && !*dragging_source_rect {
-                                 *line_start = Some(pos);
-                                 *initial_bounds = Some(src_rect);
-                                 *dragging_source_rect = true;
-                                 clone_layer_after_loop = true;
-                                 click_consumed = true;
-                             }
+                              let on_border = src_rect.expand(4.0).contains(pos) && !src_rect.shrink(4.0).contains(pos);
+                              let label_rect = egui::Rect::from_min_max(src_rect.left_top() - egui::vec2(0.0, 15.0), src_rect.left_top() + egui::vec2(50.0, 0.0));
+                              if left_just_pressed && (on_border || label_rect.contains(pos)) && !*dragging_source_rect {
+                                  *line_start = Some(pos);
+                                  *initial_bounds = Some(src_rect);
+                                  *dragging_source_rect = true;
+                                  clone_layer_after_loop = true;
+                                  click_consumed = true;
+                              }
                          }
                      }
                  }
@@ -675,17 +760,6 @@ pub fn update(ctx: &mut ToolContext) {
                                                 img.display_size = Some(ds);
                                                 let rel = img.position - anchor;
                                                 img.position = anchor + egui::vec2(rel.x * scale.x, rel.y * scale.y);
-                                                
-                                                if let Some(ref mut src) = img.source_rect {
-                                                    let src_w = src[2] * scale.x;
-                                                    let src_h = src[3] * scale.y;
-                                                    let src_rel_x = src[0] - anchor.x;
-                                                    let src_rel_y = src[1] - anchor.y;
-                                                    src[0] = anchor.x + src_rel_x * scale.x;
-                                                    src[1] = anchor.y + src_rel_y * scale.y;
-                                                    src[2] = src_w;
-                                                    src[3] = src_h;
-                                                }
                                             }
                                             ObjectType::Stroke => {
                                                 let s = &mut layer.strokes[sel.object_idx];

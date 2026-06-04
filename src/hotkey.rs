@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A user-bound hotkey — stores any virtual key code + display name
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HotkeyBinding {
     pub vk_code: i32,
     pub name: String,

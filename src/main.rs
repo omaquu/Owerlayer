@@ -325,7 +325,7 @@ impl OwerlayerApp {
             let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw, sh], pixels);
             new_img.display_size = Some([bounds.width(), bounds.height()]);
             new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
-            new_img.show_source_rect = true;
+            new_img.show_source_rect = false;
             new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
             new_img.shadow = self.settings.snip_shadow;
             new_img.is_live = self.settings.snip_live;
@@ -351,7 +351,7 @@ impl OwerlayerApp {
             let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw, sh], pixels);
             new_img.display_size = Some([bounds.width(), bounds.height()]);
             new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
-            new_img.show_source_rect = true;
+            new_img.show_source_rect = false;
             new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
             new_img.shadow = self.settings.snip_shadow;
             new_img.is_live = self.settings.snip_live;
@@ -929,7 +929,7 @@ impl eframe::App for OwerlayerApp {
                                 let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
                                 new_img.display_size = Some([bounds.width(), bounds.height()]);
                                 new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
-                                new_img.show_source_rect = true;
+                                new_img.show_source_rect = false;
                                 new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
                                 new_img.shadow = self.settings.snip_shadow;
                                 new_img.is_live = self.settings.snip_live;
@@ -956,7 +956,7 @@ impl eframe::App for OwerlayerApp {
                                 let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
                                 new_img.display_size = Some([bounds.width(), bounds.height()]);
                                 new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
-                                new_img.show_source_rect = true;
+                                new_img.show_source_rect = false;
                                 new_img.snip_points = Some(marquee_to_local_points(&sel, bounds.min));
                                 new_img.shadow = self.settings.snip_shadow;
                                 new_img.is_live = self.settings.snip_live;
@@ -1014,7 +1014,7 @@ impl eframe::App for OwerlayerApp {
                     let mut img = overlay::PlacedImage::new(id, egui::pos2(100.0, 100.0), [w, h], pixels);
                     img.display_size = Some([w as f32, h as f32]);
                     img.source_rect = Some([100.0, 100.0, w as f32, h as f32]);
-                    img.show_source_rect = true;
+                    img.show_source_rect = false;
                     img.shadow = self.settings.snip_shadow;
                     Some(img)
                 } else {

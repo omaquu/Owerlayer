@@ -737,7 +737,7 @@ pub enum SelectionMode { New, Add, Subtract }
 
 impl Default for SelectionMode { fn default() -> Self { Self::New } }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     pub hotkey: HotkeyBinding,
     pub pen_color: [u8; 4],

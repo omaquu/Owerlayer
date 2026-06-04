@@ -812,70 +812,7 @@ pub fn render_canvas(
             } else {
                 points.to_vec()
             };
-            if simplified.len() < 2 { return; }
-            let points = &simplified;
-            
-            let mut perimeter = 0.0f32;
-            for i in 0..points.len() - 1 {
-                perimeter += (points[i+1] - points[i]).length();
-            }
-            
-            if perimeter < 20.0 {
-                painter.add(egui::Shape::line(
-                    points.to_vec(),
-                    egui::Stroke::new(2.0, egui::Color32::BLACK)
-                ));
-                painter.add(egui::Shape::line(
-                    points.to_vec(),
-                    egui::Stroke::new(1.2, egui::Color32::WHITE)
-                ));
-                return;
-            }
-            
-            let dash_len = 6.0f32;
-            let speed = 8.0f32; // Crawl slowly and gracefully (changed from 0.4)
-            
-            // First draw solid black line under the path to ensure perfect contrast and prevent flashing
-            painter.add(egui::Shape::line(
-                points.to_vec(),
-                egui::Stroke::new(2.0, egui::Color32::BLACK)
-            ));
-            
-            let mut current_offset = (time as f32 * speed) % (dash_len * 2.0);
-            let mut draw_white = current_offset < dash_len;
-            if !draw_white {
-                current_offset -= dash_len;
-            }
-            
-            for i in 0..points.len() - 1 {
-                let p1 = points[i];
-                let p2 = points[i+1];
-                let dir = p2 - p1;
-                let dist = dir.length();
-                if dist < 0.001 { continue; }
-                
-                let dir = dir / dist;
-                let mut t = 0.0f32;
-                
-                while t < dist {
-                    let dash_left = dash_len - current_offset;
-                    let step = dash_left.min(dist - t);
-                    
-                    let start = p1 + dir * t;
-                    let end = p1 + dir * (t + step);
-                    
-                    if draw_white {
-                        painter.line_segment([start, end], egui::Stroke::new(1.2, egui::Color32::WHITE));
-                    }
-                    
-                    t += step;
-                    current_offset += step;
-                    if current_offset >= dash_len {
-                        current_offset = 0.0;
-                        draw_white = !draw_white;
-                    }
-                }
-            }
+            crate::utils::draw_dashed_path(painter, &simplified, time);
         };
 
         let draw_selection_shape = |painter: &egui::Painter, shape: &crate::types::SelectionShape, render_offset: egui::Vec2, time: f64| {

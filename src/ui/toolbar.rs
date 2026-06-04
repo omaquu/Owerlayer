@@ -846,7 +846,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                                 img.thumbnail_texture = None;
                                 if img.source_rect.is_none() {
                                     img.source_rect = Some([img.position.x, img.position.y, img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0], img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1]]);
-                                    img.show_source_rect = true;
+                                    img.show_source_rect = false;
                                 }
                             }
                             if img.is_live || img.source_rect.is_some() {
@@ -1020,6 +1020,10 @@ pub fn render_toolbar(
     request_history_push: &mut Option<String>,
     filters_open: &mut Option<usize>,
 ) {
+    let old_settings = settings.clone();
     render_photoshop_panel(ctx, active_tool, settings, show_settings_panel, show_layers_panel, show_exit_dialog, project, embed_url, embed_trigger, show_history_panel, request_history_push, filters_open);
+    if settings != &old_settings {
+        settings.save();
+    }
 }
 
