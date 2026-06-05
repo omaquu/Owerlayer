@@ -426,11 +426,21 @@ pub fn setup_overlay_window() {
         let new_style = style & !(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
         // Do NOT add WS_EX_TOOLWINDOW — it hides the window from OBS's window capture list.
         // Keep WS_EX_APPWINDOW to ensure OBS can enumerate and capture this window.
-        let new_ex_style = (ex_style & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
+        let mut new_ex_style = (ex_style & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
         
         SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
-        SetWindowLongW(hwnd, GWL_EXSTYLE, (new_ex_style | WS_EX_LAYERED) as i32);
-        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+
+        if (ex_style & 0x00400000) != 0 {
+            // DirectComposition is active (WS_EX_NOREDIRECTIONBITMAP is set).
+            // Do NOT add WS_EX_LAYERED and do NOT call SetLayeredWindowAttributes to avoid edit-mode desktop freeze.
+            let final_ex_style = new_ex_style & !WS_EX_LAYERED;
+            SetWindowLongW(hwnd, GWL_EXSTYLE, final_ex_style as i32);
+        } else {
+            // Older composition mode: add WS_EX_LAYERED and set layered window attributes.
+            new_ex_style |= WS_EX_LAYERED;
+            SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style as i32);
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+        }
 
         // Ensure always-on-top
         SetWindowPos(
@@ -748,8 +758,23 @@ pub fn get_window_screen_pos() -> (i32, i32) {
     }
 }
 
+#[cfg(windows)]
+pub fn get_window_screen_pos_opt() -> Option<(i32, i32)> {
+    let hwnd = OVERLAY_HWND.load(Ordering::Relaxed);
+    if !hwnd.is_null() {
+        let mut r = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut r); }
+        Some((r.left, r.top))
+    } else {
+        None
+    }
+}
+
 #[cfg(not(windows))]
 pub fn get_window_screen_pos() -> (i32, i32) { (0, 0) }
+
+#[cfg(not(windows))]
+pub fn get_window_screen_pos_opt() -> Option<(i32, i32)> { None }
 
 #[cfg(windows)]
 pub fn list_visible_windows() -> Vec<(usize, String)> {
@@ -893,6 +918,41 @@ pub fn capture_screen_rect_cached(
     }
 }
 
+#[cfg(windows)]
+pub fn get_monitor_from_rect(x: i32, y: i32, w: i32, h: i32) -> isize {
+    use windows_sys::Win32::Graphics::Gdi::*;
+    use windows_sys::Win32::Foundation::RECT;
+    unsafe {
+        let rect = RECT {
+            left: x,
+            top: y,
+            right: x + w,
+            bottom: y + h,
+        };
+        let h_monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTOPRIMARY);
+        h_monitor as isize
+    }
+}
+
+#[cfg(windows)]
+pub fn get_monitor_rect(h_monitor: isize) -> Option<(i32, i32, i32, i32)> {
+    use windows_sys::Win32::Graphics::Gdi::*;
+    unsafe {
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(h_monitor as _, &mut info as *mut _ as *mut _) != 0 {
+            Some((
+                info.rcMonitor.left,
+                info.rcMonitor.top,
+                info.rcMonitor.right - info.rcMonitor.left,
+                info.rcMonitor.bottom - info.rcMonitor.top,
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(not(windows))]
 pub struct GdiCaptureCache;
 
@@ -909,3 +969,9 @@ pub fn capture_screen_rect_cached(
 
 #[cfg(not(windows))]
 pub fn list_visible_windows() -> Vec<(usize, String)> { Vec::new() }
+
+#[cfg(not(windows))]
+pub fn get_monitor_from_rect(_x: i32, _y: i32, _w: i32, _h: i32) -> isize { 0 }
+
+#[cfg(not(windows))]
+pub fn get_monitor_rect(_h_monitor: isize) -> Option<(i32, i32, i32, i32)> { None }

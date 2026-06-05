@@ -111,11 +111,13 @@ pub fn render_settings_window(
             if ui.checkbox(&mut settings.exclude_from_capture, "Exclude from capture (Fix Mirror loop)").on_hover_text("Hides this window from OBS, Discord, and Mirror captures. Turn OFF if you want OBS to record the overlay.").changed() {
                 crate::winapi_utils::set_capture_exclusion(settings.exclude_from_capture);
             }
+            ui.label(egui::RichText::new("OBS Capture Note: To capture Owerlayer in OBS, use 'Windows Graphics Capture' method or Display Capture.").size(10.0).color(egui::Color32::GRAY));
+
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label("Live Snip Capture FPS:");
-                ui.add(egui::Slider::new(&mut settings.capture_fps, 15.0..=120.0).show_value(true));
+                ui.add(egui::Slider::new(&mut settings.capture_fps, 15.0..=240.0).show_value(true));
             });
 
             ui.add_space(12.0);
@@ -149,6 +151,10 @@ pub fn render_settings_window(
             ui.add_space(4.0);
             ui.checkbox(&mut settings.use_absolute_screen_coords, "Use Absolute Screen Coords");
             ui.label(egui::RichText::new("Fixes OBS capture offset on multi-monitor setups.").size(10.0).color(egui::Color32::GRAY));
+
+            ui.add_space(4.0);
+            ui.checkbox(&mut settings.show_profiler, "Show Performance Profiler");
+            ui.label(egui::RichText::new("Prints capture pipeline timing to console every second.").size(10.0).color(egui::Color32::GRAY));
 
             // ── Accent color ──
             ui.add_space(8.0);
@@ -218,6 +224,7 @@ pub fn render_settings_window(
             }
         }
     }
+    crate::utils::enforce_window_bounds(ctx, egui::Id::new("Settings"), &mut settings.settings_menu_pos, 100.0, 100.0);
 }
 
 pub fn section_heading(ui: &mut egui::Ui, text: &str, accent: egui::Color32) {

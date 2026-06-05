@@ -216,7 +216,7 @@ pub fn update(ctx: &mut ToolContext) {
             layer.strokes.extend(keep_strokes);
             layer.strokes.extend(new_strokes);
 
-            for img in &mut layer.placed_images {
+            for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
                 let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
@@ -228,6 +228,14 @@ pub fn update(ctx: &mut ToolContext) {
                 };
 
                 if overlaps {
+                    // If this is a live image with source and no decision yet, show prompt
+                    if img.is_live && img.source_rect.is_some() && img.eraser_apply_to_source.is_none() {
+                        settings.eraser_source_prompt_open = true;
+                        settings.eraser_source_prompt_target = Some((active_layer_idx, img_idx));
+                        settings.eraser_source_prompt_remember = false;
+                        continue; // Don't erase until user decides
+                    }
+
                     let mut modified = false;
                     if img.is_live && img.mask.is_none() {
                         img.mask = Some(vec![255; img.size[0] * img.size[1]]);

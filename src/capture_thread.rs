@@ -35,13 +35,27 @@ pub struct CaptureRequest {
     pub mask_size: [usize; 2],
     pub exclude_from_capture: bool,
     pub snip_points: Option<Vec<egui::Pos2>>,
+    pub live_performance_mode: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CapturePerfMetrics {
+    pub wgc_gpu_copy_us: u128,
+    pub wgc_map_wait_us: u128,
+    pub wgc_pixel_swap_us: u128,
+    pub gdi_capture_us: u128,
+    pub thread_mask_effects_us: u128,
+    pub thread_color32_conv_us: u128,
+    pub thread_total_us: u128,
 }
 
 #[derive(Clone)]
 pub struct CaptureResult {
     pub pixels: Vec<u8>,
     pub size: [usize; 2],
-    pub color_image: Arc<egui::ColorImage>,
+    pub color_image: Option<Arc<egui::ColorImage>>,
+    pub perf: CapturePerfMetrics,
+    pub is_bgra: bool,
 }
 
 pub struct CaptureThread {
@@ -54,7 +68,7 @@ pub struct CaptureThread {
 
 impl CaptureThread {
     pub fn new(fps: f32) -> Self {
-        let interval = (1000.0 / fps.clamp(5.0, 240.0)) as u64;
+        let interval = (1000.0 / fps.clamp(5.0, 360.0)) as u64;
         let requests: Arc<Mutex<HashMap<usize, CaptureRequest>>> = Arc::new(Mutex::new(HashMap::new()));
         let results: Arc<Mutex<HashMap<usize, CaptureResult>>> = Arc::new(Mutex::new(HashMap::new()));
         let running = Arc::new(AtomicBool::new(true));
@@ -126,7 +140,7 @@ impl CaptureThread {
 
     /// Update the capture FPS
     pub fn set_fps(&mut self, fps: f32) {
-        self.capture_interval_ms.store((1000.0 / fps.clamp(5.0, 240.0)) as u64, Ordering::Relaxed);
+        self.capture_interval_ms.store((1000.0 / fps.clamp(5.0, 360.0)) as u64, Ordering::Relaxed);
     }
 
     fn capture_loop(
@@ -136,7 +150,8 @@ impl CaptureThread {
         interval: Arc<std::sync::atomic::AtomicU64>,
     ) {
         let mut mask_cache: HashMap<usize, (Vec<u8>, [usize; 2])> = HashMap::new();
-        let mut gdi_caches: HashMap<usize, Option<crate::winapi_utils::GdiCaptureCache>> = HashMap::new();
+        #[cfg(windows)]
+        let mut wgc_sessions: HashMap<isize, Option<crate::wgc_capture::wgc::WgcCaptureSession>> = HashMap::new();
 
         while running.load(Ordering::Relaxed) {
             let start = Instant::now();
@@ -151,7 +166,16 @@ impl CaptureThread {
             // Prune caches for inactive requests
             let active_ids: std::collections::HashSet<usize> = reqs.iter().map(|r| r.id).collect();
             mask_cache.retain(|k, _| active_ids.contains(k));
-            gdi_caches.retain(|k, _| active_ids.contains(k));
+
+            // Poll all active WGC sessions once per loop iteration
+            #[cfg(windows)]
+            {
+                for session_opt in wgc_sessions.values() {
+                    if let Some(session) = session_opt {
+                        let _ = session.poll_new_frame(&active_ids);
+                    }
+                }
+            }
 
             for req in &reqs {
                 if !running.load(Ordering::Relaxed) { break; }
@@ -161,8 +185,14 @@ impl CaptureThread {
                     Self::capture_window(req, &mut mask_cache)
                 } else {
                     // Screen rect capture
-                    let cache_entry = gdi_caches.entry(req.id).or_insert(None);
-                    Self::capture_screen(req, &mut mask_cache, cache_entry)
+                    #[cfg(windows)]
+                    {
+                        Self::capture_screen(req, &mut mask_cache, &mut wgc_sessions)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Self::capture_screen(req, &mut mask_cache)
+                    }
                 };
 
                 if let Some(result) = result {
@@ -218,47 +248,7 @@ impl CaptureThread {
         sh: usize,
         mask_cache: &mut HashMap<usize, (Vec<u8>, [usize; 2])>,
     ) {
-        if let Some(ref pts) = req.snip_points {
-            let final_mask = if let Some((cached_mask, cached_size)) = mask_cache.get(&req.id) {
-                if *cached_size == [sw, sh] {
-                    cached_mask
-                } else {
-                    let mut new_mask = vec![255u8; sw * sh];
-                    let ppp = req.ppp;
-                    for y in 0..sh {
-                        for x in 0..sw {
-                            let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
-                            if !crate::utils::is_inside_poly(pts, lp) {
-                                new_mask[y * sw + x] = 0;
-                            }
-                        }
-                    }
-                    mask_cache.insert(req.id, (new_mask, [sw, sh]));
-                    &mask_cache.get(&req.id).unwrap().0
-                }
-            } else {
-                let mut new_mask = vec![255u8; sw * sh];
-                let ppp = req.ppp;
-                for y in 0..sh {
-                    for x in 0..sw {
-                        let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
-                        if !crate::utils::is_inside_poly(pts, lp) {
-                            new_mask[y * sw + x] = 0;
-                        }
-                    }
-                }
-                mask_cache.insert(req.id, (new_mask, [sw, sh]));
-                &mask_cache.get(&req.id).unwrap().0
-            };
-            
-            pixels.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
-                if i < final_mask.len() && final_mask[i] == 0 {
-                    if chunk.len() >= 4 {
-                        chunk[3] = 0;
-                    }
-                }
-            });
-        } else if let Some(mask) = &req.mask {
+        if let Some(mask) = &req.mask {
             // Reuse cached resized mask if it matches target size
             let final_mask = if let Some((cached_mask, cached_size)) = mask_cache.get(&req.id) {
                 if *cached_size == [sw, sh] {
@@ -281,15 +271,277 @@ impl CaptureThread {
                     }
                 }
             });
+        } else if let Some(ref pts) = req.snip_points {
+            let final_mask = if let Some((cached_mask, cached_size)) = mask_cache.get(&req.id) {
+                if *cached_size == [sw, sh] {
+                    cached_mask
+                } else {
+                    let mut new_mask = vec![255u8; sw * sh];
+                    let ppp = req.ppp;
+                    use rayon::prelude::*;
+                    new_mask.par_chunks_mut(sw).enumerate().for_each(|(y, row)| {
+                        for x in 0..sw {
+                            let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                            if !crate::utils::is_inside_poly(pts, lp) {
+                                row[x] = 0;
+                            }
+                        }
+                    });
+                    mask_cache.insert(req.id, (new_mask, [sw, sh]));
+                    &mask_cache.get(&req.id).unwrap().0
+                }
+            } else {
+                let mut new_mask = vec![255u8; sw * sh];
+                let ppp = req.ppp;
+                use rayon::prelude::*;
+                new_mask.par_chunks_mut(sw).enumerate().for_each(|(y, row)| {
+                    for x in 0..sw {
+                        let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                        if !crate::utils::is_inside_poly(pts, lp) {
+                            row[x] = 0;
+                        }
+                    }
+                });
+                mask_cache.insert(req.id, (new_mask, [sw, sh]));
+                &mask_cache.get(&req.id).unwrap().0
+            };
+            
+            pixels.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
+                if i < final_mask.len() && final_mask[i] == 0 {
+                    if chunk.len() >= 4 {
+                        chunk[3] = 0;
+                    }
+                }
+            });
         } else {
             mask_cache.remove(&req.id);
         }
     }
 
+    #[cfg(windows)]
     fn capture_screen(
         req: &CaptureRequest,
         mask_cache: &mut HashMap<usize, (Vec<u8>, [usize; 2])>,
-        gdi_cache: &mut Option<crate::winapi_utils::GdiCaptureCache>,
+        wgc_sessions: &mut HashMap<isize, Option<crate::wgc_capture::wgc::WgcCaptureSession>>,
+    ) -> Option<CaptureResult> {
+        let total_start = std::time::Instant::now();
+        let mut perf = CapturePerfMetrics::default();
+
+        let (ox, oy) = if req.use_absolute { (0, 0) } else { req.window_offset };
+
+        let sx = (req.source_rect[0] * req.ppp).round() as i32 + ox;
+        let sy = (req.source_rect[1] * req.ppp).round() as i32 + oy;
+        let sw = (req.source_rect[2] * req.ppp).round() as i32;
+        let sh = (req.source_rect[3] * req.ppp).round() as i32;
+
+        if sw <= 0 || sh <= 0 { return None; }
+
+        let mut pixels = None;
+        let mut wgc_attempted = false;
+
+        // Try WGC if not in performance mode
+        if !req.live_performance_mode {
+            let h_monitor = crate::winapi_utils::get_monitor_from_rect(sx, sy, sw, sh);
+            if h_monitor != 0 {
+                let entry = wgc_sessions.entry(h_monitor).or_insert_with(|| {
+                    match crate::wgc_capture::wgc::WgcCaptureSession::start_monitor_capture(h_monitor) {
+                        Ok(session) => Some(session),
+                        Err(e) => {
+                            eprintln!("Failed to start WGC capture: {:?}", e);
+                            None
+                        }
+                    }
+                });
+
+                if let Some(session) = entry {
+                    wgc_attempted = true;
+                    if let Some((mon_x, mon_y, _mon_w, _mon_h)) = crate::winapi_utils::get_monitor_rect(h_monitor) {
+                        let crop_x = sx - mon_x;
+                        let crop_y = sy - mon_y;
+                        
+                        if let Ok(Some((crop_pixels, crop_w, crop_h, gpu_copy_us, map_wait_us, pixel_swap_us))) = session.get_latest_frame(req.id, Some((crop_x, crop_y, sw, sh))) {
+                            perf.wgc_gpu_copy_us = gpu_copy_us;
+                            perf.wgc_map_wait_us = map_wait_us;
+                            perf.wgc_pixel_swap_us = pixel_swap_us;
+
+                            let mut wgc_pixels = vec![0u8; (sw as usize) * (sh as usize) * 4];
+                            
+                            let dst_x_offset = (crop_x.max(0) - crop_x) as usize;
+                            let dst_y_offset = (crop_y.max(0) - crop_y) as usize;
+                            
+                            for y in 0..crop_h {
+                                let src_row_start = y * crop_w * 4;
+                                let src_row_end = src_row_start + crop_w * 4;
+                                
+                                let dst_y = dst_y_offset + y;
+                                let dst_row_start = (dst_y * (sw as usize) + dst_x_offset) * 4;
+                                let dst_row_end = dst_row_start + crop_w * 4;
+                                
+                                if src_row_end <= crop_pixels.len() && dst_row_end <= wgc_pixels.len() {
+                                    wgc_pixels[dst_row_start..dst_row_end].copy_from_slice(&crop_pixels[src_row_start..src_row_end]);
+                                }
+                            }
+                            pixels = Some(wgc_pixels);
+                        } else {
+                            // WGC session is active, but no new frame was available.
+                            // Return early to avoid GDI fallback stuttering.
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Determine if pixels are BGRA (from WGC, no swap done) or RGBA (from GDI fallback)
+        let is_bgra = wgc_attempted;
+
+        // Fallback to GDI if WGC was not used or failed
+        let mut pixels = match pixels {
+            Some(p) => p,
+            None => {
+                if wgc_attempted {
+                    // WGC is active/running on this monitor, but failed to return a frame.
+                    // Return early to avoid GDI fallback stuttering.
+                    return None;
+                }
+                let gdi_start = std::time::Instant::now();
+                let p = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh)?; // Legacy capture
+                perf.gdi_capture_us = gdi_start.elapsed().as_micros();
+                p
+            }
+        };
+
+        // Pre-retrieve final mask if needed
+        let has_mask = req.mask.is_some() || req.snip_points.is_some();
+        if !has_mask {
+            mask_cache.remove(&req.id);
+        }
+
+        let final_mask = if let Some(mask) = &req.mask {
+            let final_mask = if let Some((cached_mask, cached_size)) = mask_cache.get(&req.id) {
+                if *cached_size == [sw as usize, sh as usize] {
+                    cached_mask
+                } else {
+                    let new_mask = Self::resize_mask(mask, req.mask_size[0], req.mask_size[1], sw as usize, sh as usize);
+                    mask_cache.insert(req.id, (new_mask, [sw as usize, sh as usize]));
+                    &mask_cache.get(&req.id).unwrap().0
+                }
+            } else {
+                let new_mask = Self::resize_mask(mask, req.mask_size[0], req.mask_size[1], sw as usize, sh as usize);
+                mask_cache.insert(req.id, (new_mask, [sw as usize, sh as usize]));
+                &mask_cache.get(&req.id).unwrap().0
+            };
+            Some(final_mask)
+        } else if let Some(ref pts) = req.snip_points {
+            let final_mask = if let Some((cached_mask, cached_size)) = mask_cache.get(&req.id) {
+                if *cached_size == [sw as usize, sh as usize] {
+                    cached_mask
+                } else {
+                    let mut new_mask = vec![255u8; sw as usize * sh as usize];
+                    let ppp = req.ppp;
+                    use rayon::prelude::*;
+                    new_mask.par_chunks_mut(sw as usize).enumerate().for_each(|(y, row)| {
+                        for x in 0..sw as usize {
+                            let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                            if !crate::utils::is_inside_poly(pts, lp) {
+                                row[x] = 0;
+                            }
+                        }
+                    });
+                    mask_cache.insert(req.id, (new_mask, [sw as usize, sh as usize]));
+                    &mask_cache.get(&req.id).unwrap().0
+                }
+            } else {
+                let mut new_mask = vec![255u8; sw as usize * sh as usize];
+                let ppp = req.ppp;
+                use rayon::prelude::*;
+                new_mask.par_chunks_mut(sw as usize).enumerate().for_each(|(y, row)| {
+                    for x in 0..sw as usize {
+                        let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                        if !crate::utils::is_inside_poly(pts, lp) {
+                            row[x] = 0;
+                        }
+                    }
+                });
+                mask_cache.insert(req.id, (new_mask, [sw as usize, sh as usize]));
+                &mask_cache.get(&req.id).unwrap().0
+            };
+            Some(final_mask)
+        } else {
+            None
+        };
+
+        let mask_effects_start = std::time::Instant::now();
+        // Apply blur effect on background thread
+        if req.blur > 0.1 {
+            let w = sw as usize;
+            let h = sh as usize;
+            match req.blur_effect {
+                BlurEffect::Gaussian => apply_box_blur(&mut pixels, w, h, req.blur as usize),
+                BlurEffect::Pixelate => apply_pixelate(&mut pixels, w, h, (req.blur * req.ppp) as usize),
+                BlurEffect::Glitch => apply_vhs_glitch(&mut pixels, w, h, req.blur / 100.0),
+            }
+        }
+
+        if is_bgra {
+            if let Some(mask) = final_mask {
+                use rayon::prelude::*;
+                pixels.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
+                    if i < mask.len() && mask[i] == 0 {
+                        if chunk.len() >= 4 {
+                            chunk[3] = 0;
+                        }
+                    }
+                });
+            }
+        }
+        perf.thread_mask_effects_us = mask_effects_start.elapsed().as_micros();
+
+        let conv_start = std::time::Instant::now();
+        // For BGRA (WGC) path: skip Color32 conversion entirely - GPU handles swizzle
+        let color_image = if is_bgra {
+            None
+        } else {
+            // For legacy GDI path: pixels are already RGBA! We just apply mask and build ColorImage in a single sequential CPU loop (no swap needed)
+            let mut color_pixels = Vec::with_capacity(pixels.len() / 4);
+            if let Some(mask) = final_mask {
+                for (i, chunk) in pixels.chunks_exact_mut(4).enumerate() {
+                    let r = chunk[0];
+                    let g = chunk[1];
+                    let b = chunk[2];
+                    let a = if i < mask.len() && mask[i] == 0 { 0 } else { 255 };
+                    chunk[3] = a;
+                    color_pixels.push(egui::Color32::from_rgba_unmultiplied(r, g, b, a));
+                }
+            } else {
+                for chunk in pixels.chunks_exact_mut(4) {
+                    let r = chunk[0];
+                    let g = chunk[1];
+                    let b = chunk[2];
+                    color_pixels.push(egui::Color32::from_rgba_unmultiplied(r, g, b, chunk[3]));
+                }
+            }
+            Some(Arc::new(egui::ColorImage {
+                size: [sw as usize, sh as usize],
+                pixels: color_pixels,
+            }))
+        };
+        perf.thread_color32_conv_us = conv_start.elapsed().as_micros();
+        perf.thread_total_us = total_start.elapsed().as_micros();
+
+        Some(CaptureResult {
+            pixels,
+            size: [sw as usize, sh as usize],
+            color_image,
+            perf,
+            is_bgra,
+        })
+    }
+
+    #[cfg(not(windows))]
+    fn capture_screen(
+        req: &CaptureRequest,
+        mask_cache: &mut HashMap<usize, (Vec<u8>, [usize; 2])>,
     ) -> Option<CaptureResult> {
         let (ox, oy) = if req.use_absolute { (0, 0) } else { req.window_offset };
 
@@ -300,16 +552,7 @@ impl CaptureThread {
 
         if sw <= 0 || sh <= 0 { return None; }
 
-        let mut pixels = crate::winapi_utils::capture_screen_rect_cached(sx, sy, sw, sh, gdi_cache)?;
-
-        // Swap BGRA to RGBA in place
-        for chunk in pixels.chunks_exact_mut(4) {
-            let b = chunk[0];
-            let r = chunk[2];
-            chunk[0] = r;
-            chunk[2] = b;
-            chunk[3] = 255;
-        }
+        let mut pixels = crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh)?;
 
         // Apply blur effect on background thread
         if req.blur > 0.1 {
@@ -324,10 +567,22 @@ impl CaptureThread {
 
         Self::apply_mask_to_captured_pixels(req, &mut pixels, sw as usize, sh as usize, mask_cache);
 
-        let mut color_pixels = Vec::with_capacity(pixels.len() / 4);
-        for chunk in pixels.chunks_exact(4) {
-            color_pixels.push(egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3]));
-        }
+        use rayon::prelude::*;
+        let color_pixels: Vec<egui::Color32> = if pixels.len() > 100_000 {
+            pixels
+                .par_chunks_exact(4)
+                .map(|chunk| {
+                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+                })
+                .collect()
+        } else {
+            pixels
+                .chunks_exact(4)
+                .map(|chunk| {
+                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+                })
+                .collect()
+        };
 
         let color_image = Arc::new(egui::ColorImage {
             size: [sw as usize, sh as usize],
@@ -337,7 +592,9 @@ impl CaptureThread {
         Some(CaptureResult {
             pixels,
             size: [sw as usize, sh as usize],
-            color_image,
+            color_image: Some(color_image),
+            perf: CapturePerfMetrics::default(),
+            is_bgra: false,
         })
     }
 
@@ -346,7 +603,7 @@ impl CaptureThread {
         
         Self::apply_mask_to_captured_pixels(req, &mut pixels, pw, ph, mask_cache);
 
-        let color_pixels: Vec<egui::Color32> = if pixels.len() > 2_000_000 {
+        let color_pixels: Vec<egui::Color32> = if pixels.len() > 100_000 {
             use rayon::prelude::*;
             pixels
                 .par_chunks_exact(4)
@@ -370,7 +627,9 @@ impl CaptureThread {
         Some(CaptureResult {
             pixels,
             size: [pw, ph],
-            color_image,
+            color_image: Some(color_image),
+            perf: CapturePerfMetrics::default(),
+            is_bgra: false,
         })
     }
 }

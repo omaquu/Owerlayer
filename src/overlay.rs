@@ -92,6 +92,7 @@ pub fn render_canvas(
     rasterize_phase: u8,
     rasterize_bbox: Option<[f32; 4]>,
     rasterize_capture: crate::rasterize::CaptureBuffer,
+    perf_stats: &mut crate::types::AppPerfStats,
 ) {
     let rect = ui.available_rect_before_wrap();
     
@@ -241,23 +242,71 @@ pub fn render_canvas(
                         mask_size: img.mask_size.unwrap_or(img.size),
                         exclude_from_capture: settings.exclude_from_capture,
                         snip_points: img.snip_points.clone(),
+                        live_performance_mode: settings.live_performance_mode,
                     };
                     
                     _capture_thread.update_request(img.id, req);
                     
                     if let Some(res) = _capture_thread.get_frame(img.id) {
                         img.size = res.size;
-                        img.pixels = res.pixels;
                         img.thumbnail_dirty = true;
+
+                        let upload_start = std::time::Instant::now();
+
+                        // Build the color_image for egui texture upload
+                        let color_image = if res.is_bgra {
+                            // Zero-copy WGC path: pixels are BGRA, swap in-place for RGBA
+                            let mut rgba_pixels = res.pixels;
+                            for chunk in rgba_pixels.chunks_exact_mut(4) {
+                                let b = chunk[0];
+                                chunk[0] = chunk[2];
+                                chunk[2] = b;
+                            }
+                            img.pixels = rgba_pixels.clone();
+                            let color_pixels: Vec<egui::Color32> = rgba_pixels
+                                .chunks_exact(4)
+                                .map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
+                                .collect();
+                            Arc::new(egui::ColorImage {
+                                size: res.size,
+                                pixels: color_pixels,
+                            })
+                        } else if let Some(ci) = res.color_image {
+                            img.pixels = res.pixels;
+                            ci
+                        } else {
+                            img.pixels = res.pixels.clone();
+                            let color_pixels: Vec<egui::Color32> = res.pixels
+                                .chunks_exact(4)
+                                .map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
+                                .collect();
+                            Arc::new(egui::ColorImage {
+                                size: res.size,
+                                pixels: color_pixels,
+                            })
+                        };
+
                         if let Some(tex) = &mut img.texture {
-                            tex.set(egui::ImageData::Color(res.color_image), egui::TextureOptions::LINEAR);
+                            tex.set(egui::ImageData::Color(color_image), egui::TextureOptions::LINEAR);
                         } else {
                             img.texture = Some(ui.ctx().load_texture(
                                 format!("snip_{}_{}", layer.name, img.id),
-                                egui::ImageData::Color(res.color_image),
+                                egui::ImageData::Color(color_image),
                                 egui::TextureOptions::LINEAR,
                             ));
                         }
+                        let upload_time = upload_start.elapsed().as_micros();
+
+                        // Accumulate perf metrics
+                        perf_stats.frame_count += 1;
+                        perf_stats.wgc_gpu_copy_us_sum += res.perf.wgc_gpu_copy_us;
+                        perf_stats.wgc_map_wait_us_sum += res.perf.wgc_map_wait_us;
+                        perf_stats.wgc_pixel_swap_us_sum += res.perf.wgc_pixel_swap_us;
+                        perf_stats.gdi_capture_us_sum += res.perf.gdi_capture_us;
+                        perf_stats.thread_mask_effects_us_sum += res.perf.thread_mask_effects_us;
+                        perf_stats.thread_color32_conv_us_sum += res.perf.thread_color32_conv_us;
+                        perf_stats.thread_total_us_sum += res.perf.thread_total_us;
+                        perf_stats.upload_us_sum += upload_time;
                     }
                     ui.ctx().request_repaint();
                 }
@@ -322,7 +371,7 @@ pub fn render_canvas(
 
             if img.mask.is_some() && (img.mask_texture.is_none() || img.mask_dirty) {
                 if let Some(mask) = &img.mask {
-                    let size = img.size;
+                    let size = img.mask_size.unwrap_or(img.size);
                     let mut mask_rgba = vec![255u8; size[0] * size[1] * 4];
                     for (i, &m) in mask.iter().enumerate() {
                         if i < mask_rgba.len() / 4 {
@@ -350,7 +399,15 @@ pub fn render_canvas(
                 if img.flipped_v { final_scale.y *= -1.0; }
 
                 let has_gl_effect = img.blur > 0.1 || img.grayscale || img.invert || img.sepia || img.glow || layer.grayscale || layer.invert || layer.sepia || layer.glow;
-                let effect_pad = 0.0;
+                let effect_pad = if img.blur > 0.1 || layer.blur > 0.1 {
+                    let eff_strength = img.blur.max(layer.blur) * 0.2;
+                    let active_effect = if img.blur > 0.1 { img.blur_effect } else { layer.blur_effect };
+                    match active_effect {
+                        BlurEffect::Glitch => eff_strength * 12.0,
+                        BlurEffect::Gaussian => eff_strength * 5.0,
+                        BlurEffect::Pixelate => eff_strength * 2.0,
+                    }
+                } else { 0.0 };
 
                 let is_gray = img.grayscale || layer.grayscale;
                 let is_inv = img.invert || layer.invert;
@@ -378,6 +435,9 @@ pub fn render_canvas(
                 if final_effect == 3 {
                     ui.ctx().request_repaint();
                 }
+
+                let chromatic_val = if img.chromatic_aberration > 0.0 { img.chromatic_aberration } else { layer.chromatic_aberration };
+                let antialias_val = img.antialias;
 
                 // Draw helper closure
                 // apply_filters = true only for the main image pass, NOT for shadow/outline/glow silhouette passes
@@ -427,7 +487,7 @@ pub fn render_canvas(
 
                     // For silhouette passes (shadow/outline/glow), only use GL when blur effect is active
                     // so the blur kernel can spread the silhouette halo. Otherwise use fast software path.
-                    let use_gl = gl_renderer.is_some() && (apply_filters || final_effect > 0 || pass_blur_strength > 0.0 || spread > 0.0);
+                    let use_gl = gl_renderer.is_some() && (apply_filters || final_effect > 0 || pass_blur_strength > 0.0 || spread > 0.0 || chromatic_val > 0.0 || antialias_val);
 
                     if use_gl {
                         let renderer = gl_renderer.as_ref().unwrap().clone();
@@ -484,7 +544,7 @@ pub fn render_canvas(
                                     
                                     let actual_effect = if pass_blur_strength > 0.0 { 1 } else { final_effect };
                                     let actual_strength = if pass_blur_strength > 0.0 { pass_blur_strength } else { strength };
-                                    renderer.render_effect(gl, gl_tex, gl_mask, actual_effect, actual_strength, res, time, pass_gray, pass_inv, pass_sepia, tint, is_shadow, pass_opacity, vertex_count, &mapped_vertices);
+                                    renderer.render_effect(gl, gl_tex, gl_mask, actual_effect, actual_strength, res, time, pass_gray, pass_inv, pass_sepia, tint, is_shadow, pass_opacity, vertex_count, &mapped_vertices, if apply_filters { chromatic_val } else { 0.0 }, apply_filters && antialias_val);
                                     
                                     gl.viewport(old_viewport[0], old_viewport[1], old_viewport[2], old_viewport[3]);
                                 }
@@ -581,11 +641,13 @@ pub fn render_canvas(
                         mask_size: [0, 0],
                         exclude_from_capture: settings.exclude_from_capture,
                         snip_points: None,
+                        live_performance_mode: settings.live_performance_mode,
                     };
                     _capture_thread.update_request(s.id, req);
 
                     if let Some(res) = _capture_thread.get_frame(s.id) {
                         let color_img = egui::ColorImage::from_rgba_unmultiplied(res.size, &res.pixels);
+                        let upload_start = std::time::Instant::now();
                         if let Some(ref mut tex) = s.cached_texture {
                             tex.set(color_img, egui::TextureOptions::LINEAR);
                         } else {
@@ -595,6 +657,18 @@ pub fn render_canvas(
                                 egui::TextureOptions::LINEAR,
                             ));
                         }
+                        let upload_time = upload_start.elapsed().as_micros();
+
+                        // Accumulate perf metrics
+                        perf_stats.frame_count += 1;
+                        perf_stats.wgc_gpu_copy_us_sum += res.perf.wgc_gpu_copy_us;
+                        perf_stats.wgc_map_wait_us_sum += res.perf.wgc_map_wait_us;
+                        perf_stats.wgc_pixel_swap_us_sum += res.perf.wgc_pixel_swap_us;
+                        perf_stats.gdi_capture_us_sum += res.perf.gdi_capture_us;
+                        perf_stats.thread_mask_effects_us_sum += res.perf.thread_mask_effects_us;
+                        perf_stats.thread_color32_conv_us_sum += res.perf.thread_color32_conv_us;
+                        perf_stats.thread_total_us_sum += res.perf.thread_total_us;
+                        perf_stats.upload_us_sum += upload_time;
                     }
                     ui.ctx().request_repaint();
                     if let Some(ref tex) = s.cached_texture {
@@ -1001,7 +1075,7 @@ pub fn render_canvas(
                     } else {
                         false
                     };
-                    if (img.show_source_rect || is_selected) && img.source_rect.is_some() {
+                    if img.show_source_rect && img.source_rect.is_some() {
                         has_show_source = true;
                         let src = img.source_rect.unwrap();
                         let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
@@ -1018,17 +1092,14 @@ pub fn render_canvas(
                             egui::Color32::from_rgb(200, 100, 0) // Muted orange-gray
                         };
 
-                        let stroke_width = if is_selected { 2.5f32 } else { 1.5f32 };
-                        let back_stroke = egui::Stroke::new(stroke_width + 1.0, egui::Color32::BLACK);
-                        let fore_stroke = egui::Stroke::new(stroke_width, stroke_color);
+                        let stroke_width = if is_selected { 1.8f32 } else { 1.2f32 };
                         
                         if let Some(ref local_pts) = img.snip_points {
                             let mut current_path = Vec::new();
                             for p in local_pts {
                                 if p.x.is_nan() || p.y.is_nan() {
                                     if !current_path.is_empty() {
-                                        painter.add(egui::Shape::line(current_path.clone(), back_stroke));
-                                        painter.add(egui::Shape::line(current_path.clone(), fore_stroke));
+                                        crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
                                         current_path.clear();
                                     }
                                 } else {
@@ -1036,8 +1107,7 @@ pub fn render_canvas(
                                 }
                             }
                             if !current_path.is_empty() {
-                                painter.add(egui::Shape::line(current_path.clone(), back_stroke));
-                                painter.add(egui::Shape::line(current_path.clone(), fore_stroke));
+                                crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
                             }
                         } else {
                             let r = src_rect.translate(-ctx.render_offset);
@@ -1048,8 +1118,7 @@ pub fn render_canvas(
                                 r.left_bottom(),
                                 r.left_top(),
                             ];
-                            painter.add(egui::Shape::line(pts.clone(), back_stroke));
-                            painter.add(egui::Shape::line(pts.clone(), fore_stroke));
+                            crate::utils::draw_dashed_path_color(&painter, &pts, time, stroke_color, stroke_width);
                         }
                     }
                 }

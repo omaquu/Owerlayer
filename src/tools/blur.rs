@@ -26,18 +26,19 @@ pub fn update(ctx: &mut ToolContext) {
             // Determine dimensions, coordinates, and mask depending on the shape
             let (rect, mask, snip_points) = match shape {
                 ShapeType::Circle => {
-                    let rect = egui::Rect::from_two_pos(start, pos);
-                    let w = rect.width();
-                    let h = rect.height();
-                    if w > 4.0 && h > 4.0 {
+                    let radius = start.distance(pos);
+                    if radius > 2.0 {
+                        let rect = egui::Rect::from_center_size(start, egui::vec2(radius * 2.0, radius * 2.0));
+                        let w = rect.width();
+                        let h = rect.height();
                         let ppp = ui.ctx().pixels_per_point();
                         let mut mask = vec![255u8; (w * ppp) as usize * (h * ppp) as usize];
                         let center = egui::pos2(w * 0.5, h * 0.5);
-                        let radius = w.min(h) * 0.5;
+                        let mask_radius = radius;
                         for py in 0..(h * ppp) as usize {
                             for px in 0..(w * ppp) as usize {
                                 let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
-                                if lp.distance(center) > radius {
+                                if lp.distance(center) > mask_radius {
                                     mask[py * (w * ppp) as usize + px] = 0;
                                 }
                             }
@@ -46,7 +47,7 @@ pub fn update(ctx: &mut ToolContext) {
                         let mut local_pts = Vec::new();
                         let segments = 64;
                         let c_center = egui::pos2(w * 0.5, h * 0.5);
-                        let c_radius = w.min(h) * 0.5;
+                        let c_radius = radius;
                         for idx in 0..=segments {
                             let angle = (idx as f32 / segments as f32) * std::f32::consts::TAU;
                             let px = c_center.x + c_radius * angle.cos();
@@ -153,9 +154,8 @@ pub fn render_preview(ctx: &mut ToolContext) {
     
     match settings.shape_type {
         ShapeType::Circle => {
-            let rect = egui::Rect::from_two_pos(start, pos);
-            let center = rect.center() - render_offset;
-            let radius = rect.width().min(rect.height()) * 0.5;
+            let radius = start.distance(pos);
+            let center = start - render_offset;
             painter.circle_stroke(center, radius, stroke);
         }
         ShapeType::Star => {

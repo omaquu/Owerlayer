@@ -1,4 +1,4 @@
-﻿use eframe::egui;
+use eframe::egui;
 use crate::project::Project;
 use crate::types::{Settings, BlurEffect};
 use crate::utils::color32;
@@ -22,6 +22,7 @@ pub fn render_filter_menu(
         let layer_name = project.layers[idx].name.clone();
 
         let win_resp = egui::Window::new(format!("Layer Filters: {}", layer_name))
+            .id(egui::Id::new("layer_filters"))
             .title_bar(false)
             .resizable(false)
             .collapsible(false)
@@ -151,6 +152,8 @@ pub fn render_filter_menu(
                 }
             }
         }
+
+        crate::utils::enforce_window_bounds(ctx, egui::Id::new("layer_filters"), &mut settings.filter_menu_pos, 100.0, 100.0);
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             *filters_open = None;

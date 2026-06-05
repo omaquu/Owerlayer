@@ -408,6 +408,7 @@ pub fn render_photoshop_panel(
             }
         }
     }
+    crate::utils::enforce_window_bounds(ctx, egui::Id::new("photoshop_panel"), &mut settings.toolbar_pos, 50.0, 50.0);
 }
 
 pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, _is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool, request_history_push: &mut Option<String>, filters_open: &mut Option<usize>) {
@@ -992,6 +993,8 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             ui.selectable_value(&mut layer.blur_effect, BlurEffect::Pixelate, "Pix");
                             ui.selectable_value(&mut layer.blur_effect, BlurEffect::Glitch, "VHS");
                         }
+                        ui.separator();
+                        ui.add(egui::DragValue::new(&mut layer.chromatic_aberration).speed(0.1).range(0.0..=20.0).prefix("CA: ").max_decimals(1));
                     });
                 }
             });

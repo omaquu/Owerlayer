@@ -93,7 +93,11 @@ pub fn update(ctx: &mut ToolContext) {
     }
 
     if mode == CutMode::Lasso {
-        if left_down { current_stroke.push(pos); }
+        if left_down {
+            if current_stroke.is_empty() || current_stroke.last().unwrap().distance(pos) > 3.0 {
+                current_stroke.push(pos);
+            }
+        }
         if current_stroke.len() >= 2 {
             crate::utils::draw_dashed_path(&painter, current_stroke, time);
         }

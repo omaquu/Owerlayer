@@ -176,36 +176,44 @@ pub fn update(ctx: &mut ToolContext) {
                      if img.source_rect.is_some() {
                          let is_selected = project.selected_object == Some(SelectedObject { layer_idx, object_type: ObjectType::Image, object_idx: img_idx });
                          
-                         if is_selected {
-                              let src = img.source_rect.unwrap();
-                              let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
-                              
-                              let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
-                              let ppp = ui.ctx().pixels_per_point();
-                              let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
-                              let draw_rect = src_rect.translate(-window_origin);
-                              let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(mouse.pos - window_origin);
+                          if is_selected && img.show_source_rect {
+                               let src = img.source_rect.unwrap();
+                               let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                               
+                               let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                               let ppp = ui.ctx().pixels_per_point();
+                               let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
+                               let draw_rect = src_rect.translate(-window_origin);
+                               let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(mouse.pos);
+                               let time = ui.input(|i| i.time);
 
-                              if let Some(ref local_pts) = img.snip_points {
-                                  let mut current_path = Vec::new();
-                                  for p in local_pts {
-                                      if p.x.is_nan() || p.y.is_nan() {
-                                          if !current_path.is_empty() {
-                                              painter.add(egui::Shape::line(current_path.clone(), egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
-                                              current_path.clear();
-                                          }
-                                      } else {
-                                          current_path.push(egui::pos2(draw_rect.min.x + p.x, draw_rect.min.y + p.y));
-                                      }
-                                  }
-                                  if !current_path.is_empty() {
-                                      painter.add(egui::Shape::line(current_path, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0))));
-                                  }
-                              } else {
-                                  painter.rect_stroke(draw_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 0)), egui::StrokeKind::Middle);
-                              }
-                              
-                              painter.text(draw_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
+                               if let Some(ref local_pts) = img.snip_points {
+                                   let mut current_path = Vec::new();
+                                   for p in local_pts {
+                                       if p.x.is_nan() || p.y.is_nan() {
+                                           if !current_path.is_empty() {
+                                               crate::utils::draw_dashed_path_color(&painter, &current_path, time, egui::Color32::from_rgb(255, 120, 0), 1.8);
+                                               current_path.clear();
+                                           }
+                                       } else {
+                                           current_path.push(egui::pos2(draw_rect.min.x + p.x, draw_rect.min.y + p.y));
+                                       }
+                                   }
+                                   if !current_path.is_empty() {
+                                       crate::utils::draw_dashed_path_color(&painter, &current_path, time, egui::Color32::from_rgb(255, 120, 0), 1.8);
+                                   }
+                               } else {
+                                   let pts = vec![
+                                       draw_rect.left_top(),
+                                       draw_rect.right_top(),
+                                       draw_rect.right_bottom(),
+                                       draw_rect.left_bottom(),
+                                       draw_rect.left_top(),
+                                   ];
+                                   crate::utils::draw_dashed_path_color(&painter, &pts, time, egui::Color32::from_rgb(255, 120, 0), 1.8);
+                               }
+                               
+                               painter.text(draw_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
                               
                               // Handles for source rect
                               let s_corners = [draw_rect.left_top(), draw_rect.right_top(), draw_rect.left_bottom(), draw_rect.right_bottom()];
@@ -621,7 +629,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                         let ppp = ui.ctx().pixels_per_point();
                                         let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
-                                        let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_else(|| if settings.use_absolute_screen_coords { pos - window_origin } else { pos });
+                                        let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(pos);
                                         let hover_pos_screen = hover_pos + window_origin;
 
                                         if start.x == -4.0 {
@@ -630,12 +638,41 @@ pub fn update(ctx: &mut ToolContext) {
                                             let ib = initial_bounds.unwrap();
                                             let ic = [ib.left_top(), ib.right_top(), ib.left_bottom(), ib.right_bottom()];
                                             let anchor = ic[3 - idx];
-                                            let new_rect = egui::Rect::from_two_pos(anchor, hover_pos_screen);
+                                            let mut clamped_hover_screen = hover_pos_screen;
+                                            if !settings.multi_monitor {
+                                                let (sw, sh) = crate::winapi_utils::get_screen_size(false);
+                                                clamped_hover_screen.x = clamped_hover_screen.x.clamp(0.0, sw);
+                                                clamped_hover_screen.y = clamped_hover_screen.y.clamp(0.0, sh);
+                                            }
+                                            let new_rect = egui::Rect::from_two_pos(anchor, clamped_hover_screen);
                                             img.source_rect = Some([new_rect.min.x, new_rect.min.y, new_rect.width(), new_rect.height()]);
                                         } else {
                                             // Move whole rect
-                                            let delta = hover_pos - start;
+                                            let mut delta = hover_pos - start;
                                             let ib = initial_bounds.unwrap();
+                                            if !settings.multi_monitor {
+                                                let (sw, sh) = crate::winapi_utils::get_screen_size(false);
+                                                let monitor_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(sw, sh));
+                                                let new_rect = ib.translate(delta);
+                                                
+                                                let min_overlap = 20.0f32;
+                                                let mut shift_x = 0.0f32;
+                                                if new_rect.max.x < monitor_rect.min.x + min_overlap {
+                                                    shift_x = (monitor_rect.min.x + min_overlap) - new_rect.max.x;
+                                                } else if new_rect.min.x > monitor_rect.max.x - min_overlap {
+                                                    shift_x = (monitor_rect.max.x - min_overlap) - new_rect.min.x;
+                                                }
+                                                
+                                                let mut shift_y = 0.0f32;
+                                                if new_rect.max.y < monitor_rect.min.y + min_overlap {
+                                                    shift_y = (monitor_rect.min.y + min_overlap) - new_rect.max.y;
+                                                } else if new_rect.min.y > monitor_rect.max.y - min_overlap {
+                                                    shift_y = (monitor_rect.max.y - min_overlap) - new_rect.min.y;
+                                                }
+                                                
+                                                delta.x += shift_x;
+                                                delta.y += shift_y;
+                                            }
                                             img.source_rect = Some([ib.min.x + delta.x, ib.min.y + delta.y, ib.width(), ib.height()]);
                                         }
 
@@ -672,22 +709,8 @@ pub fn update(ctx: &mut ToolContext) {
 
                                                             if new_w > 0 && new_h > 0 {
                                                                 img.mask_size = Some([new_w, new_h]);
-
-                                                                // Regenerate or resample mask
-                                                                if let Some(ref pts) = img.snip_points {
-                                                                    // Shape has snip points, we can regenerate losslessly
-                                                                    let mut new_mask = vec![255u8; new_w * new_h];
-                                                                    for y in 0..new_h {
-                                                                        for x in 0..new_w {
-                                                                            let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
-                                                                            if !crate::utils::is_inside_poly(pts, lp) {
-                                                                                new_mask[y * new_w + x] = 0;
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    img.mask = Some(new_mask);
-                                                                } else if let Some(ref base_mask) = base_img.mask {
-                                                                    // Nearest neighbor fallback
+                                                                // Fast nearest neighbor scaling of the mask during drag (bypass expensive is_inside_poly)
+                                                                if let Some(ref base_mask) = base_img.mask {
                                                                     let old_w = base_img.mask_size.unwrap_or(base_img.size)[0];
                                                                     let old_h = base_img.mask_size.unwrap_or(base_img.size)[1];
                                                                     if old_w > 0 && old_h > 0 {
@@ -821,7 +844,32 @@ pub fn update(ctx: &mut ToolContext) {
                                 }
                             } else {
                                 // Translate
-                                let delta = pos - start;
+                                let mut delta = pos - start;
+                                if !settings.multi_monitor {
+                                    if let Some(ib) = *initial_bounds {
+                                        let (sw, sh) = crate::winapi_utils::get_screen_size(false);
+                                        let monitor_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(sw, sh));
+                                        let new_bounds = ib.translate(delta);
+                                        
+                                        let min_overlap = 20.0f32;
+                                        let mut shift_x = 0.0f32;
+                                        if new_bounds.max.x < monitor_rect.min.x + min_overlap {
+                                            shift_x = (monitor_rect.min.x + min_overlap) - new_bounds.max.x;
+                                        } else if new_bounds.min.x > monitor_rect.max.x - min_overlap {
+                                            shift_x = (monitor_rect.max.x - min_overlap) - new_bounds.min.x;
+                                        }
+                                        
+                                        let mut shift_y = 0.0f32;
+                                        if new_bounds.max.y < monitor_rect.min.y + min_overlap {
+                                            shift_y = (monitor_rect.min.y + min_overlap) - new_bounds.max.y;
+                                        } else if new_bounds.min.y > monitor_rect.max.y - min_overlap {
+                                            shift_y = (monitor_rect.max.y - min_overlap) - new_bounds.min.y;
+                                        }
+                                        
+                                        delta.x += shift_x;
+                                        delta.y += shift_y;
+                                    }
+                                }
                                 if let Some(sel) = project.selected_object {
                                     match sel.object_type {
                                         ObjectType::Stroke => {
@@ -874,6 +922,28 @@ pub fn update(ctx: &mut ToolContext) {
                         if let Some(sel) = project.selected_object {
                             if sel.object_type == ObjectType::Image {
                                 let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                
+                                // Regenerate mask losslessly on drag release
+                                if let Some(ref pts) = img.snip_points {
+                                    if let Some(mask_sz) = img.mask_size {
+                                        let ppp = ui.ctx().pixels_per_point();
+                                        let new_w = mask_sz[0];
+                                        let new_h = mask_sz[1];
+                                        let mut new_mask = vec![255u8; new_w * new_h];
+                                        for y in 0..new_h {
+                                            for x in 0..new_w {
+                                                let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                                                if !crate::utils::is_inside_poly(pts, lp) {
+                                                    new_mask[y * new_w + x] = 0;
+                                                }
+                                            }
+                                        }
+                                        img.mask = Some(new_mask);
+                                        img.mask_dirty = true;
+                                        img.texture = None;
+                                    }
+                                }
+
                                 if !img.is_live {
                                     if let Some(src) = img.source_rect {
                                         let ppp = ui.ctx().pixels_per_point();

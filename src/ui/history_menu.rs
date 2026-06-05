@@ -128,6 +128,7 @@ pub fn render_history_window(
             }
         }
     }
+    crate::utils::enforce_window_bounds(ctx, egui::Id::new("History"), &mut settings.history_menu_pos, 100.0, 100.0);
 
     if close_window {
         *open = false;

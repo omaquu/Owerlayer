@@ -9,6 +9,7 @@ mod tools;
 mod project;
 mod utils;
 mod capture_thread;
+mod wgc_capture;
 mod gl_renderer;
 mod rasterize;
 mod history;
@@ -220,6 +221,11 @@ struct OwerlayerApp {
     rasterize_bbox: Option<[f32; 4]>,
     rasterize_capture: rasterize::CaptureBuffer,
     pub copied_image: Option<crate::types::PlacedImage>,
+
+    // Performance profiling fields
+    last_perf_print_time: std::time::Instant,
+    perf_stats: crate::types::AppPerfStats,
+    perf_display: Option<crate::types::PerfDisplayAverages>,
 }
 
 impl OwerlayerApp {
@@ -291,6 +297,9 @@ impl OwerlayerApp {
             rasterize_bbox: None,
             rasterize_capture: rasterize::new_capture_buffer(),
             copied_image: None,
+            last_perf_print_time: std::time::Instant::now(),
+            perf_stats: crate::types::AppPerfStats::default(),
+            perf_display: None,
         }
     }
 
@@ -662,7 +671,7 @@ impl eframe::App for OwerlayerApp {
 
         // ---- 1. Poll mouse ----
         let ppp = self.settings.ui_scale;
-        let mouse = MouseState::poll(self.prev_mouse_down, self.prev_mouse_pos, ppp);
+        let mouse = MouseState::poll(self.prev_mouse_down, self.prev_mouse_pos, ppp, self.settings.multi_monitor);
         self.prev_mouse_down = mouse.left_down;
         self.prev_mouse_pos = mouse.pos;
 
@@ -731,13 +740,14 @@ impl eframe::App for OwerlayerApp {
         // ---- 3b. Update Capture Exclusion (Fix live snip mirror loop) ----
         if self.initialized {
             let mut expected_exclude = self.settings.exclude_from_capture;
-            if !expected_exclude {
-                let has_live = self.project.layers.iter().any(|l| l.visible && l.placed_images.iter().any(|img| img.visible && img.is_live));
-                let marquee_live = self.project.marquee_selection.is_some() && self.settings.snip_live;
-                if (has_live || marquee_live) && !self.settings.snip_source_overlay {
-                    expected_exclude = true;
-                }
+            let has_active_live_desktop_snip = self.project.layers.iter()
+                .filter(|l| l.visible)
+                .flat_map(|l| &l.placed_images)
+                .any(|img| img.is_live && !img.snip_source_overlay);
+            if has_active_live_desktop_snip {
+                expected_exclude = true;
             }
+
             if self.prev_exclude_capture != Some(expected_exclude) {
                 winapi_utils::set_capture_exclusion(expected_exclude);
                 self.prev_exclude_capture = Some(expected_exclude);
@@ -1191,6 +1201,57 @@ impl eframe::App for OwerlayerApp {
                 }
             }
 
+            if self.settings.show_profiler && self.edit_mode {
+                if let Some(ref display) = self.perf_display {
+                    let mut show = self.settings.show_profiler;
+                    egui::Window::new("Performance Profiler")
+                        .open(&mut show)
+                        .resizable(true)
+                        .collapsible(true)
+                        .default_size([250.0, 300.0])
+                        .default_pos(egui::pos2(800.0, 100.0))
+                        .frame(photoshop_frame(&self.settings))
+                        .show(ctx, |ui| {
+                            ui.label(format!("Captured {} frames in last 1.0s", display.frame_count));
+                            ui.separator();
+                            egui::Grid::new("perf_grid").num_columns(2).spacing([40.0, 4.0]).show(ui, |ui| {
+                                ui.label("WGC GPU Copy:");
+                                ui.label(format!("{:.1} μs", display.wgc_gpu_copy_us));
+                                ui.end_row();
+
+                                ui.label("WGC CPU-GPU Map:");
+                                ui.label(format!("{:.1} μs", display.wgc_map_wait_us));
+                                ui.end_row();
+
+                                ui.label("BGRA -> RGBA Swap:");
+                                ui.label(format!("{:.1} μs", display.wgc_pixel_swap_us));
+                                ui.end_row();
+
+                                ui.label("GDI Capture:");
+                                ui.label(format!("{:.1} μs", display.gdi_capture_us));
+                                ui.end_row();
+
+                                ui.label("Blur & Mask:");
+                                ui.label(format!("{:.1} μs", display.thread_mask_effects_us));
+                                ui.end_row();
+
+                                ui.label("Color32 Conv:");
+                                ui.label(format!("{:.1} μs", display.thread_color32_conv_us));
+                                ui.end_row();
+
+                                ui.label("Thread Total:");
+                                ui.label(format!("{:.1} μs", display.thread_total_us));
+                                ui.end_row();
+
+                                ui.label("GPU Tex Upload:");
+                                ui.label(format!("{:.1} μs", display.upload_us));
+                                ui.end_row();
+                            });
+                        });
+                    self.settings.show_profiler = show;
+                }
+            }
+
             if self.layer_prompt_open && self.edit_mode {
                 let layer_idx = self.project.active_layer;
                 if layer_idx < self.project.layers.len() {
@@ -1274,6 +1335,7 @@ impl eframe::App for OwerlayerApp {
                     };
 
                     let prompt_resp = egui::Window::new(title)
+                        .id(egui::Id::new("creation_prompt"))
                         .collapsible(false)
                         .resizable(false)
                         .default_pos(self.settings.creation_prompt_pos)
@@ -1332,6 +1394,8 @@ impl eframe::App for OwerlayerApp {
                             }
                         }
                     }
+
+                    crate::utils::enforce_window_bounds(ctx, egui::Id::new("creation_prompt"), &mut self.settings.creation_prompt_pos, 100.0, 100.0);
 
                     if save_preference && layer_idx < self.project.layers.len() {
                         if self.project.layers[layer_idx].lock_prompt_dismissed {
@@ -1790,6 +1854,7 @@ impl eframe::App for OwerlayerApp {
                     self.rasterize_phase,
                     self.rasterize_bbox,
                     self.rasterize_capture.clone(),
+                    &mut self.perf_stats,
                 );
 
                 // Advance rasterize phase after render
@@ -1835,10 +1900,50 @@ impl eframe::App for OwerlayerApp {
                 }
             }
         }
-
+        // Print performance stats every 1 second if profiler enabled and frame_count > 0
+        if self.settings.show_profiler && self.last_perf_print_time.elapsed() >= std::time::Duration::from_millis(1000) {
+            if self.perf_stats.frame_count > 0 {
+                let count = self.perf_stats.frame_count as f32;
+                println!(
+                    "[PERF LOG] Captured {} frames in last 1.0s:\n\
+                     - WGC GPU Copy:     {:7.1} us / frame\n\
+                     - WGC CPU-GPU Map:  {:7.1} us / frame (stalls)\n\
+                     - BGRA -> RGBA Swap:{:7.1} us / frame\n\
+                     - GDI Capture:      {:7.1} us / frame (fallback)\n\
+                     - Blur & Mask:      {:7.1} us / frame\n\
+                     - Color32 Conv:     {:7.1} us / frame\n\
+                     - Thread Total:     {:7.1} us / frame\n\
+                     - GPU Tex Upload:   {:7.1} us / frame",
+                    self.perf_stats.frame_count,
+                    self.perf_stats.wgc_gpu_copy_us_sum as f32 / count,
+                    self.perf_stats.wgc_map_wait_us_sum as f32 / count,
+                    self.perf_stats.wgc_pixel_swap_us_sum as f32 / count,
+                    self.perf_stats.gdi_capture_us_sum as f32 / count,
+                    self.perf_stats.thread_mask_effects_us_sum as f32 / count,
+                    self.perf_stats.thread_color32_conv_us_sum as f32 / count,
+                    self.perf_stats.thread_total_us_sum as f32 / count,
+                    self.perf_stats.upload_us_sum as f32 / count,
+                );
+                self.perf_display = Some(crate::types::PerfDisplayAverages {
+                    frame_count: self.perf_stats.frame_count,
+                    wgc_gpu_copy_us: self.perf_stats.wgc_gpu_copy_us_sum as f32 / count,
+                    wgc_map_wait_us: self.perf_stats.wgc_map_wait_us_sum as f32 / count,
+                    wgc_pixel_swap_us: self.perf_stats.wgc_pixel_swap_us_sum as f32 / count,
+                    gdi_capture_us: self.perf_stats.gdi_capture_us_sum as f32 / count,
+                    thread_mask_effects_us: self.perf_stats.thread_mask_effects_us_sum as f32 / count,
+                    thread_color32_conv_us: self.perf_stats.thread_color32_conv_us_sum as f32 / count,
+                    thread_total_us: self.perf_stats.thread_total_us_sum as f32 / count,
+                    upload_us: self.perf_stats.upload_us_sum as f32 / count,
+                });
+                // Reset stats
+                self.perf_stats = crate::types::AppPerfStats::default();
+            }
+            self.last_perf_print_time = std::time::Instant::now();
+        }
 
         // ---- 7. Repaint strategy ----
-        let has_live = self.project.layers.iter().any(|l| l.placed_images.iter().any(|img| img.is_live));
+        let has_live = self.project.layers.iter().any(|l| l.placed_images.iter().any(|img| img.is_live))
+            || (self.project.marquee_selection.is_some() && self.settings.snip_live);
         if self.edit_mode || has_live {
             ctx.request_repaint(); // Native framerate for smooth brush or live mirror
         } else if self.settings.keep_ui_visible {
@@ -1855,7 +1960,13 @@ impl eframe::App for OwerlayerApp {
 }
 
 fn main() -> eframe::Result<()> {
-    let (sw, sh) = winapi_utils::get_screen_size(false);
+    let settings = Settings::load();
+    let (sw, sh) = winapi_utils::get_screen_size(settings.multi_monitor);
+    let (vx, vy) = if settings.multi_monitor {
+        winapi_utils::get_virtual_origin()
+    } else {
+        (0.0, 0.0)
+    };
     
     let icon_data = if let Ok(img) = image::load_from_memory(include_bytes!("../icon.png")) {
             let rgba = img.to_rgba8();
@@ -1865,7 +1976,6 @@ fn main() -> eframe::Result<()> {
             None
         };
 
-    let settings = Settings::load();
     let hw_accel = if settings.software_rendering { 
         eframe::HardwareAcceleration::Off 
     } else { 
@@ -1877,7 +1987,7 @@ fn main() -> eframe::Result<()> {
         .with_transparent(true)
         .with_always_on_top()
         .with_inner_size(egui::vec2(sw + 2.0, sh + 2.0))
-        .with_position(egui::pos2(-1.0, -1.0))
+        .with_position(egui::pos2(vx - 1.0, vy - 1.0))
         .with_active(true);
 
     let viewport = if let Some(icon) = icon_data {

@@ -670,3 +670,69 @@ pub fn draw_dashed_path(painter: &egui::Painter, points: &[egui::Pos2], time: f6
     }
 }
 
+pub fn draw_dashed_path_color(painter: &egui::Painter, points: &[egui::Pos2], time: f64, stroke_color: egui::Color32, stroke_width: f32) {
+    if points.len() < 2 { return; }
+    
+    // Draw solid black line under the path to ensure perfect contrast
+    painter.add(egui::Shape::line(
+        points.to_vec(),
+        egui::Stroke::new(stroke_width + 1.0, egui::Color32::BLACK)
+    ));
+    
+    let dash_len = 6.0f32;
+    let speed = 8.0f32;
+    
+    let mut current_offset = (time as f32 * speed) % (dash_len * 2.0);
+    let mut draw_color = current_offset < dash_len;
+    if !draw_color {
+        current_offset -= dash_len;
+    }
+    
+    for i in 0..points.len() - 1 {
+        let p1 = points[i];
+        let p2 = points[i+1];
+        let dir = p2 - p1;
+        let dst = dir.length();
+        if dst < 0.001 { continue; }
+        
+        let dir = dir / dst;
+        let mut t = 0.0f32;
+        
+        while t < dst {
+            let dash_left = dash_len - current_offset;
+            let step = dash_left.min(dst - t);
+            
+            let start = p1 + dir * t;
+            let end = p1 + dir * (t + step);
+            
+            if draw_color {
+                painter.line_segment([start, end], egui::Stroke::new(stroke_width, stroke_color));
+            }
+            
+            t += step;
+            current_offset += step;
+            if current_offset >= dash_len {
+                current_offset = 0.0;
+                draw_color = !draw_color;
+            }
+        }
+    }
+}
+
+pub fn enforce_window_bounds(
+    ctx: &egui::Context,
+    _id: egui::Id,
+    saved_pos: &mut egui::Pos2,
+    min_visible_width: f32,
+    min_visible_height: f32,
+) {
+    let screen_rect = ctx.screen_rect();
+    let sw = screen_rect.width();
+    let sh = screen_rect.height();
+
+    // Clamp the saved position in the settings struct
+    saved_pos.x = saved_pos.x.clamp(0.0, (sw - min_visible_width).max(0.0));
+    saved_pos.y = saved_pos.y.clamp(0.0, (sh - min_visible_height).max(0.0));
+}
+
+

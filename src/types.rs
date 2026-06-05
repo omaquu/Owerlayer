@@ -30,11 +30,20 @@ pub struct MouseState {
 }
 
 impl MouseState {
-    pub fn poll(prev_down: bool, prev_pos: egui::Pos2, ppp: f32) -> Self {
+    pub fn poll(prev_down: bool, prev_pos: egui::Pos2, ppp: f32, multi_monitor: bool) -> Self {
         let (x_px, y_px, down) = crate::winapi_utils::poll_mouse();
-        // window is at [-1, -1] screen pixels. 
+        let (wx_f, wy_f) = if let Some((wx, wy)) = crate::winapi_utils::get_window_screen_pos_opt() {
+            (wx as f32, wy as f32)
+        } else {
+            if multi_monitor {
+                let (vx, vy) = crate::winapi_utils::get_virtual_origin();
+                (vx - 1.0, vy - 1.0)
+            } else {
+                (-1.0, -1.0)
+            }
+        };
         // egui_point = (screen_pixel - window_origin_pixel) / ppp
-        let pos = egui::pos2((x_px + 1.0) / ppp, (y_px + 1.0) / ppp);
+        let pos = egui::pos2((x_px - wx_f) / ppp, (y_px - wy_f) / ppp);
         Self {
             pos,
             delta: pos - prev_pos,
@@ -561,6 +570,12 @@ pub struct PlacedImage {
     pub cached_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     pub cached_rect: Option<egui::Rect>,
+    #[serde(default)]
+    pub chromatic_aberration: f32,
+    #[serde(default)]
+    pub antialias: bool,
+    #[serde(default)]
+    pub eraser_apply_to_source: Option<bool>,
 }
 
 impl Clone for PlacedImage {
@@ -628,6 +643,9 @@ impl Clone for PlacedImage {
             snip_points: self.snip_points.clone(),
             cached_texture: None,
             cached_rect: None,
+            chromatic_aberration: self.chromatic_aberration,
+            antialias: self.antialias,
+            eraser_apply_to_source: self.eraser_apply_to_source,
         }
     }
 }
@@ -685,6 +703,9 @@ impl PlacedImage {
             snip_points: None,
             cached_texture: None,
             cached_rect: None,
+            chromatic_aberration: 0.0,
+            antialias: false,
+            eraser_apply_to_source: None,
         }
     }
 }
@@ -890,6 +911,16 @@ pub struct Settings {
     pub live_performance_mode: bool,
     #[serde(default)]
     pub show_source_rect: bool,
+    #[serde(default)]
+    pub show_profiler: bool,
+    #[serde(skip)]
+    pub eraser_source_prompt_open: bool,
+    #[serde(skip)]
+    pub eraser_source_prompt_target: Option<(usize, usize)>,
+    #[serde(skip)]
+    pub eraser_source_prompt_remember: bool,
+    #[serde(default)]
+    pub use_original_capture: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -1008,6 +1039,11 @@ impl Default for Settings {
             snip_source_overlay: false,
             live_performance_mode: false,
             show_source_rect: false,
+            show_profiler: false,
+            eraser_source_prompt_open: false,
+            eraser_source_prompt_target: None,
+            eraser_source_prompt_remember: false,
+            use_original_capture: false,
         }
     }
 }
@@ -1036,4 +1072,30 @@ impl Settings {
         directories::ProjectDirs::from("com", "omaquu", "owerlayer")
             .map(|d| d.config_dir().join("settings.json"))
     }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct AppPerfStats {
+    pub frame_count: u32,
+    pub wgc_gpu_copy_us_sum: u128,
+    pub wgc_map_wait_us_sum: u128,
+    pub wgc_pixel_swap_us_sum: u128,
+    pub gdi_capture_us_sum: u128,
+    pub thread_mask_effects_us_sum: u128,
+    pub thread_color32_conv_us_sum: u128,
+    pub thread_total_us_sum: u128,
+    pub upload_us_sum: u128,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct PerfDisplayAverages {
+    pub frame_count: u32,
+    pub wgc_gpu_copy_us: f32,
+    pub wgc_map_wait_us: f32,
+    pub wgc_pixel_swap_us: f32,
+    pub gdi_capture_us: f32,
+    pub thread_mask_effects_us: f32,
+    pub thread_color32_conv_us: f32,
+    pub thread_total_us: f32,
+    pub upload_us: f32,
 }

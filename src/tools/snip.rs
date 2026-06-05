@@ -42,7 +42,8 @@ pub fn update(ctx: &mut ToolContext) {
     let _frame_count = ctx.frame_count;
     if active_layer_idx >= project.layers.len() { return; }
 
-                let layer = &mut project.layers[active_layer_idx];
+    let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+    let layer = &mut project.layers[active_layer_idx];
                 let mode = settings.snip_mode;
             if mode == SnipMode::Rect {
                 if left_just_pressed { 
@@ -61,7 +62,7 @@ pub fn update(ctx: &mut ToolContext) {
                                  img.snip_source_overlay = settings.snip_source_overlay;
                                  img.display_size = Some([w, h]);
                                  img.is_live = true;
-                                 img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                                 img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
                                  img.blur = settings.blur_strength;
                                  img.blur_effect = settings.blur_effect;
                                  img.show_source_rect = settings.show_source_rect;
@@ -75,8 +76,6 @@ pub fn update(ctx: &mut ToolContext) {
                                  ]);
                                  layer.placed_images.push(img);
                              } else {
-                                 let ppp = ui.ctx().pixels_per_point();
-                                 let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                  let sx = (rect.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                  let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                                  let pw = (w * ppp).round() as i32;
@@ -86,7 +85,7 @@ pub fn update(ctx: &mut ToolContext) {
                                      let mut img = PlacedImage::new(id, rect.min, [pw as usize, ph as usize], pixels);
                                      img.snip_source_overlay = settings.snip_source_overlay;
                                      img.display_size = Some([w, h]);
-                                     img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                                     img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
                                      img.show_source_rect = settings.show_source_rect;
                                      img.shadow = settings.snip_shadow;
                                      img.snip_points = Some(vec![
@@ -108,31 +107,31 @@ pub fn update(ctx: &mut ToolContext) {
                 }
                 if left_just_released {
                     if let Some(start) = line_start.take() {
-                        let rect = egui::Rect::from_two_pos(start, pos);
-                        let w = rect.width();
-                        let h = rect.height();
-                        if w > 5.0 && h > 5.0 {
-                            let ppp = ui.ctx().pixels_per_point();
+                        let radius = start.distance(pos);
+                        if radius > 2.5 {
+                            let rect = egui::Rect::from_center_size(start, egui::vec2(radius * 2.0, radius * 2.0));
+                            let w = rect.width();
+                            let h = rect.height();
                             let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
                             
-                             let pw = (w * ppp).round() as usize;
-                             let ph = (h * ppp).round() as usize;
-                             let mut mask = vec![255u8; pw * ph];
-                             let center = egui::pos2(w * 0.5, h * 0.5);
-                             let radius = w.min(h) * 0.5;
-                             for py in 0..ph {
-                                 for px in 0..pw {
-                                     let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
-                                     if lp.distance(center) > radius {
-                                         mask[py * pw + px] = 0;
-                                     }
-                                 }
-                             }
+                            let pw = (w * ppp).round() as usize;
+                            let ph = (h * ppp).round() as usize;
+                            let mut mask = vec![255u8; pw * ph];
+                            let center = egui::pos2(w * 0.5, h * 0.5);
+                            let mask_radius = radius;
+                            for py in 0..ph {
+                                for px in 0..pw {
+                                    let lp = egui::pos2(px as f32 / ppp, py as f32 / ppp);
+                                    if lp.distance(center) > mask_radius {
+                                        mask[py * pw + px] = 0;
+                                    }
+                                }
+                            }
 
                             let mut local_pts = Vec::new();
                             let segments = 64;
                             let c_center = egui::pos2(w * 0.5, h * 0.5);
-                            let c_radius = w.min(h) * 0.5;
+                            let c_radius = radius;
                             for idx in 0..=segments {
                                 let angle = (idx as f32 / segments as f32) * std::f32::consts::TAU;
                                 let px = c_center.x + c_radius * angle.cos();
@@ -146,7 +145,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([w, h]);
                                 img.is_live = true;
-                                img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                                img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
                                 img.mask = Some(mask);
                                 img.mask_size = Some([pw, ph]);
                                 img.blur = settings.blur_strength;
@@ -156,7 +155,6 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.snip_points = Some(local_pts);
                                 layer.placed_images.push(img);
                             } else {
-                                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                 let sx = (rect.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                 let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                                 if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, pw as i32, ph as i32) {
@@ -165,7 +163,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     let mut img = PlacedImage::new(id, rect.min, [pw, ph], pixels);
                                     img.snip_source_overlay = settings.snip_source_overlay;
                                     img.display_size = Some([w, h]);
-                                    img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                                    img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
                                     img.show_source_rect = settings.show_source_rect;
                                     img.mask = Some(mask);
                                     img.mask_size = Some([pw, ph]);
@@ -179,13 +177,16 @@ pub fn update(ctx: &mut ToolContext) {
                 }
             } else if mode == SnipMode::Lasso {
                 if left_just_pressed { }
-                if left_down { current_stroke.push(pos); }
+                if left_down {
+                    if current_stroke.is_empty() || current_stroke.last().unwrap().distance(pos) > 3.0 {
+                        current_stroke.push(pos);
+                    }
+                }
                 if !current_stroke.is_empty() {
                     painter.add(egui::Shape::line(current_stroke.clone(), egui::Stroke::new(1.0, egui::Color32::WHITE)));
                 }
                 if left_just_released && current_stroke.len() > 3 {
                     let bounds = egui::Rect::from_points(&current_stroke);
-                    let ppp = ui.ctx().pixels_per_point();
                     let sw = (bounds.width() * ppp) as usize;
                     let sh = (bounds.height() * ppp) as usize;
                     
@@ -208,7 +209,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([bounds.width(), bounds.height()]);
                             img.is_live = true;
-                            img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                            img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
                             img.mask = Some(mask);
                             img.mask_size = Some([sw, sh]);
                             img.blur = settings.blur_strength;
@@ -218,7 +219,6 @@ pub fn update(ctx: &mut ToolContext) {
                             img.snip_points = Some(poly.clone());
                             layer.placed_images.push(img);
                         } else {
-                            let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                             let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                             let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                             if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw as i32, sh as i32) {
@@ -227,7 +227,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
                                 img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([bounds.width(), bounds.height()]);
-                                img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
                                 img.show_source_rect = settings.show_source_rect;
                                 img.mask = Some(mask);
                                 img.mask_size = Some([sw, sh]);
@@ -249,7 +249,6 @@ pub fn update(ctx: &mut ToolContext) {
                 
                 if (right_clicked || enter_pressed || close_to_start) && !current_stroke.is_empty() {
                     let bounds = egui::Rect::from_points(&current_stroke);
-                    let ppp = ui.ctx().pixels_per_point();
                     let sw = (bounds.width() * ppp) as usize;
                     let sh = (bounds.height() * ppp) as usize;
                     
@@ -272,7 +271,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([bounds.width(), bounds.height()]);
                             img.is_live = true;
-                            img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                            img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
                             img.mask = Some(mask);
                             img.mask_size = Some([sw, sh]);
                             img.blur = settings.blur_strength;
@@ -282,7 +281,6 @@ pub fn update(ctx: &mut ToolContext) {
                             img.snip_points = Some(poly.clone());
                             layer.placed_images.push(img);
                         } else {
-                            let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                             let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                             let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                             if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw as i32, sh as i32) {
@@ -291,7 +289,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
                                 img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([bounds.width(), bounds.height()]);
-                                img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
                                 img.show_source_rect = settings.show_source_rect;
                                 img.mask = Some(mask);
                                 img.mask_size = Some([sw, sh]);
@@ -319,7 +317,6 @@ pub fn update(ctx: &mut ToolContext) {
                         if radius > 5.0 {
                             let pts = if mode == SnipMode::Star { get_star_points(start, radius) } else { get_heart_points(start, radius) };
                             let bounds = egui::Rect::from_points(&pts);
-                            let ppp = ui.ctx().pixels_per_point();
                             let sw = (bounds.width() * ppp) as usize;
                             let sh = (bounds.height() * ppp) as usize;
                             
@@ -342,7 +339,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     img.snip_source_overlay = settings.snip_source_overlay;
                                     img.display_size = Some([bounds.width(), bounds.height()]);
                                     img.is_live = true;
-                                    img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                    img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
                                     img.mask = Some(mask);
                                     img.mask_size = Some([sw, sh]);
                                     img.show_source_rect = settings.show_source_rect;
@@ -350,7 +347,6 @@ pub fn update(ctx: &mut ToolContext) {
                                     img.snip_points = Some(poly.clone());
                                     layer.placed_images.push(img);
                                 } else {
-                                    let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                     let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                     let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                                     if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw as i32, sh as i32) {
@@ -359,7 +355,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
                                         img.snip_source_overlay = settings.snip_source_overlay;
                                         img.display_size = Some([bounds.width(), bounds.height()]);
-                                        img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
+                                        img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
                                         img.show_source_rect = settings.show_source_rect;
                                         img.mask = Some(mask);
                                         img.mask_size = Some([sw, sh]);
@@ -392,7 +388,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([w, h]);
                             img.is_live = true;
-                            img.source_rect = Some([rect.min.x, rect.min.y, w, h]);
+                            img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
                             img.show_source_rect = settings.show_source_rect;
                             img.shadow = settings.snip_shadow;
                             layer.placed_images.push(img);
@@ -501,9 +497,8 @@ pub fn render_preview(ctx: &mut ToolContext) {
             painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Middle);
         }
         SnipMode::Circle => {
-            let rect = egui::Rect::from_two_pos(start, pos);
-            let center = rect.center() - render_offset;
-            let radius = rect.width().min(rect.height()) * 0.5;
+            let radius = start.distance(pos);
+            let center = start - render_offset;
             painter.circle_stroke(center, radius, stroke);
         }
         SnipMode::Star => {

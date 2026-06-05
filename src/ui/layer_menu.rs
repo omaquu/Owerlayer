@@ -643,6 +643,8 @@ pub fn render_layers_window(
         }
     }
     
+    crate::utils::enforce_window_bounds(ctx, egui::Id::new("Layers"), &mut settings.layer_menu_pos, 100.0, 100.0);
+    
     crate::ui::object_fx::render_fx_window(ctx, project, settings);
 
     if *load_picker_open {
