@@ -429,18 +429,8 @@ pub fn setup_overlay_window() {
         let mut new_ex_style = (ex_style & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
         
         SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
-
-        if (ex_style & 0x00400000) != 0 {
-            // DirectComposition is active (WS_EX_NOREDIRECTIONBITMAP is set).
-            // Do NOT add WS_EX_LAYERED and do NOT call SetLayeredWindowAttributes to avoid edit-mode desktop freeze.
-            let final_ex_style = new_ex_style & !WS_EX_LAYERED;
-            SetWindowLongW(hwnd, GWL_EXSTYLE, final_ex_style as i32);
-        } else {
-            // Older composition mode: add WS_EX_LAYERED and set layered window attributes.
-            new_ex_style |= WS_EX_LAYERED;
-            SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style as i32);
-            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-        }
+        SetWindowLongW(hwnd, GWL_EXSTYLE, (new_ex_style | WS_EX_LAYERED) as i32);
+        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
         // Ensure always-on-top
         SetWindowPos(
@@ -975,3 +965,106 @@ pub fn get_monitor_from_rect(_x: i32, _y: i32, _w: i32, _h: i32) -> isize { 0 }
 
 #[cfg(not(windows))]
 pub fn get_monitor_rect(_h_monitor: isize) -> Option<(i32, i32, i32, i32)> { None }
+
+// ──────────────────────────────────────────────────────────────
+//  Primary monitor helpers (viewport coordinates)
+// ──────────────────────────────────────────────────────────────
+
+/// Primary monitor size and screen position: (width, height, screen_x, screen_y).
+#[cfg(windows)]
+pub fn get_primary_monitor_rect() -> (f32, f32, f32, f32) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+    };
+    unsafe {
+        let pt = POINT { x: 0, y: 0 };
+        let h_monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(h_monitor, &mut info as *mut _ as *mut _) != 0 {
+            return (
+                (info.rcMonitor.right - info.rcMonitor.left) as f32,
+                (info.rcMonitor.bottom - info.rcMonitor.top) as f32,
+                info.rcMonitor.left as f32,
+                info.rcMonitor.top as f32,
+            );
+        }
+        (1920.0, 1080.0, 0.0, 0.0)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn get_primary_monitor_rect() -> (f32, f32, f32, f32) {
+    (1920.0, 1080.0, 0.0, 0.0)
+}
+
+/// Top-left of the primary monitor in egui viewport coordinates.
+#[cfg(windows)]
+pub fn primary_monitor_viewport_origin() -> (f32, f32) {
+    let (_w, _h, mx, my) = get_primary_monitor_rect();
+    let (vx, vy) = get_virtual_origin();
+    (mx - vx + 1.0, my - vy + 1.0)
+}
+
+#[cfg(not(windows))]
+pub fn primary_monitor_viewport_origin() -> (f32, f32) {
+    (0.0, 0.0)
+}
+
+/// Reposition the overlay HWND to cover only the primary monitor.
+#[cfg(windows)]
+pub fn reposition_overlay_to_primary_monitor(fso_fix: bool) {
+    let (w, h, mx, my) = get_primary_monitor_rect();
+    if fso_fix {
+        reposition_overlay_window(mx as i32 - 2, my as i32 - 2, w as i32 + 4, h as i32 + 4);
+    } else {
+        reposition_overlay_window(mx as i32, my as i32, w as i32, h as i32);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn reposition_overlay_to_primary_monitor(_fso_fix: bool) {}
+
+#[cfg(windows)]
+#[link(name = "dwmapi")]
+extern "system" {
+    fn DwmFlush() -> i32;
+}
+
+/// Force DWM to recomposite after overlay style/passthrough changes (fixes frozen desktop until alt-tab).
+#[cfg(windows)]
+pub fn refresh_overlay_composition() {
+    use windows_sys::Win32::Graphics::Gdi::RedrawWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_SHOWWINDOW,
+    };
+    let hwnd = OVERLAY_HWND.load(Ordering::Relaxed);
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+        );
+        const RDW_INVALIDATE: u32 = 0x0001;
+        const RDW_UPDATENOW: u32 = 0x0100;
+        const RDW_ALLCHILDREN: u32 = 0x0080;
+        RedrawWindow(
+            hwnd,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn refresh_overlay_composition() {}

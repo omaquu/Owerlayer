@@ -30,9 +30,9 @@ use crate::ui::toolbar::{apply_box_blur, apply_pixelate, apply_vhs_glitch};
 pub fn render_mode_indicator(ctx: &egui::Context, edit_mode: bool, hotkey_name: &str, toggle_mode: bool, settings: &Settings, owl_icon: &Option<egui::TextureHandle>) {
     if !edit_mode || settings.hide_edit_info || settings.hide_all { return; }
     let hint = if toggle_mode {
-        format!("EDIT MODE  |  press {} to exit", hotkey_name)
+        format!("EDIT MODE  |  {} to exit  |  F12 reset UI to monitor 1", hotkey_name)
     } else {
-        format!("EDIT MODE  |  release {} to exit", hotkey_name)
+        format!("EDIT MODE  |  release {} to exit  |  F12 reset UI", hotkey_name)
     };
 
     egui::Area::new(egui::Id::new("mode_indicator"))
@@ -192,20 +192,7 @@ pub fn render_canvas(
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
                 let center = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
 
-                // ── Window capture live mode (hwnd-based, rate-limited to ~10fps) ──
-                if img.hwnd != 0 {
-                    let now = ui.input(|i| i.time) as f32;
-                    let elapsed = now - img.last_frame_time;
-                    if elapsed >= 0.1 { // ~10fps cap to keep performance reasonable
-                        img.last_frame_time = now;
-                        if let Some((pixels, pw, ph)) = crate::winapi_utils::capture_window(img.hwnd) {
-                            img.size = [pw, ph];
-                            img.pixels = pixels;
-                            img.thumbnail_dirty = true;
-                        }
-                    }
-                    ui.ctx().request_repaint();
-                } else if img.url.is_none() {
+                if img.url.is_none() {
                     let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                     let (ox, oy) = if settings.use_absolute_screen_coords { (0, 0) } else { (wx, wy) };
                     
@@ -253,25 +240,7 @@ pub fn render_canvas(
 
                         let upload_start = std::time::Instant::now();
 
-                        // Build the color_image for egui texture upload
-                        let color_image = if res.is_bgra {
-                            // Zero-copy WGC path: pixels are BGRA, swap in-place for RGBA
-                            let mut rgba_pixels = res.pixels;
-                            for chunk in rgba_pixels.chunks_exact_mut(4) {
-                                let b = chunk[0];
-                                chunk[0] = chunk[2];
-                                chunk[2] = b;
-                            }
-                            img.pixels = rgba_pixels.clone();
-                            let color_pixels: Vec<egui::Color32> = rgba_pixels
-                                .chunks_exact(4)
-                                .map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
-                                .collect();
-                            Arc::new(egui::ColorImage {
-                                size: res.size,
-                                pixels: color_pixels,
-                            })
-                        } else if let Some(ci) = res.color_image {
+                        let color_image = if let Some(ci) = res.color_image {
                             img.pixels = res.pixels;
                             ci
                         } else {
@@ -308,7 +277,6 @@ pub fn render_canvas(
                         perf_stats.thread_total_us_sum += res.perf.thread_total_us;
                         perf_stats.upload_us_sum += upload_time;
                     }
-                    ui.ctx().request_repaint();
                 }
             }
 

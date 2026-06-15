@@ -11,12 +11,15 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
         
         let mut request_rasterize = false;
         
-        let win_resp = egui::Window::new("Object Effects")
-            .title_bar(false)
-            .resizable(true)
-            .collapsible(false)
-            .frame(frame)
-            .default_pos(settings.object_fx_menu_pos)
+        let win_resp = crate::utils::panel_window_pos(
+            egui::Window::new("Object Effects")
+                .title_bar(false)
+                .resizable(true)
+                .collapsible(false)
+                .frame(frame),
+            settings.object_fx_menu_pos,
+            settings.ui_reset_frames,
+        )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Object FX").strong().color(accent));
@@ -247,7 +250,9 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
             }
         }
 
-        crate::utils::enforce_window_bounds(ctx, egui::Id::new("Object Effects"), &mut settings.object_fx_menu_pos, 100.0, 100.0);
+        crate::utils::enforce_window_bounds_monitor(
+            ctx, egui::Id::new("Object Effects"), &mut settings.object_fx_menu_pos, 100.0, 100.0, settings.multi_monitor,
+        );
 
         if request_rasterize {
             project.rasterize_request = Some(crate::types::RasterizeRequest {

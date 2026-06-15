@@ -67,7 +67,7 @@ pub struct CaptureThread {
 }
 
 impl CaptureThread {
-    pub fn new(fps: f32) -> Self {
+    pub fn new(fps: f32, egui_ctx: egui::Context) -> Self {
         let interval = (1000.0 / fps.clamp(5.0, 360.0)) as u64;
         let requests: Arc<Mutex<HashMap<usize, CaptureRequest>>> = Arc::new(Mutex::new(HashMap::new()));
         let results: Arc<Mutex<HashMap<usize, CaptureResult>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -78,6 +78,7 @@ impl CaptureThread {
         let r_results = Arc::clone(&results);
         let r_running = Arc::clone(&running);
         let r_interval = Arc::clone(&capture_interval_ms);
+        let r_ctx = egui_ctx.clone();
 
         let handle = thread::Builder::new()
             .name("owerlayer-capture".to_string())
@@ -86,7 +87,7 @@ impl CaptureThread {
                 unsafe {
                     timeBeginPeriod(1);
                 }
-                Self::capture_loop(r_requests, r_results, r_running, r_interval);
+                Self::capture_loop(r_requests, r_results, r_running, r_interval, r_ctx);
                 #[cfg(windows)]
                 unsafe {
                     timeEndPeriod(1);
@@ -148,6 +149,7 @@ impl CaptureThread {
         results: Arc<Mutex<HashMap<usize, CaptureResult>>>,
         running: Arc<AtomicBool>,
         interval: Arc<std::sync::atomic::AtomicU64>,
+        egui_ctx: egui::Context,
     ) {
         let mut mask_cache: HashMap<usize, (Vec<u8>, [usize; 2])> = HashMap::new();
         #[cfg(windows)]
@@ -177,6 +179,7 @@ impl CaptureThread {
                 }
             }
 
+            let mut got_new_frame = false;
             for req in &reqs {
                 if !running.load(Ordering::Relaxed) { break; }
 
@@ -198,8 +201,13 @@ impl CaptureThread {
                 if let Some(result) = result {
                     if let Ok(mut map) = results.lock() {
                         map.insert(req.id, result);
+                        got_new_frame = true;
                     }
                 }
+            }
+
+            if got_new_frame {
+                egui_ctx.request_repaint();
             }
 
             // Sleep until next interval
@@ -483,49 +491,57 @@ impl CaptureThread {
             }
         }
 
-        if is_bgra {
-            if let Some(mask) = final_mask {
-                use rayon::prelude::*;
-                pixels.par_chunks_mut(4).enumerate().for_each(|(i, chunk)| {
-                    if i < mask.len() && mask[i] == 0 {
-                        if chunk.len() >= 4 {
-                            chunk[3] = 0;
-                        }
-                    }
-                });
-            }
-        }
         perf.thread_mask_effects_us = mask_effects_start.elapsed().as_micros();
 
         let conv_start = std::time::Instant::now();
-        // For BGRA (WGC) path: skip Color32 conversion entirely - GPU handles swizzle
-        let color_image = if is_bgra {
-            None
-        } else {
-            // For legacy GDI path: pixels are already RGBA! We just apply mask and build ColorImage in a single sequential CPU loop (no swap needed)
-            let mut color_pixels = Vec::with_capacity(pixels.len() / 4);
+        let color_pixels: Vec<egui::Color32> = if is_bgra {
+            use rayon::prelude::*;
             if let Some(mask) = final_mask {
-                for (i, chunk) in pixels.chunks_exact_mut(4).enumerate() {
-                    let r = chunk[0];
+                pixels.par_chunks_exact_mut(4).enumerate().map(|(i, chunk)| {
+                    let b = chunk[0];
                     let g = chunk[1];
-                    let b = chunk[2];
-                    let a = if i < mask.len() && mask[i] == 0 { 0 } else { 255 };
+                    let r = chunk[2];
+                    let a = if i < mask.len() && mask[i] == 0 { 0 } else { chunk[3] };
+                    chunk[0] = r;
+                    chunk[1] = g;
+                    chunk[2] = b;
                     chunk[3] = a;
-                    color_pixels.push(egui::Color32::from_rgba_unmultiplied(r, g, b, a));
-                }
+                    egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+                }).collect()
             } else {
-                for chunk in pixels.chunks_exact_mut(4) {
+                pixels.par_chunks_exact_mut(4).map(|chunk| {
+                    let b = chunk[0];
+                    let g = chunk[1];
+                    let r = chunk[2];
+                    let a = chunk[3];
+                    chunk[0] = r;
+                    chunk[1] = g;
+                    chunk[2] = b;
+                    egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+                }).collect()
+            }
+        } else {
+            use rayon::prelude::*;
+            if let Some(mask) = final_mask {
+                pixels.par_chunks_exact_mut(4).enumerate().map(|(i, chunk)| {
                     let r = chunk[0];
                     let g = chunk[1];
                     let b = chunk[2];
-                    color_pixels.push(egui::Color32::from_rgba_unmultiplied(r, g, b, chunk[3]));
-                }
+                    let a = if i < mask.len() && mask[i] == 0 { 0 } else { chunk[3] };
+                    chunk[3] = a;
+                    egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+                }).collect()
+            } else {
+                pixels.par_chunks_exact_mut(4).map(|chunk| {
+                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+                }).collect()
             }
-            Some(Arc::new(egui::ColorImage {
-                size: [sw as usize, sh as usize],
-                pixels: color_pixels,
-            }))
         };
+
+        let color_image = Some(Arc::new(egui::ColorImage {
+            size: [sw as usize, sh as usize],
+            pixels: color_pixels,
+        }));
         perf.thread_color32_conv_us = conv_start.elapsed().as_micros();
         perf.thread_total_us = total_start.elapsed().as_micros();
 
@@ -534,7 +550,7 @@ impl CaptureThread {
             size: [sw as usize, sh as usize],
             color_image,
             perf,
-            is_bgra,
+            is_bgra: false, // BGRA was already swapped to RGBA on the background thread!
         })
     }
 
@@ -652,57 +668,91 @@ use rayon::prelude::*;
 pub fn apply_box_blur(pixels: &mut [u8], width: usize, height: usize, radius: usize) {
     let radius = radius.min(100).min(width / 2).min(height / 2);
     if radius == 0 || width == 0 || height == 0 { return; }
-
+ 
     let pixels_per_row = width * 4;
     let mut intermediate = pixels.to_vec();
     
-    // Horizontal
+    // Horizontal pass (sliding window)
     intermediate.par_chunks_exact_mut(pixels_per_row).for_each(|row| {
         let row_copy = row.to_vec();
+        let mut r = 0u32;
+        let mut g = 0u32;
+        let mut b = 0u32;
+        let mut a = 0u32;
+        
+        let w_size = (radius * 2 + 1) as u32;
+        for i in 0..=radius {
+            let idx = i.min(width - 1) * 4;
+            r += row_copy[idx] as u32;
+            g += row_copy[idx + 1] as u32;
+            b += row_copy[idx + 2] as u32;
+            a += row_copy[idx + 3] as u32;
+        }
+        r += (row_copy[0] as u32) * radius as u32;
+        g += (row_copy[1] as u32) * radius as u32;
+        b += (row_copy[2] as u32) * radius as u32;
+        a += (row_copy[3] as u32) * radius as u32;
+
         for x in 0..width {
-            let mut r = 0u32; let mut g = 0u32; let mut b = 0u32; let mut a = 0u32;
-            let mut count = 0;
-            for i in -(radius as i32)..=(radius as i32) {
-                let nx = x as i32 + i;
-                if nx >= 0 && nx < width as i32 {
-                    let idx = nx as usize * 4;
-                    r += row_copy[idx] as u32;
-                    g += row_copy[idx + 1] as u32;
-                    b += row_copy[idx + 2] as u32;
-                    a += row_copy[idx + 3] as u32;
-                    count += 1;
-                }
-            }
             let idx = x * 4;
-            row[idx] = (r / count) as u8;
-            row[idx + 1] = (g / count) as u8;
-            row[idx + 2] = (b / count) as u8;
-            row[idx + 3] = (a / count) as u8;
+            row[idx] = (r / w_size) as u8;
+            row[idx + 1] = (g / w_size) as u8;
+            row[idx + 2] = (b / w_size) as u8;
+            row[idx + 3] = (a / w_size) as u8;
+
+            let left_idx = if x >= radius { x - radius } else { 0 } * 4;
+            let right_idx = (x + radius + 1).min(width - 1) * 4;
+
+            r = r + row_copy[right_idx] as u32 - row_copy[left_idx] as u32;
+            g = g + row_copy[right_idx + 1] as u32 - row_copy[left_idx + 1] as u32;
+            b = b + row_copy[right_idx + 2] as u32 - row_copy[left_idx + 2] as u32;
+            a = a + row_copy[right_idx + 3] as u32 - row_copy[left_idx + 3] as u32;
         }
     });
 
-    // Vertical (intermediate -> pixels)
+    // Vertical pass (sliding window)
     let intermediate_shared = &intermediate;
-    pixels.par_chunks_exact_mut(pixels_per_row).enumerate().for_each(|(y, row)| {
-        for x in 0..width {
-            let mut r = 0u32; let mut g = 0u32; let mut b = 0u32; let mut a = 0u32;
-            let mut count = 0;
-            for i in -(radius as i32)..=(radius as i32) {
-                let ny = y as i32 + i;
-                if ny >= 0 && ny < height as i32 {
-                    let idx = (ny as usize * width + x) * 4;
-                    r += intermediate_shared[idx] as u32;
-                    g += intermediate_shared[idx + 1] as u32;
-                    b += intermediate_shared[idx + 2] as u32;
-                    a += intermediate_shared[idx + 3] as u32;
-                    count += 1;
-                }
+    let w_size = (radius * 2 + 1) as u32;
+
+    (0..width).into_par_iter().for_each(|x| {
+        let mut r = 0u32;
+        let mut g = 0u32;
+        let mut b = 0u32;
+        let mut a = 0u32;
+
+        for y in 0..=radius {
+            let idx = (y.min(height - 1) * width + x) * 4;
+            r += intermediate_shared[idx] as u32;
+            g += intermediate_shared[idx + 1] as u32;
+            b += intermediate_shared[idx + 2] as u32;
+            a += intermediate_shared[idx + 3] as u32;
+        }
+        let first_idx = x * 4;
+        r += (intermediate_shared[first_idx] as u32) * radius as u32;
+        g += (intermediate_shared[first_idx + 1] as u32) * radius as u32;
+        b += (intermediate_shared[first_idx + 2] as u32) * radius as u32;
+        a += (intermediate_shared[first_idx + 3] as u32) * radius as u32;
+
+        for y in 0..height {
+            let idx = (y * width + x) * 4;
+            unsafe {
+                let ptr = pixels.as_ptr() as *mut u8;
+                *ptr.add(idx) = (r / w_size) as u8;
+                *ptr.add(idx + 1) = (g / w_size) as u8;
+                *ptr.add(idx + 2) = (b / w_size) as u8;
+                *ptr.add(idx + 3) = (a / w_size) as u8;
             }
-            let idx = x * 4;
-            row[idx] = (r / count) as u8;
-            row[idx + 1] = (g / count) as u8;
-            row[idx + 2] = (b / count) as u8;
-            row[idx + 3] = (a / count) as u8;
+
+            let leave_y = if y >= radius { y - radius } else { 0 };
+            let enter_y = (y + radius + 1).min(height - 1);
+
+            let leave_idx = (leave_y * width + x) * 4;
+            let enter_idx = (enter_y * width + x) * 4;
+
+            r = r + intermediate_shared[enter_idx] as u32 - intermediate_shared[leave_idx] as u32;
+            g = g + intermediate_shared[enter_idx + 1] as u32 - intermediate_shared[leave_idx + 1] as u32;
+            b = b + intermediate_shared[enter_idx + 2] as u32 - intermediate_shared[leave_idx + 2] as u32;
+            a = a + intermediate_shared[enter_idx + 3] as u32 - intermediate_shared[leave_idx + 3] as u32;
         }
     });
 }

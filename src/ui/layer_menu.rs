@@ -13,13 +13,16 @@ pub fn render_layers_window(
 ) {
     let frame = photoshop_frame(settings);
 
-    let win_resp = egui::Window::new(egui::RichText::new("Layers").color(egui::Color32::from_rgb(180, 180, 200)).size(16.0))
-        .open(open)
-        .title_bar(false)
-        .resizable(true)
-        .default_width(340.0)
-        .default_pos(settings.layer_menu_pos)
-        .frame(frame)
+    let win_resp = crate::utils::panel_window_pos(
+        egui::Window::new(egui::RichText::new("Layers").color(egui::Color32::from_rgb(180, 180, 200)).size(16.0))
+            .open(open)
+            .title_bar(false)
+            .resizable(true)
+            .default_width(340.0)
+            .frame(frame),
+        settings.layer_menu_pos,
+        settings.ui_reset_frames,
+    )
         .show(ctx, |ui| {
             ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::from_rgba_premultiplied(255, 255, 255, 8);
             
@@ -643,7 +646,9 @@ pub fn render_layers_window(
         }
     }
     
-    crate::utils::enforce_window_bounds(ctx, egui::Id::new("Layers"), &mut settings.layer_menu_pos, 100.0, 100.0);
+    crate::utils::enforce_window_bounds_monitor(
+        ctx, egui::Id::new("Layers"), &mut settings.layer_menu_pos, 100.0, 100.0, settings.multi_monitor,
+    );
     
     crate::ui::object_fx::render_fx_window(ctx, project, settings);
 

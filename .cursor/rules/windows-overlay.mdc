@@ -1,0 +1,24 @@
+---
+description: Overlay window composition and capture rules
+globs: src/winapi_utils.rs,src/main.rs,src/wgc_capture.rs,src/capture_thread.rs
+alwaysApply: false
+---
+
+# Windows Overlay Composition
+
+## DirectComposition (WS_EX_NOREDIRECTIONBITMAP)
+
+When `WS_EX_NOREDIRECTIONBITMAP` (0x00400000) is set on the overlay HWND:
+
+- Strip `WS_EX_LAYERED` — never combine layered + no-redirection-bitmap.
+- Do not call `SetLayeredWindowAttributes`.
+- Re-apply styles in `setup_overlay_window()` after passthrough/edit-mode changes.
+
+Mixing these styles causes DWM to freeze desktop content behind the overlay when entering edit mode.
+
+## Capture
+
+- OBS Window Capture: use "Windows 10 (1903 and up)" (WGC).
+- OBS Game Capture: enable "Allow Transparency".
+- Legacy BitBlt capture returns black under DirectComposition — expected.
+- Keep `WS_EX_APPWINDOW` so OBS can enumerate the window.

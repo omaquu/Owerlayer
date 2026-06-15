@@ -1,0 +1,26 @@
+---
+description: Owerlayer project structure and Rust conventions
+alwaysApply: true
+---
+
+# Owerlayer
+
+Windows transparent screen overlay (Rust + eframe/egui + glow). Current version: 0.17.0-alpha.
+
+## Layout
+
+- `src/main.rs` — app entry, edit-mode toggle, passthrough, frame loop
+- `src/overlay.rs` — layer rendering, mode indicator
+- `src/winapi_utils.rs` — HWND, overlay window styles, GDI capture, clipboard
+- `src/wgc_capture.rs` / `src/capture_thread.rs` — Windows Graphics Capture pipeline
+- `src/gl_renderer.rs` — OpenGL effects and texture upload
+- `src/tools/` — brush, move, snip, blur, cut, eraser, text, etc.
+- `src/ui/` — toolbar, settings, layers, history, filter menus
+- `releases/v0.17.0-alpha/` — shipped release binaries
+
+## Conventions
+
+- Prefer minimal diffs; match existing naming and module boundaries.
+- Use `#[cfg(windows)]` for WinAPI code; provide no-op stubs on other platforms.
+- Do not add `WS_EX_TOOLWINDOW` — it hides the window from OBS window capture.
+- Run `cargo check` after changes; release builds go to `target/release/owerlayer.exe`.

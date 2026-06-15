@@ -19,13 +19,16 @@ pub fn render_history_window(
 
     let mut close_window = false;
 
-    let win_resp = egui::Window::new("History")
-        .open(open)
-        .title_bar(false)
-        .resizable(true)
-        .default_width(240.0)
-        .default_pos(settings.history_menu_pos)
-        .frame(frame)
+    let win_resp = crate::utils::panel_window_pos(
+        egui::Window::new("History")
+            .open(open)
+            .title_bar(false)
+            .resizable(true)
+            .default_width(240.0)
+            .frame(frame),
+        settings.history_menu_pos,
+        settings.ui_reset_frames,
+    )
         .show(ctx, |ui| {
             // ── Header ──
             ui.horizontal(|ui| {
@@ -128,7 +131,9 @@ pub fn render_history_window(
             }
         }
     }
-    crate::utils::enforce_window_bounds(ctx, egui::Id::new("History"), &mut settings.history_menu_pos, 100.0, 100.0);
+    crate::utils::enforce_window_bounds_monitor(
+        ctx, egui::Id::new("History"), &mut settings.history_menu_pos, 100.0, 100.0, settings.multi_monitor,
+    );
 
     if close_window {
         *open = false;

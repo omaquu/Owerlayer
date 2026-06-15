@@ -719,6 +719,19 @@ pub fn draw_dashed_path_color(painter: &egui::Painter, points: &[egui::Pos2], ti
     }
 }
 
+/// Clamp rect for UI panels — uses primary monitor region when spanning virtual desktop.
+pub fn ui_clamp_rect(ctx: &egui::Context, multi_monitor: bool) -> egui::Rect {
+    if multi_monitor {
+        #[cfg(windows)]
+        {
+            let (ox, oy) = crate::winapi_utils::primary_monitor_viewport_origin();
+            let (w, h, _, _) = crate::winapi_utils::get_primary_monitor_rect();
+            return egui::Rect::from_min_size(egui::pos2(ox, oy), egui::vec2(w, h));
+        }
+    }
+    ctx.screen_rect()
+}
+
 pub fn enforce_window_bounds(
     ctx: &egui::Context,
     _id: egui::Id,
@@ -726,13 +739,87 @@ pub fn enforce_window_bounds(
     min_visible_width: f32,
     min_visible_height: f32,
 ) {
-    let screen_rect = ctx.screen_rect();
-    let sw = screen_rect.width();
-    let sh = screen_rect.height();
+    enforce_window_bounds_in_rect(
+        saved_pos,
+        min_visible_width,
+        min_visible_height,
+        ctx.screen_rect(),
+    );
+}
 
-    // Clamp the saved position in the settings struct
-    saved_pos.x = saved_pos.x.clamp(0.0, (sw - min_visible_width).max(0.0));
-    saved_pos.y = saved_pos.y.clamp(0.0, (sh - min_visible_height).max(0.0));
+pub fn enforce_window_bounds_monitor(
+    ctx: &egui::Context,
+    _id: egui::Id,
+    saved_pos: &mut egui::Pos2,
+    min_visible_width: f32,
+    min_visible_height: f32,
+    multi_monitor: bool,
+) {
+    enforce_window_bounds_in_rect(
+        saved_pos,
+        min_visible_width,
+        min_visible_height,
+        ui_clamp_rect(ctx, multi_monitor),
+    );
+}
+
+fn enforce_window_bounds_in_rect(
+    saved_pos: &mut egui::Pos2,
+    min_visible_width: f32,
+    min_visible_height: f32,
+    rect: egui::Rect,
+) {
+    let min_x = rect.min.x;
+    let min_y = rect.min.y;
+    let max_x = (rect.max.x - min_visible_width).max(min_x);
+    let max_y = (rect.max.y - min_visible_height).max(min_y);
+    saved_pos.x = saved_pos.x.clamp(min_x, max_x);
+    saved_pos.y = saved_pos.y.clamp(min_y, max_y);
+}
+
+/// Reset all floating panel positions to the primary monitor (monitor 1).
+pub fn reset_ui_positions_to_primary(settings: &mut Settings) {
+    let (ox, oy) = crate::winapi_utils::primary_monitor_viewport_origin();
+    let base = egui::pos2(ox, oy);
+    settings.toolbar_pos = base + egui::vec2(40.0, 60.0);
+    settings.layer_menu_pos = base + egui::vec2(200.0, 60.0);
+    settings.settings_menu_pos = base + egui::vec2(360.0, 60.0);
+    settings.filter_menu_pos = base + egui::vec2(520.0, 60.0);
+    settings.history_menu_pos = base + egui::vec2(680.0, 60.0);
+    settings.object_fx_menu_pos = base + egui::vec2(840.0, 60.0);
+    settings.creation_prompt_pos = base + egui::vec2(500.0, 300.0);
+    settings.ui_reset_frames = 8;
+}
+
+/// Move panels onto the primary monitor if saved positions are off-screen.
+pub fn ensure_ui_on_primary_monitor(settings: &mut Settings) -> bool {
+    #[cfg(not(windows))]
+    {
+        let _ = settings;
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        let (sw, sh) = crate::winapi_utils::get_screen_size(settings.multi_monitor);
+        let rect = egui::Rect::from_min_size(egui::pos2(1.0, 1.0), egui::vec2(sw, sh));
+        if rect.contains(settings.toolbar_pos) {
+            return false;
+        }
+        reset_ui_positions_to_primary(settings);
+        true
+    }
+}
+
+pub fn panel_window_pos<'a>(
+    win: egui::Window<'a>,
+    pos: egui::Pos2,
+    reset_frames: u8,
+) -> egui::Window<'a> {
+    if reset_frames > 0 {
+        win.fixed_pos(pos)
+    } else {
+        win.default_pos(pos)
+    }
 }
 
 

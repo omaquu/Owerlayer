@@ -1,0 +1,11 @@
+﻿target/
+backup/
+backup_v*/
+Backup V511/
+**/*.txt
+**/*.py
+**/*.rs.bk
+expanded.rs
+scratch_test.rs
+test.rs
+overlay.rs.tmp

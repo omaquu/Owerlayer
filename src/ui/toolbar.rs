@@ -342,14 +342,17 @@ pub fn render_photoshop_panel(
     let is_vertical = settings.is_vertical;
 
     let frame = photoshop_frame(settings);
-    let mut win = egui::Window::new("photoshop_panel")
-        .title_bar(false)
-        .resizable(false)
-        .collapsible(false)
-        .movable(true)
-        .default_pos(settings.toolbar_pos)
-        .pivot(egui::Align2::LEFT_TOP)
-        .frame(frame);
+    let mut win = crate::utils::panel_window_pos(
+        egui::Window::new("photoshop_panel")
+            .title_bar(false)
+            .resizable(false)
+            .collapsible(false)
+            .movable(true)
+            .pivot(egui::Align2::LEFT_TOP)
+            .frame(frame),
+        settings.toolbar_pos,
+        settings.ui_reset_frames,
+    );
     
     if is_vertical { win = win.min_width(160.0); }
     
@@ -408,7 +411,9 @@ pub fn render_photoshop_panel(
             }
         }
     }
-    crate::utils::enforce_window_bounds(ctx, egui::Id::new("photoshop_panel"), &mut settings.toolbar_pos, 50.0, 50.0);
+    crate::utils::enforce_window_bounds_monitor(
+        ctx, egui::Id::new("photoshop_panel"), &mut settings.toolbar_pos, 50.0, 50.0, settings.multi_monitor,
+    );
 }
 
 pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, _is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool, request_history_push: &mut Option<String>, filters_open: &mut Option<usize>) {

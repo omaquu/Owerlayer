@@ -21,13 +21,16 @@ pub fn render_filter_menu(
         let frame = photoshop_frame(settings);
         let layer_name = project.layers[idx].name.clone();
 
-        let win_resp = egui::Window::new(format!("Layer Filters: {}", layer_name))
-            .id(egui::Id::new("layer_filters"))
-            .title_bar(false)
-            .resizable(false)
-            .collapsible(false)
-            .default_pos(settings.filter_menu_pos)
-            .frame(frame)
+        let win_resp = crate::utils::panel_window_pos(
+            egui::Window::new(format!("Layer Filters: {}", layer_name))
+                .id(egui::Id::new("layer_filters"))
+                .title_bar(false)
+                .resizable(false)
+                .collapsible(false)
+                .frame(frame),
+            settings.filter_menu_pos,
+            settings.ui_reset_frames,
+        )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Layer FX").size(11.0).color(accent));
@@ -153,7 +156,9 @@ pub fn render_filter_menu(
             }
         }
 
-        crate::utils::enforce_window_bounds(ctx, egui::Id::new("layer_filters"), &mut settings.filter_menu_pos, 100.0, 100.0);
+        crate::utils::enforce_window_bounds_monitor(
+            ctx, egui::Id::new("layer_filters"), &mut settings.filter_menu_pos, 100.0, 100.0, settings.multi_monitor,
+        );
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             *filters_open = None;

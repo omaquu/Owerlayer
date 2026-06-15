@@ -831,6 +831,9 @@ pub struct Settings {
     pub auto_hide_seconds: f32,
     #[serde(default)]
     pub exclude_from_capture: bool,
+    /// Auto-hide overlay from capture while live desktop snip is active (prevents mirror loop).
+    #[serde(default = "default_auto_exclude_live")]
+    pub auto_exclude_live_capture: bool,
     #[serde(default)]
     pub software_rendering: bool,
     #[serde(default = "default_toolbar_bg")]
@@ -921,6 +924,8 @@ pub struct Settings {
     pub eraser_source_prompt_remember: bool,
     #[serde(default)]
     pub use_original_capture: bool,
+    #[serde(skip)]
+    pub ui_reset_frames: u8,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -945,6 +950,7 @@ fn default_creation_prompt_pos() -> egui::Pos2 { egui::pos2(500.0, 300.0) }
 fn default_spray_density() -> u32 { 40 }
 fn default_highlight_opacity() -> f32 { 0.4 }
 fn default_show_screen_controls() -> bool { true }
+fn default_auto_exclude_live() -> bool { true }
 
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
@@ -998,6 +1004,7 @@ impl Default for Settings {
             hide_all: false,
             auto_hide_seconds: 0.0,
             exclude_from_capture: false,
+            auto_exclude_live_capture: true,
             software_rendering: false,
             toolbar_bg_color: default_toolbar_bg(),
             text_font: TextFont::Sans,
@@ -1044,6 +1051,7 @@ impl Default for Settings {
             eraser_source_prompt_target: None,
             eraser_source_prompt_remember: false,
             use_original_capture: false,
+            ui_reset_frames: 0,
         }
     }
 }
@@ -1060,6 +1068,7 @@ impl Settings {
             Self::default()
         };
         settings.blur_strength = 0.0; // Blur should start 0 always
+        let _ = crate::utils::ensure_ui_on_primary_monitor(&mut settings);
         settings
     }
     pub fn save(&self) {

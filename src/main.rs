@@ -202,6 +202,8 @@ struct OwerlayerApp {
     show_debug_window: bool,
     prev_passthrough: bool,
     prev_exclude_capture: Option<bool>,
+    prev_f12_down: bool,
+    prev_ctrl_shift_r_down: bool,
     last_tool_used: Option<Tool>,
     last_action_time: std::time::Instant,
     filters_open: Option<usize>,
@@ -271,6 +273,8 @@ impl OwerlayerApp {
             show_debug_window: false,
             prev_passthrough: true, // Initially transparent
             prev_exclude_capture: None,
+            prev_f12_down: false,
+            prev_ctrl_shift_r_down: false,
             last_tool_used: None,
             last_action_time: std::time::Instant::now(),
             filters_open: None,
@@ -284,7 +288,7 @@ impl OwerlayerApp {
                     None
                 }
             },
-            capture_thread: capture_thread::CaptureThread::new(15.0),
+            capture_thread: capture_thread::CaptureThread::new(15.0, cc.egui_ctx.clone()),
             history: history::History::new(),
             show_history_panel: false,
             request_history_push: None,
@@ -628,7 +632,6 @@ impl eframe::App for OwerlayerApp {
                         (sw, sh, ox, oy)
                     };
                     if self.settings.fso_fix {
-                        // Offset by -2, -2 and size +4, +4 for FSO fix consistency
                         crate::winapi_utils::reposition_overlay_window(ox as i32 - 2, oy as i32 - 2, sw as i32 + 4, sh as i32 + 4);
                     } else {
                         crate::winapi_utils::reposition_overlay_window(ox as i32, oy as i32, sw as i32, sh as i32);
@@ -691,6 +694,30 @@ impl eframe::App for OwerlayerApp {
             }
         }
         self.prev_hotkey_held = key_held;
+
+        // F12 or Ctrl+Shift+R: reset UI panels + overlay to primary monitor (monitor 1)
+        #[cfg(windows)]
+        {
+            let f12_down = unsafe {
+                windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x7B) & 0x8000u16 as i16 != 0
+            };
+            let ctrl_shift_r_down = unsafe {
+                let ctrl = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x11) & 0x8000u16 as i16 != 0;
+                let shift = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x10) & 0x8000u16 as i16 != 0;
+                let r_key = windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(0x52) & 0x8000u16 as i16 != 0;
+                ctrl && shift && r_key
+            };
+            let trigger_reset = (f12_down && !self.prev_f12_down) || (ctrl_shift_r_down && !self.prev_ctrl_shift_r_down);
+            if trigger_reset {
+                crate::utils::reset_ui_positions_to_primary(&mut self.settings);
+                winapi_utils::reposition_overlay_to_primary_monitor(self.settings.fso_fix);
+                self.settings.save();
+                #[cfg(windows)]
+                winapi_utils::refresh_overlay_composition();
+            }
+            self.prev_f12_down = f12_down;
+            self.prev_ctrl_shift_r_down = ctrl_shift_r_down;
+        }
         
         // Auto-open layers panel if pinned and Ctrl/Hotkey held
         if self.settings.pin_layers_panel && self.edit_mode {
@@ -744,7 +771,7 @@ impl eframe::App for OwerlayerApp {
                 .filter(|l| l.visible)
                 .flat_map(|l| &l.placed_images)
                 .any(|img| img.is_live && !img.snip_source_overlay);
-            if has_active_live_desktop_snip {
+            if has_active_live_desktop_snip && self.settings.auto_exclude_live_capture {
                 expected_exclude = true;
             }
 
@@ -1250,6 +1277,10 @@ impl eframe::App for OwerlayerApp {
                         });
                     self.settings.show_profiler = show;
                 }
+            }
+
+            if self.settings.ui_reset_frames > 0 {
+                self.settings.ui_reset_frames -= 1;
             }
 
             if self.layer_prompt_open && self.edit_mode {
@@ -1942,10 +1973,8 @@ impl eframe::App for OwerlayerApp {
         }
 
         // ---- 7. Repaint strategy ----
-        let has_live = self.project.layers.iter().any(|l| l.placed_images.iter().any(|img| img.is_live))
-            || (self.project.marquee_selection.is_some() && self.settings.snip_live);
-        if self.edit_mode || has_live {
-            ctx.request_repaint(); // Native framerate for smooth brush or live mirror
+        if self.edit_mode {
+            ctx.request_repaint(); // Native framerate for smooth brush or UI interaction
         } else if self.settings.keep_ui_visible {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         } else {

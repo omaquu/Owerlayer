@@ -16,13 +16,16 @@ pub fn render_settings_window(
     let accent = color32(&settings.accent_color);
     let frame = photoshop_frame(settings);
 
-    let win_resp = egui::Window::new(egui::RichText::new("Settings").color(accent).size(16.0))
-        .open(show)
-        .resizable(false)
-        .collapsible(true)
-        .default_width(280.0)
-        .default_pos(settings.settings_menu_pos)
-        .frame(frame)
+    let win_resp = crate::utils::panel_window_pos(
+        egui::Window::new(egui::RichText::new("Settings").color(accent).size(16.0))
+            .open(show)
+            .resizable(false)
+            .collapsible(true)
+            .default_width(280.0)
+            .frame(frame),
+        settings.settings_menu_pos,
+        settings.ui_reset_frames,
+    )
         .show(ctx, |ui| {
             ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::from_rgba_premultiplied(255, 255, 255, 8);
             ui.style_mut().visuals.widgets.hovered.bg_fill  = egui::Color32::from_rgba_premultiplied(255, 255, 255, 18);
@@ -108,10 +111,13 @@ pub fn render_settings_window(
             ui.label(egui::RichText::new("0 = Never hide automatically").size(10.0).color(egui::Color32::GRAY));
 
             ui.add_space(4.0);
-            if ui.checkbox(&mut settings.exclude_from_capture, "Exclude from capture (Fix Mirror loop)").on_hover_text("Hides this window from OBS, Discord, and Mirror captures. Turn OFF if you want OBS to record the overlay.").changed() {
+            if ui.checkbox(&mut settings.exclude_from_capture, "Exclude from capture").on_hover_text("Hides this window from OBS, Discord, and Mirror. Must be OFF for OBS to capture Owerlayer.").changed() {
                 crate::winapi_utils::set_capture_exclusion(settings.exclude_from_capture);
             }
-            ui.label(egui::RichText::new("OBS Capture Note: To capture Owerlayer in OBS, use 'Windows Graphics Capture' method or Display Capture.").size(10.0).color(egui::Color32::GRAY));
+            ui.checkbox(&mut settings.auto_exclude_live_capture, "Auto-exclude during live desktop snip")
+                .on_hover_text("Prevents infinite mirror when live-capturing the desktop. Turn OFF to allow OBS capture while live snip is active.");
+            ui.label(egui::RichText::new("OBS: Window Capture → Method: Windows 10 (1903+). Or Game Capture with Allow Transparency. Exclude must be OFF.").size(10.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new("F12 — reset menus and overlay to primary monitor (monitor 1)").size(10.0).color(egui::Color32::GRAY));
 
 
             ui.add_space(4.0);
@@ -224,7 +230,9 @@ pub fn render_settings_window(
             }
         }
     }
-    crate::utils::enforce_window_bounds(ctx, egui::Id::new("Settings"), &mut settings.settings_menu_pos, 100.0, 100.0);
+    crate::utils::enforce_window_bounds_monitor(
+        ctx, egui::Id::new("Settings"), &mut settings.settings_menu_pos, 100.0, 100.0, settings.multi_monitor,
+    );
 }
 
 pub fn section_heading(ui: &mut egui::Ui, text: &str, accent: egui::Color32) {
