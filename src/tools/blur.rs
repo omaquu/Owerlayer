@@ -231,9 +231,6 @@ pub fn render_preview(ctx: &mut ToolContext) {
         if !ctx.current_stroke.is_empty() {
             let mut pts: Vec<egui::Pos2> = ctx.current_stroke.iter().map(|p| *p - render_offset).collect();
             pts.push(ctx.mouse.pos - render_offset);
-            if pts.len() >= 2 {
-                pts.push(pts[0]);
-            }
             crate::utils::draw_dashed_path(&painter, &pts, time);
         }
     } else {

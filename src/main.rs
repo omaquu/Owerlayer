@@ -623,7 +623,7 @@ impl eframe::App for OwerlayerApp {
         #[cfg(windows)]
         {
             if self.frame_count == 2 {
-                crate::winapi_utils::setup_overlay_window();
+                crate::winapi_utils::setup_overlay_window(self.settings.fso_fix);
                 if self.settings.multi_monitor || self.settings.virtual_matrix {
                     let (sw, sh, ox, oy) = if let Some(idx) = self.settings.monitor_lock {
                         crate::winapi_utils::get_monitor_size_pos(idx)
@@ -669,7 +669,7 @@ impl eframe::App for OwerlayerApp {
             ctx.request_repaint();
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
-            winapi_utils::setup_overlay_window();
+            winapi_utils::setup_overlay_window(self.settings.fso_fix);
             winapi_utils::set_capture_exclusion(self.settings.exclude_from_capture);
         }
 
@@ -2018,8 +2018,10 @@ impl eframe::App for OwerlayerApp {
         }
 
         // ---- 7. Repaint strategy ----
-        if self.edit_mode {
-            ctx.request_repaint(); // Native framerate for smooth brush or UI interaction
+        let has_live = self.project.layers.iter().any(|l| l.placed_images.iter().any(|img| img.is_live))
+            || (self.project.marquee_selection.is_some() && self.settings.snip_live);
+        if self.edit_mode || has_live {
+            ctx.request_repaint(); // Native framerate for smooth brush or live mirror/capture
         } else if self.settings.keep_ui_visible {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         } else {

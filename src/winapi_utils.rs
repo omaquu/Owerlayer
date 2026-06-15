@@ -388,7 +388,7 @@ pub fn get_clipboard_image() -> Option<(Vec<u8>, usize, usize)> {
 pub fn get_clipboard_image() -> Option<(Vec<u8>, usize, usize)> { None }
 
 #[cfg(windows)]
-pub fn setup_overlay_window() {
+pub fn setup_overlay_window(fso_fix: bool) {
     use windows_sys::Win32::Foundation::{HWND, LPARAM, BOOL};
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
     unsafe {
@@ -429,8 +429,20 @@ pub fn setup_overlay_window() {
         let mut new_ex_style = (ex_style & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
         
         SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
-        SetWindowLongW(hwnd, GWL_EXSTYLE, (new_ex_style | WS_EX_LAYERED) as i32);
-        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+
+        let is_dcomp = (ex_style & 0x00400000) != 0;
+        if is_dcomp && fso_fix {
+            // DirectComposition is active and FSO fix is enabled (window is slightly offset to prevent FSO).
+            // Do NOT add WS_EX_LAYERED to avoid OBS capture freeze and DWM composition conflicts.
+            let final_ex_style = new_ex_style & !WS_EX_LAYERED;
+            SetWindowLongW(hwnd, GWL_EXSTYLE, final_ex_style as i32);
+        } else {
+            // Either not DirectComposition, or FSO fix is disabled.
+            // Add WS_EX_LAYERED and set layered window attributes.
+            new_ex_style |= WS_EX_LAYERED;
+            SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style as i32);
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+        }
 
         // Ensure always-on-top
         SetWindowPos(
@@ -442,7 +454,7 @@ pub fn setup_overlay_window() {
 }
 
 #[cfg(not(windows))]
-pub fn setup_overlay_window() {}
+pub fn setup_overlay_window(_fso_fix: bool) {}
 
 #[cfg(windows)]
 pub fn reposition_overlay_window(x: i32, y: i32, w: i32, h: i32) {

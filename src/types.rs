@@ -543,6 +543,8 @@ pub struct PlacedImage {
     pub mask_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     pub mask_dirty: bool,
+    #[serde(skip)]
+    pub cached_mask_outline: Option<Vec<Vec<egui::Pos2>>>,
     pub show_source_rect: bool,
     #[serde(default)]
     pub snip_source_overlay: bool,
@@ -638,6 +640,7 @@ impl Clone for PlacedImage {
             thumbnail_texture: None,
             thumbnail_dirty: self.thumbnail_dirty,
             mask_dirty: self.mask_dirty,
+            cached_mask_outline: None,
             grayscale: self.grayscale,
             invert: self.invert,
             sepia: self.sepia,
@@ -696,6 +699,7 @@ impl PlacedImage {
             thumbnail_texture: None,
             thumbnail_dirty: true,
             mask_dirty: false,
+            cached_mask_outline: None,
             grayscale: false,
             invert: false,
             sepia: false,

@@ -6,6 +6,7 @@ on:
       - 'v*'
     branches:
       - main
+      - v0.18.0-alpha
 
 permissions:
   contents: write

@@ -7,7 +7,7 @@ cargo build --release
 ```
 
 Release binary: `target/release/owerlayer.exe`  
-Shipped copy: `releases/v0.17.0-alpha/owerlayer.exe`
+Shipped copy: `releases/v0.18.0-alpha/owerlayer.exe`
 
 ## Key flows
 

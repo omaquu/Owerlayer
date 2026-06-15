@@ -352,6 +352,7 @@ pub fn render_canvas(
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &mask_rgba);
                     img.mask_texture = Some(ui.ctx().load_texture(format!("mask_{}", img.id), color_image, egui::TextureOptions::LINEAR));
                     img.mask_dirty = false;
+                    img.cached_mask_outline = None;
                 }
             }
             
@@ -1038,7 +1039,7 @@ pub fn render_canvas(
             let mut has_show_source = false;
             for (layer_idx, layer) in ctx.project.layers.iter_mut().enumerate() {
                 if !layer.visible { continue; }
-                for (img_idx, img) in layer.placed_images.iter().enumerate() {
+                for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
                     let is_selected = if let Some(sel) = &ctx.project.selected_object {
                         sel.layer_idx == layer_idx && sel.object_type == crate::types::ObjectType::Image && sel.object_idx == img_idx
                     } else {
@@ -1063,11 +1064,30 @@ pub fn render_canvas(
 
                         let stroke_width = if is_selected { 1.8f32 } else { 1.2f32 };
                         
-                        if let Some(ref local_pts) = img.snip_points {
+                        if let Some(ref mask_ref) = img.mask {
+                            if img.cached_mask_outline.is_none() {
+                                let ppp = ctx.ui.ctx().pixels_per_point();
+                                img.cached_mask_outline = Some(get_mask_outline(mask_ref, img.mask_size.unwrap_or(img.size), ppp));
+                            }
+                            if let Some(ref loops) = img.cached_mask_outline {
+                                for path in loops {
+                                    let mut current_path = Vec::with_capacity(path.len());
+                                    for &p in path {
+                                        current_path.push(egui::pos2(src_rect.min.x + p.x - ctx.render_offset.x, src_rect.min.y + p.y - ctx.render_offset.y));
+                                    }
+                                    if !current_path.is_empty() {
+                                        crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
+                                    }
+                                }
+                            }
+                        } else if let Some(ref local_pts) = img.snip_points {
                             let mut current_path = Vec::new();
                             for p in local_pts {
                                 if p.x.is_nan() || p.y.is_nan() {
                                     if !current_path.is_empty() {
+                                        if current_path.len() >= 2 && current_path.first() != current_path.last() {
+                                            current_path.push(*current_path.first().unwrap());
+                                        }
                                         crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
                                         current_path.clear();
                                     }
@@ -1076,6 +1096,9 @@ pub fn render_canvas(
                                 }
                             }
                             if !current_path.is_empty() {
+                                if current_path.len() >= 2 && current_path.first() != current_path.last() {
+                                    current_path.push(*current_path.first().unwrap());
+                                }
                                 crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
                             }
                         } else {
@@ -1149,5 +1172,124 @@ pub fn render_canvas(
     
     if let Some(sel) = new_selection { project.selected_object = Some(sel); }
     if switch_to_move { *active_tool = Tool::Move; }
+}
+
+fn get_mask_outline(mask: &[u8], size: [usize; 2], ppp: f32) -> Vec<Vec<egui::Pos2>> {
+    let w = size[0];
+    let h = size[1];
+    if w == 0 || h == 0 { return Vec::new(); }
+
+    let step = (w.max(h) as f32 / 150.0).max(1.0);
+    let cols = (w as f32 / step).ceil() as i32 + 1;
+    let rows = (h as f32 / step).ceil() as i32 + 1;
+
+    let mut grid = vec![false; (cols * rows) as usize];
+    for r in 0..rows {
+        let py = ((r as f32 * step).round() as usize).min(h - 1);
+        for c in 0..cols {
+            let px = ((c as f32 * step).round() as usize).min(w - 1);
+            grid[(r * cols + c) as usize] = mask[py * w + px] > 127;
+        }
+    }
+
+    let mut edges = std::collections::HashSet::new();
+    let mut adjacency: std::collections::HashMap<(i32, i32), Vec<(i32, i32)>> = std::collections::HashMap::new();
+
+    let mut add_edge = |p1: (i32, i32), p2: (i32, i32)| {
+        if p1 == p2 { return; }
+        let edge = if p1 < p2 { (p1, p2) } else { (p2, p1) };
+        if edges.insert(edge) {
+            adjacency.entry(p1).or_default().push(p2);
+            adjacency.entry(p2).or_default().push(p1);
+        }
+    };
+
+    for r in 0..(rows - 1) {
+        for c in 0..(cols - 1) {
+            let tl = grid[(r * cols + c) as usize];
+            let tr = grid[(r * cols + (c + 1)) as usize];
+            let br = grid[((r + 1) * cols + (c + 1)) as usize];
+            let bl = grid[((r + 1) * cols + c) as usize];
+
+            let index = ((tl as usize) << 3) | ((tr as usize) << 2) | ((br as usize) << 1) | bl as usize;
+            if index == 0 || index == 15 {
+                continue;
+            }
+
+            let m0 = (2 * c + 1, 2 * r);
+            let m1 = (2 * c + 2, 2 * r + 1);
+            let m2 = (2 * c + 1, 2 * r + 2);
+            let m3 = (2 * c, 2 * r + 1);
+
+            match index {
+                1 => add_edge(m2, m3),
+                2 => add_edge(m1, m2),
+                3 => add_edge(m1, m3),
+                4 => add_edge(m0, m1),
+                5 => {
+                    add_edge(m0, m3);
+                    add_edge(m1, m2);
+                }
+                6 => add_edge(m0, m2),
+                7 => add_edge(m0, m3),
+                8 => add_edge(m0, m3),
+                9 => add_edge(m0, m2),
+                10 => {
+                    add_edge(m0, m1);
+                    add_edge(m2, m3);
+                }
+                11 => add_edge(m0, m1),
+                12 => add_edge(m1, m3),
+                13 => add_edge(m1, m2),
+                14 => add_edge(m2, m3),
+                _ => {}
+            }
+        }
+    }
+
+    let mut loops: Vec<Vec<egui::Pos2>> = Vec::new();
+    while !edges.is_empty() {
+        let &edge = edges.iter().next().unwrap();
+        edges.remove(&edge);
+
+        let (start, mut current) = edge;
+        let mut path = vec![start, current];
+
+        loop {
+            let mut next_opt = None;
+            if let Some(neighbors) = adjacency.get(&current) {
+                for &n in neighbors {
+                    let test_edge = if current < n { (current, n) } else { (n, current) };
+                    if edges.contains(&test_edge) {
+                        next_opt = Some((n, test_edge));
+                        break;
+                    }
+                }
+            }
+
+            if let Some((next, e)) = next_opt {
+                edges.remove(&e);
+                path.push(next);
+                current = next;
+            } else {
+                let closing_edge = if current < start { (current, start) } else { (start, current) };
+                if edges.contains(&closing_edge) {
+                    edges.remove(&closing_edge);
+                    path.push(start);
+                }
+                break;
+            }
+        }
+
+        if path.len() >= 3 {
+            let mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
+                let lx = (pt.0 as f32 / 2.0) * step / ppp;
+                let ly = (pt.1 as f32 / 2.0) * step / ppp;
+                egui::pos2(lx, ly)
+            }).collect();
+            loops.push(mapped_path);
+        }
+    }
+    loops
 }
 

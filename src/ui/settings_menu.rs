@@ -135,7 +135,11 @@ pub fn render_settings_window(
             ui.label(egui::RichText::new("Preferred GPU (Disabled in Glow mode)").size(10.0).color(egui::Color32::GRAY));
             
             ui.add_space(4.0);
-            ui.checkbox(&mut settings.fso_fix, "Fullscreen Optimization Fix");
+            if ui.checkbox(&mut settings.fso_fix, "Fullscreen Optimization Fix").changed() {
+                crate::winapi_utils::setup_overlay_window(settings.fso_fix);
+                crate::winapi_utils::reposition_overlay_to_primary_monitor(settings.fso_fix);
+                crate::winapi_utils::refresh_overlay_composition();
+            }
             ui.label(egui::RichText::new("Bypasses Windows FSO by offsetting the window by 4px. Turn off if alignment is wrong.").size(10.0).color(egui::Color32::GRAY));
 
             ui.add_space(12.0);
@@ -207,7 +211,7 @@ pub fn render_settings_window(
                 }
                 ui.vertical(|ui| {
                     ui.label(egui::RichText::new("Owerlayer").strong().size(14.0));
-                    ui.label(egui::RichText::new("v0.6.5").size(11.0).color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION"))).size(11.0).color(egui::Color32::GRAY));
                     ui.label(egui::RichText::new("by omaquu").size(11.0).color(egui::Color32::GRAY));
                 });
             });
