@@ -141,6 +141,13 @@ pub fn render_filter_menu(
                     });
                 }
 
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Chromatic Aberration:");
+                    ui.add(egui::Slider::new(&mut layer.chromatic_aberration, 0.0..=20.0));
+                });
+                ui.checkbox(&mut layer.antialias, "Antialias Edges");
+
                 ui.add_space(8.0);
                 if ui.button("Close").clicked() {
                     *filters_open = None;

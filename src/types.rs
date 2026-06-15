@@ -281,6 +281,8 @@ pub struct Stroke {
     pub spray_density: u32,
     #[serde(default = "default_stroke_highlight_opacity")]
     pub highlight_opacity: f32,
+    #[serde(default)]
+    pub arrow_size: ArrowSize,
     #[serde(skip)]
     pub cached_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
@@ -303,6 +305,7 @@ impl Stroke {
         arrow: bool,
         spray_density: u32,
         highlight_opacity: f32,
+        arrow_size: ArrowSize,
     ) -> Self {
         let name = match kind {
             StrokeKind::Rect => "Rectangle".to_string(),
@@ -351,6 +354,7 @@ impl Stroke {
             locked: false,
             spray_density,
             highlight_opacity,
+            arrow_size,
             cached_texture: None,
             cached_rect: None,
         }
@@ -716,9 +720,16 @@ pub enum SnipMode { Rect, Circle, Lasso, Polygon, Star, Heart, Window }
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BrushShape { Round, Square }
 
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub enum ArrowSize { Small, Medium, Large }
+
+impl Default for ArrowSize { fn default() -> Self { Self::Medium } }
+
 pub struct PendingText {
     pub position: egui::Pos2,
     pub buffer: String,
+    pub original: Option<TextAnnotation>,
+    pub layer_idx: Option<usize>,
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -825,6 +836,8 @@ pub struct Settings {
     pub brush_shape: BrushShape,
     #[serde(default)]
     pub brush_arrow: bool,
+    #[serde(default)]
+    pub arrow_size: ArrowSize,
     #[serde(default)]
     pub hide_all: bool,
     #[serde(default)]
@@ -1029,6 +1042,7 @@ impl Default for Settings {
             fso_fix: true,
             is_vertical: false,
             brush_arrow: false,
+            arrow_size: ArrowSize::Medium,
             fx_open: None,
             toolbar_pos: default_toolbar_pos(),
             layer_menu_pos: default_layer_menu_pos(),

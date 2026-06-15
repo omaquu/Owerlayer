@@ -66,7 +66,12 @@ pub fn update(ctx: &mut ToolContext) {
                 settings.text_shadow  = ann.shadow;
                 settings.text_outline = ann.outline;
                 settings.text_wave_warp = ann.wave_warp;
-                *pending_text = Some(PendingText { position: ann.position, buffer: ann.text.clone() });
+                *pending_text = Some(PendingText {
+                    position: ann.position,
+                    buffer: ann.text.clone(),
+                    original: Some(ann.clone()),
+                    layer_idx: Some(active_layer_idx),
+                });
                 layer.text_annotations.remove(idx);
                 return; // Re-editing takes precedence
             }
@@ -95,7 +100,12 @@ pub fn update(ctx: &mut ToolContext) {
 
     if left_just_pressed && pending_text.is_none() && !painted_over {
         // Start new text entry at click position
-        *pending_text = Some(PendingText { position: pos, buffer: String::new() });
+        *pending_text = Some(PendingText {
+            position: pos,
+            buffer: String::new(),
+            original: None,
+            layer_idx: None,
+        });
     }
 }
 

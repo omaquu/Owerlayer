@@ -320,6 +320,25 @@ pub fn tool_btn_custom(ui: &mut egui::Ui, tool: Tool, is_selected: bool) -> egui
     response.on_hover_text(format!("{} ({})", tool.name(), tool.shortcut()))
 }
 
+pub fn tool_btn_disabled(ui: &mut egui::Ui, tool: Tool) {
+    let size = egui::vec2(28.0, 28.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let bg = egui::Color32::from_rgb(40, 40, 40);
+    ui.painter().rect_filled(rect, 4.0, bg);
+    ui.painter().rect_stroke(rect, 4.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(35, 35, 35)), egui::StrokeKind::Middle);
+    
+    let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(4.0)));
+    // Draw icon with greyed-out look (pass false for is_selected, icon will be dimmed by the dark bg)
+    let painter = child_ui.painter();
+    let center = child_ui.available_rect_before_wrap().center();
+    let dim_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 90, 90));
+    painter.circle_stroke(center - egui::vec2(3.0, 3.0), 3.0, dim_stroke);
+    painter.circle_stroke(center + egui::vec2(3.0, 3.0), 3.0, dim_stroke);
+    painter.line_segment([center - egui::vec2(2.0, 2.0), center + egui::vec2(2.0, 2.0)], dim_stroke);
+    
+    response.on_hover_text(format!("{} (Coming Soon)", tool.name()));
+}
+
 pub fn render_photoshop_panel(
     ctx: &egui::Context,
     active_tool: &mut Tool,
@@ -335,7 +354,7 @@ pub fn render_photoshop_panel(
     filters_open: &mut Option<usize>,
 ) {
     let main_tools = vec![
-        Tool::Move, Tool::Brush, Tool::Eraser, Tool::PaintBucket, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur, Tool::Embed,
+        Tool::Move, Tool::Brush, Tool::Eraser, Tool::PaintBucket, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur,
     ];
     
     let hide_icon = if settings.hide_all { "👁" } else { "👓" };
@@ -367,6 +386,8 @@ pub fn render_photoshop_panel(
                         let is_selected = *active_tool == *tool;
                         if tool_btn_custom(ui, *tool, is_selected).clicked() { *active_tool = *tool; }
                     }
+                    // Embed tool greyed out
+                    tool_btn_disabled(ui, Tool::Embed);
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
                     if ui.add(egui::Button::new("🕓").min_size(egui::vec2(28.0, 24.0))).on_hover_text("History").clicked() { *show_history_panel = !*show_history_panel; }
@@ -388,6 +409,8 @@ pub fn render_photoshop_panel(
                         let is_selected = *active_tool == *tool;
                         if tool_btn_custom(ui, *tool, is_selected).clicked() { *active_tool = *tool; }
                     }
+                    // Embed tool greyed out
+                    tool_btn_disabled(ui, Tool::Embed);
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
                     if ui.add(egui::Button::new("🕓").min_size(egui::vec2(28.0, 24.0))).on_hover_text("History").clicked() { *show_history_panel = !*show_history_panel; }
@@ -464,7 +487,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 if settings.brush_mode == BrushMode::Spray {
                     ui.horizontal(|ui| {
                         ui.label("Density");
-                        if ui.add(egui::Slider::new(&mut settings.spray_density, 5..=100).show_value(true)).on_hover_text("Spray dot count per point").changed() {
+                        if ui.add(egui::DragValue::new(&mut settings.spray_density).range(5..=100)).on_hover_text("Spray dot count per point").changed() {
                             settings.save();
                         }
                     });
@@ -472,13 +495,29 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 if settings.brush_mode == BrushMode::Highlighter {
                     ui.horizontal(|ui| {
                         ui.label("Opacity");
-                        if ui.add(egui::Slider::new(&mut settings.highlight_opacity, 0.1..=1.0).show_value(true)).on_hover_text("Highlighter opacity").changed() {
+                        if ui.add(egui::DragValue::new(&mut settings.highlight_opacity).range(0.1..=1.0).speed(0.01)).on_hover_text("Highlighter opacity").changed() {
                             settings.save();
                         }
                     });
                 }
                 ui.horizontal(|ui| {
-                    ui.toggle_value(&mut settings.brush_arrow, " > ").on_hover_text("Arrow at the end Toggle");
+                    let popup_id = ui.make_persistent_id("arrow_size_popup");
+                    let btn_resp = ui.toggle_value(&mut settings.brush_arrow, " > ").on_hover_text("Arrow at the end Toggle");
+                    if btn_resp.clicked() && settings.brush_arrow {
+                        ui.memory_mut(|mem| mem.open_popup(popup_id));
+                    }
+                    egui::popup::popup_below_widget(ui, popup_id, &btn_resp, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                        ui.set_min_width(80.0);
+                        if ui.selectable_value(&mut settings.arrow_size, ArrowSize::Small, "Small").changed() {
+                            settings.save();
+                        }
+                        if ui.selectable_value(&mut settings.arrow_size, ArrowSize::Medium, "Medium").changed() {
+                            settings.save();
+                        }
+                        if ui.selectable_value(&mut settings.arrow_size, ArrowSize::Large, "Large").changed() {
+                            settings.save();
+                        }
+                    });
                 });
             }
             if *active_tool == Tool::Eraser {
@@ -691,11 +730,27 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
                 ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
             });
+            ui.add(egui::Separator::default());
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut settings.shape_type, ShapeType::Rect, "Rect");
                 ui.selectable_value(&mut settings.shape_type, ShapeType::Circle, "Circ");
                 ui.selectable_value(&mut settings.shape_type, ShapeType::Star, "Star");
                 ui.selectable_value(&mut settings.shape_type, ShapeType::Heart, "Heart");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Poly, "Poly");
+            });
+
+            ui.add(egui::Separator::default());
+            ui.horizontal(|ui| {
+                let source_desktop = !settings.snip_source_overlay;
+                let source_overlay = settings.snip_source_overlay;
+                let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
+                let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).on_hover_text("Blur desktop content").clicked() {
+                    update_snip_source_overlay(ui, project, settings, false);
+                }
+                if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).on_hover_text("Blur overlay content").clicked() {
+                    update_snip_source_overlay(ui, project, settings, true);
+                }
             });
         }
         Tool::Move => {
@@ -795,9 +850,11 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                                     let real_color = if real_mode { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
                                     if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).clicked() {
                                         settings.live_performance_mode = true;
+                                        settings.save();
                                     }
                                     if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).clicked() {
                                         settings.live_performance_mode = false;
+                                        settings.save();
                                     }
                                 }
                             }
@@ -957,9 +1014,11 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         let real_color = if real_mode { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
                         if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).clicked() {
                             settings.live_performance_mode = true;
+                            settings.save();
                         }
                         if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).clicked() {
                             settings.live_performance_mode = false;
+                            settings.save();
                         }
                     });
                     

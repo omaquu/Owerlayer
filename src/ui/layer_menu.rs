@@ -42,6 +42,7 @@ pub fn render_layers_window(
                     if ui.button("➕").on_hover_text("New Layer").clicked() {
                         project.layers.push(crate::project::Layer::new(&format!("Layer {}", project.layers.len() + 1)));
                         project.active_layer = project.layers.len() - 1;
+                        project.selected_object = None;
                     }
                 });
             });
@@ -421,6 +422,7 @@ pub fn render_layers_window(
                     });
                     if clicked_in_row {
                         project.active_layer = i;
+                        project.selected_object = None;
                     }
                     let double_clicked_in_row = ui.input(|inp| {
                         inp.pointer.button_double_clicked(egui::PointerButton::Primary)

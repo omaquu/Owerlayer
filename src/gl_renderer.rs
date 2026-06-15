@@ -70,6 +70,9 @@ impl GLRenderer {
                 }
 
                 vec4 sample_tex(sampler2D samp, vec2 coord) {
+                    if (coord.x < -0.001 || coord.x > 1.001 || coord.y < -0.001 || coord.y > 1.001) {
+                        return vec4(0.0);
+                    }
                     vec2 clamped = clamp(coord, vec2(0.0), vec2(1.0));
                     return texture(samp, clamped);
                 }

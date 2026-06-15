@@ -56,6 +56,8 @@ pub struct Layer {
     pub lock_prompt_choice: Option<u8>,
     #[serde(default)]
     pub chromatic_aberration: f32,
+    #[serde(default)]
+    pub antialias: bool,
 }
 
 fn default_shadow_offset() -> [f32; 2] { [2.0, 2.0] }
@@ -97,6 +99,7 @@ impl Layer {
             lock_prompt_dismissed: false,
             lock_prompt_choice: None,
             chromatic_aberration: 0.0,
+            antialias: false,
         }
     }
 }

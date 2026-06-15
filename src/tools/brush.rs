@@ -83,21 +83,42 @@ pub fn update(ctx: &mut ToolContext) {
                     });
 
                     if !has_target_image && current_stroke.is_empty() {
-                        let reuse_idx = project.layers[active_layer_idx]
-                            .placed_images
-                            .iter()
-                            .rposition(|img| !img.locked);
+                        let should_fallback = project.selected_object.is_none();
+                        
+                        if should_fallback {
+                            let reuse_idx = project.layers[active_layer_idx]
+                                .placed_images
+                                .iter()
+                                .rposition(|img| !img.locked);
 
-                        if let Some(idx) = reuse_idx {
-                            if project.layers[active_layer_idx].placed_images[idx].locked {
-                                *ctx.layer_prompt_open = true;
-                                return;
+                            if let Some(idx) = reuse_idx {
+                                if project.layers[active_layer_idx].placed_images[idx].locked {
+                                    *ctx.layer_prompt_open = true;
+                                    return;
+                                }
+                                project.selected_object = Some(SelectedObject {
+                                    layer_idx: active_layer_idx,
+                                    object_type: ObjectType::Image,
+                                    object_idx: idx,
+                                });
+                            } else {
+                                let ppp = ui.ctx().pixels_per_point();
+                                let logical_w = 800.0f32;
+                                let logical_h = 600.0f32;
+                                let img_pos = egui::pos2(world_pos.x - logical_w / 2.0, world_pos.y - logical_h / 2.0);
+                                let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                                let count = project.layers[active_layer_idx].placed_images.len();
+                                let mut new_img = create_new_canvas(id, img_pos, logical_w, logical_h, ppp);
+                                new_img.name = format!("Canvas {}", count + 1);
+                                project.layers[active_layer_idx].placed_images.push(new_img);
+                                project.layers[active_layer_idx].expanded = true;
+                                let new_idx = project.layers[active_layer_idx].placed_images.len() - 1;
+                                project.selected_object = Some(SelectedObject {
+                                    layer_idx: active_layer_idx,
+                                    object_type: ObjectType::Image,
+                                    object_idx: new_idx,
+                                });
                             }
-                            project.selected_object = Some(SelectedObject {
-                                layer_idx: active_layer_idx,
-                                object_type: ObjectType::Image,
-                                object_idx: idx,
-                            });
                         } else {
                             let ppp = ui.ctx().pixels_per_point();
                             let logical_w = 800.0f32;
@@ -432,6 +453,7 @@ pub fn update(ctx: &mut ToolContext) {
                         settings.brush_arrow,
                         settings.spray_density,
                         settings.highlight_opacity,
+                        settings.arrow_size,
                     );
                     *ctx.pending_stroke = Some(s);
                     *ctx.layer_prompt_open = true;
@@ -451,6 +473,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 settings.brush_arrow,
                                 settings.spray_density,
                                 settings.highlight_opacity,
+                                settings.arrow_size,
                             );
                             layer.strokes.push(s);
                         }
@@ -731,12 +754,51 @@ pub fn update(ctx: &mut ToolContext) {
                     let prev = pts[pts.len()-2];
                     let dir = (end - prev).normalized();
                     let perp = egui::vec2(-dir.y, dir.x);
-                    let head_len = (width * 4.5).max(14.0);
-                    // The arrow tip should be ahead of the brush. Base is at 'end'.
+                    let head_len = match s.arrow_size {
+                        crate::types::ArrowSize::Small => (width * 2.5).max(8.0),
+                        crate::types::ArrowSize::Medium => (width * 4.5).max(14.0),
+                        crate::types::ArrowSize::Large => (width * 7.0).max(24.0),
+                    };
                     let tip = end + dir * head_len; 
                     let p1 = end + perp * head_len * 0.45;
                     let p2 = end - perp * head_len * 0.45;
-                    p.add(egui::Shape::convex_polygon(vec![tip, p1, p2], stroke_color, egui::Stroke::NONE));
+
+                    match s.brush_mode {
+                        BrushMode::Highlighter => {
+                            let mut hi_col = stroke_color;
+                            hi_col = egui::Color32::from_rgba_unmultiplied(hi_col.r(), hi_col.g(), hi_col.b(), (hi_col.a() as f32 * s.highlight_opacity) as u8);
+                            p.add(egui::Shape::convex_polygon(vec![tip, p1, p2], hi_col, egui::Stroke::NONE));
+                        }
+                        BrushMode::Spray => {
+                            // Spray dots in arrow shape
+                            let mut rng = 12345u32;
+                            for _ in 0..(s.spray_density * 3) {
+                                rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+                                let t = (rng % 1000) as f32 / 1000.0;
+                                rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
+                                let u = (rng % 1000) as f32 / 1000.0;
+                                let su = if t + u > 1.0 { 1.0 - t } else { t };
+                                let sv = if t + u > 1.0 { 1.0 - u } else { u };
+                                let pt = egui::pos2(
+                                    tip.x * (1.0 - su - sv) + p1.x * su + p2.x * sv,
+                                    tip.y * (1.0 - su - sv) + p1.y * su + p2.y * sv,
+                                );
+                                p.circle_filled(pt, 1.0, stroke_color);
+                            }
+                        }
+                        BrushMode::Calligraphy => {
+                            // Angled calligraphy arrow
+                            let nib_angle = std::f32::consts::PI / 4.0;
+                            let nib_perp = egui::vec2(nib_angle.cos(), nib_angle.sin()) * head_len * 0.3;
+                            let tip_l = tip + nib_perp;
+                            let tip_r = tip - nib_perp;
+                            p.add(egui::Shape::convex_polygon(vec![tip_l, tip_r, p2, p1], stroke_color, egui::Stroke::NONE));
+                        }
+                        _ => {
+                            // Solid / Real: standard filled triangle
+                            p.add(egui::Shape::convex_polygon(vec![tip, p1, p2], stroke_color, egui::Stroke::NONE));
+                        }
+                    }
                 }
             }
             StrokeKind::Poly => {
@@ -871,7 +933,7 @@ pub fn render_preview(ctx: &mut ToolContext) {
     let pen_c = color32(&settings.pen_color);
     
     let pts: Vec<_> = ctx.current_stroke.clone();
-    let s = Stroke::new(pts, settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow, settings.spray_density, settings.highlight_opacity);
+    let s = Stroke::new(pts, settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow, settings.spray_density, settings.highlight_opacity, settings.arrow_size);
     draw_stroke(&painter, &s, pen_c, egui::Vec2::ZERO, s.width, 1.0);
 }
 

@@ -103,7 +103,12 @@ pub fn update(ctx: &mut ToolContext) {
                     settings.text_shadow    = txt.shadow;
                     settings.text_outline   = txt.outline;
                     settings.text_wave_warp = txt.wave_warp;
-                    *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
+                    *pending_text = Some(crate::types::PendingText {
+                        position: txt.position,
+                        buffer: txt.text.clone(),
+                        original: Some(txt.clone()),
+                        layer_idx: Some(top.layer_idx),
+                    });
                     *active_tool = crate::overlay::Tool::Text;
                     project.selected_object = None;
                 }
@@ -537,7 +542,12 @@ pub fn update(ctx: &mut ToolContext) {
                                     settings.text_shadow    = txt.shadow;
                                     settings.text_outline   = txt.outline;
                                     settings.text_wave_warp = txt.wave_warp;
-                                    *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
+                                    *pending_text = Some(crate::types::PendingText {
+                                        position: txt.position,
+                                        buffer: txt.text.clone(),
+                                        original: Some(txt.clone()),
+                                        layer_idx: Some(sel.layer_idx),
+                                    });
                                     *active_tool = crate::overlay::Tool::Text;
                                     project.selected_object = None;
                                     return;
@@ -545,70 +555,13 @@ pub fn update(ctx: &mut ToolContext) {
                             }
                         }
 
-                        let mut hovering_object = false;
-                        if project.selected_object.is_none() {
-                            let world_pos = pos + render_offset;
-                            // Check images
-                            for img_idx in 0..layer.placed_images.len() {
-                                if let Some(rect) = crate::utils::object_bounds(layer, ObjectType::Image, img_idx) {
-                                    if rect.contains(world_pos) {
-                                        hovering_object = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            // Check text
-                            if !hovering_object {
-                                for txt_idx in 0..layer.text_annotations.len() {
-                                    if let Some(rect) = crate::utils::object_bounds(layer, ObjectType::Text, txt_idx) {
-                                        if rect.contains(world_pos) {
-                                            hovering_object = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            // Check strokes
-                            if !hovering_object {
-                                for s in &layer.strokes {
-                                    let s_hit = if s.points.len() < 2 {
-                                        s.points.iter().any(|p| p.distance(world_pos) < s.width + 10.0)
-                                    } else {
-                                        let mut hit_line = false;
-                                        for w in s.points.windows(2) {
-                                            let (p0, p1) = (w[0], w[1]);
-                                            let len_sq = p0.distance_sq(p1);
-                                            if len_sq > 0.0 {
-                                                let t = ((world_pos.x - p0.x) * (p1.x - p0.x) + (world_pos.y - p0.y) * (p1.y - p0.y)) / len_sq;
-                                                let t = t.clamp(0.0, 1.0);
-                                                let proj = p0 + (p1 - p0) * t;
-                                                if world_pos.distance(proj) < s.width * 0.5 + 5.0 {
-                                                    hit_line = true;
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        hit_line
-                                    };
-                                    if s_hit {
-                                        hovering_object = true;
-                                        break;
-                                    }
-                                }
-                            }
+                        if !sel_is_locked {
+                            *line_start = Some(pos);
+                            *drag_state = 0;
+                            *initial_bounds = Some(raw_bounds);
+                            *initial_layer = Some(layer.clone());
                         }
-
-                        if hovering_object {
-                            // Do not consume click, let it propagate to the selection handler at the bottom
-                        } else {
-                            if !sel_is_locked {
-                                *line_start = Some(pos);
-                                *drag_state = 0;
-                                *initial_bounds = Some(raw_bounds);
-                                *initial_layer = Some(layer.clone());
-                            }
-                            click_consumed = true;
-                        }
+                        click_consumed = true;
                     } else if !hit {
                         // Click OUTSIDE selected object → only deselect if we are NOT clicking another object (handled below)
                         // project.selected_object = None; // Move this to the bottom block
@@ -1068,7 +1021,12 @@ pub fn update(ctx: &mut ToolContext) {
                 settings.text_shadow    = txt.shadow;
                 settings.text_outline   = txt.outline;
                 settings.text_wave_warp = txt.wave_warp;
-                *pending_text = Some(crate::types::PendingText { position: txt.position, buffer: txt.text.clone() });
+                *pending_text = Some(crate::types::PendingText {
+                    position: txt.position,
+                    buffer: txt.text.clone(),
+                    original: Some(txt.clone()),
+                    layer_idx: Some(top.layer_idx),
+                });
                 *active_tool = crate::overlay::Tool::Text;
                 project.selected_object = None;
                 return;

@@ -347,7 +347,7 @@ impl OwerlayerApp {
             new_img.mask = Some(mask);
             new_img.mask_size = Some([sw, sh]);
             new_img.mask_dirty = true;
-            new_img.name = format!("Blur Area {}", id % 100);
+            new_img.name = "Blur".to_string();
             new_img
         } else {
             for py in 0..sh {
@@ -362,6 +362,7 @@ impl OwerlayerApp {
             }
             
             let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw, sh], pixels);
+            new_img.name = "Marquee".to_string();
             new_img.display_size = Some([bounds.width(), bounds.height()]);
             new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);
             new_img.show_source_rect = self.settings.show_source_rect;
@@ -792,13 +793,26 @@ impl eframe::App for OwerlayerApp {
                 if let Some(pending) = self.pending_text.take() {
                     if !pending.buffer.is_empty() {
                         let text_str = pending.buffer.clone();
-                        if let Some(layer) = self.project.get_active_layer_mut() {
-                            let mut ann = overlay::TextAnnotation::new(pending.position, text_str.clone(), self.settings.pen_color, self.settings.font_size);
-                            let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
+                        let target_layer_idx = pending.layer_idx.unwrap_or(self.project.active_layer);
+                        if target_layer_idx < self.project.layers.len() {
+                            let mut ann = if let Some(mut orig) = pending.original {
+                                orig.text = text_str.clone();
+                                orig.position = pending.position;
+                                orig.color = self.settings.pen_color;
+                                orig.font = self.settings.text_font;
+                                orig.font_size = self.settings.font_size;
+                                orig.shadow = self.settings.text_shadow;
+                                orig.outline = self.settings.text_outline;
+                                orig.wave_warp = self.settings.text_wave_warp;
+                                orig
+                            } else {
+                                overlay::TextAnnotation::new(pending.position, text_str.clone(), self.settings.pen_color, self.settings.font_size)
+                            };
+                            let font = crate::tools::text::resolve_font(ann.font, ann.font_size);
                             let galley = ctx.fonts(|f| f.layout_no_wrap(text_str.clone(), font, egui::Color32::WHITE));
                             ann.exact_size = [galley.size().x, galley.size().y];
-                            layer.text_annotations.push(ann);
-                            layer.expanded = true;
+                            self.project.layers[target_layer_idx].text_annotations.push(ann);
+                            self.project.layers[target_layer_idx].expanded = true;
                         }
                         self.history.push(&self.project, format!("Text: {}", text_str));
                     }
@@ -818,6 +832,7 @@ impl eframe::App for OwerlayerApp {
                             self.settings.brush_arrow,
                             self.settings.spray_density,
                             self.settings.highlight_opacity,
+                            self.settings.arrow_size,
                         );
                         layer.strokes.push(s);
                     }
@@ -863,29 +878,50 @@ impl eframe::App for OwerlayerApp {
                     if let Some(p) = self.pending_text.take() {
                         if !p.buffer.is_empty() {
                             let text_str = p.buffer.clone();
-                            let mut ann = overlay::TextAnnotation::new(p.position, text_str.clone(), self.settings.pen_color, self.settings.font_size);
-                            ann.monospace = self.settings.text_monospace;
-                            ann.shadow = self.settings.text_shadow;
-                            ann.outline = self.settings.text_outline;
-                            ann.stroke_width = self.settings.text_stroke_width;
-                            ann.font = self.settings.text_font;
-                            ann.wave_warp = self.settings.text_wave_warp;
+                            let is_edit = p.original.is_some();
+                            let mut ann = if let Some(mut orig) = p.original {
+                                orig.text = text_str.clone();
+                                orig.position = p.position;
+                                orig.color = self.settings.pen_color;
+                                orig.font = self.settings.text_font;
+                                orig.font_size = self.settings.font_size;
+                                orig.shadow = self.settings.text_shadow;
+                                orig.outline = self.settings.text_outline;
+                                orig.wave_warp = self.settings.text_wave_warp;
+                                orig
+                            } else {
+                                let mut a = overlay::TextAnnotation::new(p.position, text_str.clone(), self.settings.pen_color, self.settings.font_size);
+                                a.monospace = self.settings.text_monospace;
+                                a.shadow = self.settings.text_shadow;
+                                a.outline = self.settings.text_outline;
+                                a.stroke_width = self.settings.text_stroke_width;
+                                a.font = self.settings.text_font;
+                                a.wave_warp = self.settings.text_wave_warp;
+                                a
+                            };
                             
-                            let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
+                            let font = crate::tools::text::resolve_font(ann.font, ann.font_size);
                             let galley = ctx.fonts(|f| f.layout_no_wrap(text_str.clone(), font, egui::Color32::WHITE));
                             ann.exact_size = [galley.size().x, galley.size().y];
                             
-                            let active_layer_idx = self.project.active_layer;
-                            let is_locked = active_layer_idx < self.project.layers.len() && self.project.layers[active_layer_idx].locked;
+                            let target_layer_idx = p.layer_idx.unwrap_or(self.project.active_layer);
+                            let is_locked = target_layer_idx < self.project.layers.len() && self.project.layers[target_layer_idx].locked;
                             let ask_mode = self.settings.auto_new_layer.is_none();
                             
-                            if is_locked || ask_mode {
+                            if is_edit {
+                                if target_layer_idx < self.project.layers.len() {
+                                    self.project.layers[target_layer_idx].text_annotations.push(ann);
+                                    self.project.layers[target_layer_idx].expanded = true;
+                                }
+                                self.history.push(&self.project, format!("Text: {}", text_str));
+                                self.project.save();
+                            } else if is_locked || ask_mode {
                                 self.pending_text_to_add = Some(ann);
                                 self.layer_prompt_open = true;
                             } else {
-                                if let Some(layer) = self.project.get_active_layer_mut() {
-                                    layer.text_annotations.push(ann);
-                                    layer.expanded = true;
+                                if target_layer_idx < self.project.layers.len() {
+                                    self.project.layers[target_layer_idx].text_annotations.push(ann);
+                                    self.project.layers[target_layer_idx].expanded = true;
                                 }
                                 self.history.push(&self.project, format!("Text: {}", text_str));
                                 self.project.save();
@@ -893,7 +929,15 @@ impl eframe::App for OwerlayerApp {
                         }
                     }
                 } else if cancel {
-                    self.pending_text = None;
+                    if let Some(p) = self.pending_text.take() {
+                        if let Some(orig) = p.original {
+                            if let Some(layer_idx) = p.layer_idx {
+                                if layer_idx < self.project.layers.len() {
+                                    self.project.layers[layer_idx].text_annotations.push(orig);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         // ── Undo / Redo ──
@@ -983,7 +1027,7 @@ impl eframe::App for OwerlayerApp {
                                 new_img.mask = Some(mask);
                                 new_img.mask_size = Some([sw as usize, sh as usize]);
                                 new_img.mask_dirty = true;
-                                new_img.name = format!("Blur Area {}", id % 100);
+                                new_img.name = "Blur".to_string();
                                 new_img
                             } else {
                                 let mut pixels = captured_pixels.unwrap_or_default();
@@ -999,6 +1043,7 @@ impl eframe::App for OwerlayerApp {
                                 }
                                 
                                 let mut new_img = overlay::PlacedImage::new(id, bounds.min, [sw as usize, sh as usize], pixels);
+                                new_img.name = "Marquee".to_string();
                                 new_img.snip_source_overlay = self.settings.snip_source_overlay;
                                 new_img.display_size = Some([bounds.width(), bounds.height()]);
                                 new_img.source_rect = Some([bounds.min.x, bounds.min.y, bounds.width(), bounds.height()]);

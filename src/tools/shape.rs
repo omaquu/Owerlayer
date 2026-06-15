@@ -53,7 +53,7 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                         
                         if !added_to_existing {
-                            let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity);
+                            let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity, settings.arrow_size);
                             layer.strokes.push(s);
                             layer.expanded = true;
                             project.selected_object = Some(SelectedObject {
@@ -79,7 +79,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 ShapeType::Arrow => StrokeKind::Arrow,
                                 _ => StrokeKind::Rect,
                             };
-                            let s = Stroke::new(vec![start, pos], settings.pen_color, settings.stroke_width, kind, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity);
+                            let s = Stroke::new(vec![start, pos], settings.pen_color, settings.stroke_width, kind, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity, settings.arrow_size);
                             let is_locked = layer.locked;
                             let ask_mode = settings.auto_new_layer.is_none();
                             if is_locked || ask_mode {

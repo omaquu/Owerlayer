@@ -126,20 +126,61 @@ pub fn update(ctx: &mut ToolContext) {
         };
 
         if settings.eraser_mode == EraserMode::Stroke {
-            layer.strokes.retain(|s| !hit_test(s));
-            layer.placed_images.retain(|img| {
-                let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
-                if settings.brush_shape == BrushShape::Square {
-                    !img_rect.intersects(egui::Rect::from_center_size(pos, egui::vec2(r*2.0, r*2.0)))
+            let mut s_idx = 0;
+            layer.strokes.retain(|s| {
+                let idx = s_idx;
+                s_idx += 1;
+                if let Some(sel) = project.selected_object {
+                    if sel == (SelectedObject { layer_idx: active_layer_idx, object_type: ObjectType::Stroke, object_idx: idx }) {
+                        !hit_test(s)
+                    } else {
+                        true // Keep other objects
+                    }
                 } else {
-                    img_rect.distance_to_pos(pos) > r
+                    !hit_test(s) // No selection: erase anything
                 }
             });
+
+            let mut img_idx = 0;
+            layer.placed_images.retain(|img| {
+                let idx = img_idx;
+                img_idx += 1;
+                if let Some(sel) = project.selected_object {
+                    if sel == (SelectedObject { layer_idx: active_layer_idx, object_type: ObjectType::Image, object_idx: idx }) {
+                        let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+                        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+                        let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
+                        let hit = if settings.brush_shape == BrushShape::Square {
+                            img_rect.intersects(egui::Rect::from_center_size(pos, egui::vec2(r*2.0, r*2.0)))
+                        } else {
+                            img_rect.distance_to_pos(pos) <= r
+                        };
+                        !hit
+                    } else {
+                        true // Keep other images
+                    }
+                } else {
+                    // No selection: erase anything
+                    let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+                    let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+                    let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
+                    let hit = if settings.brush_shape == BrushShape::Square {
+                        img_rect.intersects(egui::Rect::from_center_size(pos, egui::vec2(r*2.0, r*2.0)))
+                    } else {
+                        img_rect.distance_to_pos(pos) <= r
+                    };
+                    !hit
+                }
+            });
+
             // In Stroke mode: touching the anchor point of a text annotation deletes it
             let mut to_remove = Vec::new();
             for i in 0..layer.text_annotations.len() {
+                if let Some(sel) = project.selected_object {
+                    if sel != (SelectedObject { layer_idx: active_layer_idx, object_type: ObjectType::Text, object_idx: i }) {
+                        continue; // Keep other text
+                    }
+                }
                 if let Some(hit_rect) = crate::utils::object_bounds(layer, crate::types::ObjectType::Text, i) {
                     let hit = if settings.brush_shape == BrushShape::Square {
                         hit_rect.intersects(egui::Rect::from_center_size(pos, egui::vec2(r*2.0, r*2.0)))
@@ -158,7 +199,15 @@ pub fn update(ctx: &mut ToolContext) {
             let mut keep_strokes = Vec::new();
             
             let old_strokes = std::mem::take(&mut layer.strokes);
-            for s in old_strokes {
+            for (s_idx, s) in old_strokes.into_iter().enumerate() {
+                let is_selected = Some(SelectedObject { layer_idx: active_layer_idx, object_type: ObjectType::Stroke, object_idx: s_idx }) == project.selected_object;
+                
+                // If we have a selection and this stroke is not it, keep it unchanged
+                if project.selected_object.is_some() && !is_selected {
+                    keep_strokes.push(s);
+                    continue;
+                }
+
                 // Only split freehand strokes (solid or arrow); keep fixed shapes
                 let is_splittable = s.kind == crate::overlay::StrokeKind::Freehand;
                 if !is_splittable {
@@ -202,6 +251,7 @@ pub fn update(ctx: &mut ToolContext) {
                         if has_original_end { s.arrow } else { false }, // Only the last segment containing the original end keeps the arrow!
                         s.spray_density,
                         s.highlight_opacity,
+                        s.arrow_size,
                     );
                     s2.opacity = s.opacity;
                     s2.rotation = s.rotation;
@@ -217,6 +267,12 @@ pub fn update(ctx: &mut ToolContext) {
             layer.strokes.extend(new_strokes);
 
             for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
+                if let Some(sel) = project.selected_object {
+                    if sel != (SelectedObject { layer_idx: active_layer_idx, object_type: ObjectType::Image, object_idx: img_idx }) {
+                        continue; // Keep other images intact
+                    }
+                }
+
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
                 let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
@@ -228,14 +284,6 @@ pub fn update(ctx: &mut ToolContext) {
                 };
 
                 if overlaps {
-                    // If this is a live image with source and no decision yet, show prompt
-                    if img.is_live && img.source_rect.is_some() && img.eraser_apply_to_source.is_none() {
-                        settings.eraser_source_prompt_open = true;
-                        settings.eraser_source_prompt_target = Some((active_layer_idx, img_idx));
-                        settings.eraser_source_prompt_remember = false;
-                        continue; // Don't erase until user decides
-                    }
-
                     let mut modified = false;
                     if img.is_live && img.mask.is_none() {
                         img.mask = Some(vec![255; img.size[0] * img.size[1]]);

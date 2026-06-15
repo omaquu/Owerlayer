@@ -405,7 +405,7 @@ pub fn render_canvas(
                 }
 
                 let chromatic_val = if img.chromatic_aberration > 0.0 { img.chromatic_aberration } else { layer.chromatic_aberration };
-                let antialias_val = img.antialias;
+                let antialias_val = img.antialias || layer.antialias;
 
                 // Draw helper closure
                 // apply_filters = true only for the main image pass, NOT for shadow/outline/glow silhouette passes
@@ -893,8 +893,9 @@ pub fn render_canvas(
         let time = ctx.ui.input(|i| i.time);
         let painter = ctx.ui.painter_at(ctx.canvas_response.rect);
 
-        // 1. Render marquee selection outline (marching ants)
-        if edit_mode && !ctx.settings.hide_all {
+        // 1. Render marquee selection outline (marching ants) — only when marquee tools are active
+        let show_marching_ants = matches!(*ctx.active_tool, Tool::Cut | Tool::Snip);
+        if edit_mode && !ctx.settings.hide_all && show_marching_ants {
             if let Some(sel) = &ctx.project.marquee_selection {
                 let bounds = sel.bounds();
                 if bounds.width() > 0.1 && bounds.height() > 0.1 {
