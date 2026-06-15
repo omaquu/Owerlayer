@@ -190,33 +190,6 @@ pub fn update(ctx: &mut ToolContext) {
                                let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
                                let draw_rect = src_rect.translate(-window_origin);
                                let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(mouse.pos);
-                               let time = ui.input(|i| i.time);
-
-                               if let Some(ref local_pts) = img.snip_points {
-                                   let mut current_path = Vec::new();
-                                   for p in local_pts {
-                                       if p.x.is_nan() || p.y.is_nan() {
-                                           if !current_path.is_empty() {
-                                               crate::utils::draw_dashed_path_color(&painter, &current_path, time, egui::Color32::from_rgb(255, 120, 0), 1.8);
-                                               current_path.clear();
-                                           }
-                                       } else {
-                                           current_path.push(egui::pos2(draw_rect.min.x + p.x, draw_rect.min.y + p.y));
-                                       }
-                                   }
-                                   if !current_path.is_empty() {
-                                       crate::utils::draw_dashed_path_color(&painter, &current_path, time, egui::Color32::from_rgb(255, 120, 0), 1.8);
-                                   }
-                               } else {
-                                   let pts = vec![
-                                       draw_rect.left_top(),
-                                       draw_rect.right_top(),
-                                       draw_rect.right_bottom(),
-                                       draw_rect.left_bottom(),
-                                       draw_rect.left_top(),
-                                   ];
-                                   crate::utils::draw_dashed_path_color(&painter, &pts, time, egui::Color32::from_rgb(255, 120, 0), 1.8);
-                               }
                                
                                painter.text(draw_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
                               
@@ -876,24 +849,81 @@ pub fn update(ctx: &mut ToolContext) {
                             if sel.object_type == ObjectType::Image {
                                 let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
                                 
-                                // Regenerate mask losslessly on drag release
-                                if let Some(ref pts) = img.snip_points {
-                                    if let Some(mask_sz) = img.mask_size {
-                                        let ppp = ui.ctx().pixels_per_point();
-                                        let new_w = mask_sz[0];
-                                        let new_h = mask_sz[1];
-                                        let mut new_mask = vec![255u8; new_w * new_h];
-                                        for y in 0..new_h {
-                                            for x in 0..new_w {
-                                                let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
-                                                if !crate::utils::is_inside_poly(pts, lp) {
-                                                    new_mask[y * new_w + x] = 0;
+                                // Only update mask and snip_points if the size changed.
+                                // If it was only translated (moved), we keep the existing mask (with eraser cuts) exactly as is.
+                                let mut size_changed = false;
+                                if let Some(ib) = *initial_bounds {
+                                    if let Some(src) = img.source_rect {
+                                        let dw = (src[2] - ib.width()).abs();
+                                        let dh = (src[3] - ib.height()).abs();
+                                        if dw > 0.5 || dh > 0.5 {
+                                            size_changed = true;
+                                        }
+                                    }
+                                }
+
+                                if size_changed {
+                                    if let Some(ref old_mask) = img.mask {
+                                        if let Some(src) = img.source_rect {
+                                            let ppp = ui.ctx().pixels_per_point();
+                                            let new_w = (src[2] * ppp).round() as usize;
+                                            let new_h = (src[3] * ppp).round() as usize;
+                                            if new_w > 0 && new_h > 0 {
+                                                let old_w = img.mask_size.unwrap_or(img.size)[0];
+                                                let old_h = img.mask_size.unwrap_or(img.size)[1];
+                                                if old_w > 0 && old_h > 0 {
+                                                    let mut new_mask = vec![0u8; new_w * new_h];
+                                                    for y in 0..new_h {
+                                                        let old_y = (y * old_h) / new_h;
+                                                        for x in 0..new_w {
+                                                            let old_x = (x * old_w) / new_w;
+                                                            if old_y * old_w + old_x < old_mask.len() {
+                                                                new_mask[y * new_w + x] = old_mask[old_y * old_w + old_x];
+                                                            }
+                                                        }
+                                                    }
+                                                    img.mask = Some(new_mask);
+                                                    img.mask_size = Some([new_w, new_h]);
+                                                    img.mask_dirty = true;
+                                                    img.texture = None;
                                                 }
                                             }
                                         }
-                                        img.mask = Some(new_mask);
-                                        img.mask_dirty = true;
-                                        img.texture = None;
+                                    } else if let Some(ref pts) = img.snip_points {
+                                        if let Some(src) = img.source_rect {
+                                            let ppp = ui.ctx().pixels_per_point();
+                                            let new_w = (src[2] * ppp).round() as usize;
+                                            let new_h = (src[3] * ppp).round() as usize;
+                                            if new_w > 0 && new_h > 0 {
+                                                let mut new_mask = vec![255u8; new_w * new_h];
+                                                for y in 0..new_h {
+                                                    for x in 0..new_w {
+                                                        let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                                                        if !crate::utils::is_inside_poly(pts, lp) {
+                                                            new_mask[y * new_w + x] = 0;
+                                                        }
+                                                    }
+                                                }
+                                                img.mask = Some(new_mask);
+                                                img.mask_size = Some([new_w, new_h]);
+                                                img.mask_dirty = true;
+                                                img.texture = None;
+                                            }
+                                        }
+                                    }
+
+                                    // Also scale the snip_points
+                                    if let Some(ib) = *initial_bounds {
+                                        if let Some(src) = img.source_rect {
+                                            let scale_x = src[2] / ib.width();
+                                            let scale_y = src[3] / ib.height();
+                                            if let Some(ref mut pts) = img.snip_points {
+                                                for p in pts {
+                                                    p.x *= scale_x;
+                                                    p.y *= scale_y;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
 

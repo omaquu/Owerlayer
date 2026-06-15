@@ -8,6 +8,7 @@ on:
       - main
       - v0.18.0-alpha
       - v0.18.0-Alpha
+      - v0.18.0-Alpha-rc
 
 permissions:
   contents: write
