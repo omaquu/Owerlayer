@@ -2,7 +2,8 @@ use eframe::egui;
 use crate::types::*;
 use crate::utils::color32;
 use crate::ui::toolbar::photoshop_frame;
-use crate::hotkey::detect_pressed_key;
+use crate::hotkey::{detect_pressed_key, HotkeyBinding};
+
 
 
 pub fn render_settings_window(
@@ -122,9 +123,78 @@ pub fn render_settings_window(
 
             ui.add_space(4.0);
             ui.horizontal(|ui| {
+                ui.label("Default Snip Source:");
+                egui::ComboBox::from_id_salt("snip_source_combobox")
+                    .selected_text(match settings.snip_source {
+                        CaptureSource::Desktop => "Desktop",
+                        CaptureSource::Overlay => "Overlay",
+                        CaptureSource::Origin => "Origin (Window)",
+                    })
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_value(&mut settings.snip_source, CaptureSource::Desktop, "Desktop").changed() {
+                            settings.snip_source_overlay = false;
+                            settings.save();
+                        }
+                        if ui.selectable_value(&mut settings.snip_source, CaptureSource::Overlay, "Overlay").changed() {
+                            settings.snip_source_overlay = true;
+                            settings.save();
+                        }
+                        if ui.selectable_value(&mut settings.snip_source, CaptureSource::Origin, "Origin (Window)").changed() {
+                            settings.save();
+                        }
+                    });
+            });
+
+            if settings.snip_source == CaptureSource::Origin {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Target Window:");
+                    let windows = crate::winapi_utils::enumerate_visible_windows();
+                    let current_name = windows.iter()
+                        .find(|(hwnd, _)| *hwnd == settings.origin_target_hwnd)
+                        .map(|(_, name)| name.as_str())
+                        .unwrap_or("Select Window...");
+                    
+                    egui::ComboBox::from_id_salt("origin_target_hwnd_combobox")
+                        .selected_text(current_name)
+                        .show_ui(ui, |ui| {
+                            for (hwnd, name) in windows {
+                                if ui.selectable_value(&mut settings.origin_target_hwnd, hwnd, &name).changed() {
+                                    settings.save();
+                                }
+                            }
+                        });
+                });
+            }
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
                 ui.label("Live Snip Capture FPS:");
                 ui.add(egui::Slider::new(&mut settings.capture_fps, 15.0..=240.0).show_value(true));
             });
+
+            ui.add_space(12.0);
+            ui.add(egui::Separator::default().spacing(6.0));
+
+            // ── Advanced Hotkeys ──
+            section_heading(ui, "Advanced Hotkeys", accent);
+            ui.label("Custom global shortcuts to switch tools:");
+            ui.add_space(4.0);
+
+            let mut keybind_changed = false;
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Move Tool", &mut settings.keybind_move, "rebind_move");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Brush Tool", &mut settings.keybind_brush, "rebind_brush");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Eraser Tool", &mut settings.keybind_eraser, "rebind_eraser");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Paint Bucket", &mut settings.keybind_paint_bucket, "rebind_paint_bucket");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Text Tool", &mut settings.keybind_text, "rebind_text");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Shape Tool", &mut settings.keybind_shape, "rebind_shape");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Snip Tool", &mut settings.keybind_snip, "rebind_snip");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Cut Tool", &mut settings.keybind_cut, "rebind_cut");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Mirror Tool", &mut settings.keybind_mirror, "rebind_mirror");
+            keybind_changed |= render_tool_keybind_field(ui, ctx, "Blur Tool", &mut settings.keybind_blur, "rebind_blur");
+            if keybind_changed {
+                settings.save();
+            }
 
             ui.add_space(12.0);
             ui.add(egui::Separator::default().spacing(6.0));
@@ -243,5 +313,52 @@ pub fn section_heading(ui: &mut egui::Ui, text: &str, accent: egui::Color32) {
     ui.add_space(4.0);
     ui.label(egui::RichText::new(text).size(14.0).strong().color(accent));
     ui.add_space(2.0);
+}
+
+fn render_tool_keybind_field(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    label: &str,
+    keybind: &mut HotkeyBinding,
+    temp_id: &str,
+) -> bool {
+    let rebind_id = egui::Id::new(temp_id);
+    let is_listening: bool = ui.memory(|mem| mem.data.get_temp(rebind_id).unwrap_or(false));
+    let mut changed = false;
+    
+    ui.horizontal(|ui| {
+        ui.label(format!("{}:", label));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if is_listening {
+                ui.add(
+                    egui::Button::new(egui::RichText::new("Press key...").color(egui::Color32::from_rgb(255, 220, 80)))
+                        .fill(egui::Color32::from_rgba_premultiplied(80, 60, 10, 180))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 220, 80)))
+                        .corner_radius(egui::CornerRadius::same(6))
+                );
+                if let Some(binding) = detect_pressed_key() {
+                    if binding.vk_code == 0x1B {
+                        ui.memory_mut(|mem| mem.data.insert_temp(rebind_id, false));
+                    } else {
+                        *keybind = binding;
+                        changed = true;
+                        ui.memory_mut(|mem| mem.data.insert_temp(rebind_id, false));
+                    }
+                }
+                ctx.request_repaint();
+            } else {
+                let btn = ui.add(
+                    egui::Button::new(egui::RichText::new(keybind.display_name()))
+                        .fill(egui::Color32::from_rgba_premultiplied(255, 255, 255, 8))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(255, 255, 255, 40)))
+                        .corner_radius(egui::CornerRadius::same(6))
+                );
+                if btn.on_hover_text("Click to rebind").clicked() {
+                    ui.memory_mut(|mem| mem.data.insert_temp(rebind_id, true));
+                }
+            }
+        });
+    });
+    changed
 }
 

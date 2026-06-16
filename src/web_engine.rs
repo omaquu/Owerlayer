@@ -35,6 +35,13 @@ pub fn init() -> bool {
             return true; // Already initialized
         }
 
+        // Check if resources folder exists
+        if !std::path::Path::new("resources").exists() {
+            eprintln!("[WebEngine] Error: 'resources' folder not found!");
+            eprintln!("[WebEngine] Make sure the 'resources' folder from Ultralight SDK is in the working directory");
+            return false;
+        }
+
         // Load the Ultralight library dynamically
         let lib = match Library::load() {
             Ok(lib) => lib,

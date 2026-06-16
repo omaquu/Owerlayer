@@ -175,52 +175,137 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                         }
                 
-                 // --- Highlight Mirror Source Rect ---
-                 let mut clone_layer_after_loop = false;
-                 for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
-                     if img.source_rect.is_some() {
-                         let is_selected = project.selected_object == Some(SelectedObject { layer_idx, object_type: ObjectType::Image, object_idx: img_idx });
-                         
-                          if is_selected && img.show_source_rect {
-                               let src = img.source_rect.unwrap();
-                               let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                  // --- Highlight Mirror Source Rect ---
+                  let mut clone_layer_after_loop = false;
+                  for (img_idx, img) in layer.placed_images.iter_mut().enumerate() {
+                      if img.source_rect.is_some() {
+                          let is_selected = project.selected_object == Some(SelectedObject { layer_idx, object_type: ObjectType::Image, object_idx: img_idx });
+                          
+                           if is_selected && img.show_source_rect {
+                                let src = img.source_rect.unwrap();
+                                let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                                
+                                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                                let ppp = ui.ctx().pixels_per_point();
+                                let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
+                                let draw_rect = src_rect.translate(-window_origin);
+                                let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(mouse.pos);
+                                
+                                // Calculate transformed corners
+                                 let src_center = src_rect.center();
+                                 let p_arr = img.source_perspective;
+                                 let c0 = transform_point_complex(src_rect.left_top(), src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - window_origin;
+                                let c1 = transform_point_complex(src_rect.right_top(), src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - window_origin;
+                                let c2 = transform_point_complex(src_rect.left_bottom(), src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - window_origin;
+                                let c3 = transform_point_complex(src_rect.right_bottom(), src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - window_origin;
+
+                                // Outline is drawn by overlay.rs (supports mask/snip_points shapes)
+
+                                painter.text(c0 - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
                                
-                               let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
-                               let ppp = ui.ctx().pixels_per_point();
-                               let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
-                               let draw_rect = src_rect.translate(-window_origin);
-                               let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(mouse.pos);
+                               // 1. Rotation handles
+                               let normal_top = (c1 - c0).normalized().rot90();
+                               let rot_p_top = egui::pos2((c0.x + c1.x) * 0.5, (c0.y + c1.y) * 0.5) + normal_top * 25.0;
+                               let normal_bot = (c3 - c2).normalized().rot90();
+                               let rot_p_bot = egui::pos2((c2.x + c3.x) * 0.5, (c2.y + c3.y) * 0.5) + normal_bot * 25.0;
                                
-                               painter.text(draw_rect.left_top() - egui::vec2(0.0, 10.0), egui::Align2::LEFT_BOTTOM, "Source", egui::FontId::proportional(10.0), egui::Color32::from_rgb(255, 100, 0));
-                              
-                              // Handles for source rect
-                              let s_corners = [draw_rect.left_top(), draw_rect.right_top(), draw_rect.left_bottom(), draw_rect.right_bottom()];
-                              for (idx, &sc) in s_corners.iter().enumerate() {
-                                  let handle_rect = egui::Rect::from_center_size(sc, egui::vec2(12.0, 12.0));
-                                  painter.rect_filled(handle_rect, 0.0, egui::Color32::from_rgb(255, 150, 50));
-                                  if left_just_pressed && handle_rect.contains(hover_pos) {
-                                      *line_start = Some(egui::pos2(-4.0, idx as f32)); // Move source rect handle
-                                      *initial_bounds = Some(src_rect);
-                                      *dragging_source_rect = true;
-                                      clone_layer_after_loop = true;
-                                      click_consumed = true;
-                                  }
-                              }
+                               painter.line_segment([egui::pos2((c0.x + c1.x) * 0.5, (c0.y + c1.y) * 0.5), rot_p_top], egui::Stroke::new(1.0, egui::Color32::GRAY));
+                               painter.circle_filled(rot_p_top, 5.0, egui::Color32::from_rgb(255, 200, 50));
+                               painter.circle_stroke(rot_p_top, 5.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+                               if left_just_pressed && rot_p_top.distance(hover_pos) < 10.0 {
+                                   *line_start = Some(hover_pos);
+                                   *initial_bounds = Some(src_rect);
+                                   *dragging_source_rect = true;
+                                   *drag_state = 1; // Mark rotation
+                                   clone_layer_after_loop = true;
+                                   click_consumed = true;
+                               }
+                               
+                               painter.line_segment([egui::pos2((c2.x + c3.x) * 0.5, (c2.y + c3.y) * 0.5), rot_p_bot], egui::Stroke::new(1.0, egui::Color32::GRAY));
+                               painter.circle_filled(rot_p_bot, 5.0, egui::Color32::from_rgb(255, 200, 50));
+                               painter.circle_stroke(rot_p_bot, 5.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+                               if left_just_pressed && rot_p_bot.distance(hover_pos) < 10.0 {
+                                   *line_start = Some(hover_pos);
+                                   *initial_bounds = Some(src_rect);
+                                   *initial_center = Some(src_rect.center());
+                                   *dragging_source_rect = true;
+                                   *drag_state = 1; // Mark rotation
+                                   clone_layer_after_loop = true;
+                                   click_consumed = true;
+                               }
+
+                               // 2. Perspective handles
+                               let center = egui::pos2((c0.x + c1.x + c2.x + c3.x) * 0.25, (c0.y + c1.y + c2.y + c3.y) * 0.25);
+                               let pc0 = c0 + (c0 - center).normalized() * 25.0;
+                               let pc1 = c1 + (c1 - center).normalized() * 25.0;
+                               let pc2 = c2 + (c2 - center).normalized() * 25.0;
+                               let pc3 = c3 + (c3 - center).normalized() * 25.0;
+                               let pcs = [pc0, pc1, pc2, pc3];
+                               for (idx, &pc) in pcs.iter().enumerate() {
+                                   painter.circle_filled(pc, 4.0, egui::Color32::from_rgb(50, 150, 255));
+                                   painter.circle_stroke(pc, 4.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+                                   if left_just_pressed && pc.distance(hover_pos) < 10.0 {
+                                       *line_start = Some(hover_pos);
+                                       *initial_bounds = Some(src_rect);
+                                       *dragging_source_rect = true;
+                                       *drag_state = 20 + idx; // Mark perspective
+                                       clone_layer_after_loop = true;
+                                       click_consumed = true;
+                                   }
+                               }
+
+                               // 3. Resize/Scale handles (corners)
+                               let s_corners = [c0, c1, c2, c3];
+                               for (idx, &sc) in s_corners.iter().enumerate() {
+                                   let handle_rect = egui::Rect::from_center_size(sc, egui::vec2(12.0, 12.0));
+                                   painter.rect_filled(handle_rect, 0.0, egui::Color32::WHITE);
+                                   painter.rect_stroke(handle_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::BLACK), egui::StrokeKind::Middle);
+                                    if left_just_pressed && handle_rect.contains(hover_pos) {
+                                        *line_start = Some(hover_pos);
+                                        *initial_bounds = Some(src_rect);
+                                       *dragging_source_rect = true;
+                                       *drag_state = 10 + idx; // Mark resize/scale
+                                       clone_layer_after_loop = true;
+                                       click_consumed = true;
+                                   }
+                               }
+
+                               // 4. Skew handles (mids)
+                               let mid_left = egui::pos2((c0.x + c2.x) * 0.5, (c0.y + c2.y) * 0.5);
+                               let mid_right = egui::pos2((c1.x + c3.x) * 0.5, (c1.y + c3.y) * 0.5);
+                               let mid_top = egui::pos2((c0.x + c1.x) * 0.5, (c0.y + c1.y) * 0.5);
+                               let mid_bottom = egui::pos2((c2.x + c3.x) * 0.5, (c2.y + c3.y) * 0.5);
+                               let mids = [mid_left, mid_right, mid_top, mid_bottom];
+                               for (idx, &mid) in mids.iter().enumerate() {
+                                   painter.circle_filled(mid, 3.0, egui::Color32::from_rgb(100, 255, 100));
+                                   painter.circle_stroke(mid, 3.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+                                   if left_just_pressed && mid.distance(hover_pos) < 8.0 {
+                                       *line_start = Some(hover_pos);
+                                       *initial_bounds = Some(src_rect);
+                                       *initial_center = Some(src_rect.center());
+                                       *dragging_source_rect = true;
+                                       *drag_state = 2 + idx; // Mark skew
+                                       clone_layer_after_loop = true;
+                                       click_consumed = true;
+                                   }
+                               }
+
                                let on_border = draw_rect.contains(hover_pos);
                                let label_rect = egui::Rect::from_min_max(draw_rect.left_top() - egui::vec2(0.0, 15.0), draw_rect.left_top() + egui::vec2(50.0, 0.0));
                                if left_just_pressed && (on_border || label_rect.contains(hover_pos)) && !*dragging_source_rect {
                                    *line_start = Some(hover_pos);
                                    *initial_bounds = Some(src_rect);
                                    *dragging_source_rect = true;
+                                   *drag_state = 0;
                                    clone_layer_after_loop = true;
                                    click_consumed = true;
                                }
-                         }
-                     }
-                 }
-                 if clone_layer_after_loop {
-                     *initial_layer = Some(layer.clone());
-                 }
+                          }
+                      }
+                  }
+                  if clone_layer_after_loop {
+                      *initial_layer = Some(layer.clone());
+                  }
 
 
                 // Draw selection rect — amber border for locked objects
@@ -558,48 +643,97 @@ pub fn update(ctx: &mut ToolContext) {
                                         let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(pos);
                                         let hover_pos_screen = hover_pos + window_origin;
 
-                                        if start.x == -4.0 {
-                                            // Resize handle
-                                            let idx = start.y as usize;
-                                            let ib = initial_bounds.unwrap();
-                                            let ic = [ib.left_top(), ib.right_top(), ib.left_bottom(), ib.right_bottom()];
-                                            let anchor = ic[3 - idx];
-                                            let mut clamped_hover_screen = hover_pos_screen;
-                                            if !settings.multi_monitor {
-                                                let (sw, sh) = crate::winapi_utils::get_screen_size(false);
-                                                clamped_hover_screen.x = clamped_hover_screen.x.clamp(0.0, sw);
-                                                clamped_hover_screen.y = clamped_hover_screen.y.clamp(0.0, sh);
+                                        let mut init_img_opt = None;
+                                        if let Some(ref base_layer) = *initial_layer {
+                                            if let Some(init_img) = base_layer.placed_images.get(sel.object_idx) {
+                                                init_img_opt = Some(init_img.clone());
                                             }
-                                            let new_rect = egui::Rect::from_two_pos(anchor, clamped_hover_screen);
-                                            img.source_rect = Some([new_rect.min.x, new_rect.min.y, new_rect.width(), new_rect.height()]);
-                                        } else {
-                                            // Move whole rect
-                                            let mut delta = hover_pos - start;
-                                            let ib = initial_bounds.unwrap();
-                                            if !settings.multi_monitor {
-                                                let (sw, sh) = crate::winapi_utils::get_screen_size(false);
-                                                let monitor_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(sw, sh));
-                                                let new_rect = ib.translate(delta);
-                                                
-                                                let min_overlap = 20.0f32;
-                                                let mut shift_x = 0.0f32;
-                                                if new_rect.max.x < monitor_rect.min.x + min_overlap {
-                                                    shift_x = (monitor_rect.min.x + min_overlap) - new_rect.max.x;
-                                                } else if new_rect.min.x > monitor_rect.max.x - min_overlap {
-                                                    shift_x = (monitor_rect.max.x - min_overlap) - new_rect.min.x;
+                                        }
+
+                                        if let Some(init_img) = init_img_opt {
+                                            let init_src_rect = init_img.source_rect.map(|src| egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]))).unwrap();
+                                            match *drag_state {
+                                                1 => {
+                                                    // Rotation
+                                                    let center = init_src_rect.center() - window_origin;
+                                                    let mut angle = (hover_pos - center).angle() - (start - center).angle();
+                                                    if ui.ctx().input(|i| i.modifiers.shift) {
+                                                        let step = 15.0f32.to_radians();
+                                                        angle = (angle / step).round() * step;
+                                                    }
+                                                    img.source_rotation = init_img.source_rotation + angle;
                                                 }
-                                                
-                                                let mut shift_y = 0.0f32;
-                                                if new_rect.max.y < monitor_rect.min.y + min_overlap {
-                                                    shift_y = (monitor_rect.min.y + min_overlap) - new_rect.max.y;
-                                                } else if new_rect.min.y > monitor_rect.max.y - min_overlap {
-                                                    shift_y = (monitor_rect.max.y - min_overlap) - new_rect.min.y;
+                                                2..=5 => {
+                                                    // Skew
+                                                    let handle_idx = *drag_state - 2;
+                                                    let delta = hover_pos - start;
+                                                    let mut skew_delta = egui::vec2(0.0, 0.0);
+                                                    if handle_idx == 0 || handle_idx == 1 { // Left or Right center -> Skew Y
+                                                        skew_delta.y = -delta.y * 0.01;
+                                                    } else { // Top or Bottom center -> Skew X
+                                                        skew_delta.x = -delta.x * 0.01;
+                                                    }
+                                                    img.source_skew = init_img.source_skew + skew_delta;
                                                 }
-                                                
-                                                delta.x += shift_x;
-                                                delta.y += shift_y;
+                                                10..=13 => {
+                                                    // Scale/Resize
+                                                    let handle_idx = *drag_state - 10;
+                                                    let init_src = init_img.source_rect.unwrap();
+                                                    let init_src_rect = egui::Rect::from_min_size(egui::pos2(init_src[0], init_src[1]), egui::vec2(init_src[2], init_src[3]));
+                                                    let init_src_center = init_src_rect.center();
+                                                    let p_arr = init_img.source_perspective;
+                                                    
+                                                    let c0 = transform_point_complex(init_src_rect.left_top(), init_src_center, init_img.source_rotation, init_img.source_skew, p_arr, init_src_rect, init_img.source_scale);
+                                                    let c1 = transform_point_complex(init_src_rect.right_top(), init_src_center, init_img.source_rotation, init_img.source_skew, p_arr, init_src_rect, init_img.source_scale);
+                                                    let c2 = transform_point_complex(init_src_rect.left_bottom(), init_src_center, init_img.source_rotation, init_img.source_skew, p_arr, init_src_rect, init_img.source_scale);
+                                                    let c3 = transform_point_complex(init_src_rect.right_bottom(), init_src_center, init_img.source_rotation, init_img.source_skew, p_arr, init_src_rect, init_img.source_scale);
+                                                    
+                                                    let ic = [c0, c1, c2, c3];
+                                                    let anchor = ic[3 - handle_idx];
+                                                    let old_vec = ic[handle_idx] - anchor;
+                                                    let new_vec = hover_pos_screen - anchor;
+                                                    
+                                                    if old_vec.x.abs() > 1.0 && old_vec.y.abs() > 1.0 {
+                                                        let scale_factor = egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y);
+                                                        img.source_scale = init_img.source_scale * scale_factor;
+                                                    }
+                                                }
+                                                20..=23 => {
+                                                    // Perspective
+                                                    let p_idx = *drag_state - 20;
+                                                    let delta = hover_pos - start;
+                                                    img.source_perspective[p_idx] = init_img.source_perspective[p_idx] + delta;
+                                                }
+                                                _ => {
+                                                    // Move/Translate
+                                                    let mut delta = hover_pos - start;
+                                                    let ib = initial_bounds.unwrap();
+                                                    {
+                                                        let (sw, sh) = crate::winapi_utils::get_screen_size(false);
+                                                        let monitor_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(sw, sh));
+                                                        let new_rect = ib.translate(delta);
+                                                        
+                                                        let min_overlap = 20.0f32;
+                                                        let mut shift_x = 0.0f32;
+                                                        if new_rect.max.x < monitor_rect.min.x + min_overlap {
+                                                            shift_x = (monitor_rect.min.x + min_overlap) - new_rect.max.x;
+                                                        } else if new_rect.min.x > monitor_rect.max.x - min_overlap {
+                                                            shift_x = (monitor_rect.max.x - min_overlap) - new_rect.min.x;
+                                                        }
+                                                        
+                                                        let mut shift_y = 0.0f32;
+                                                        if new_rect.max.y < monitor_rect.min.y + min_overlap {
+                                                            shift_y = (monitor_rect.min.y + min_overlap) - new_rect.max.y;
+                                                        } else if new_rect.min.y > monitor_rect.max.y - min_overlap {
+                                                            shift_y = (monitor_rect.max.y - min_overlap) - new_rect.min.y;
+                                                        }
+                                                        
+                                                        delta.x += shift_x;
+                                                        delta.y += shift_y;
+                                                    }
+                                                    img.source_rect = Some([ib.min.x + delta.x, ib.min.y + delta.y, ib.width(), ib.height()]);
+                                                }
                                             }
-                                            img.source_rect = Some([ib.min.x + delta.x, ib.min.y + delta.y, ib.width(), ib.height()]);
                                         }
 
                                         // NOW: Update shape (mask, mask_size, snip_points) during drag!

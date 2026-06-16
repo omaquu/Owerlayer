@@ -182,7 +182,7 @@ impl Tool {
             Tool::Cut => "Marquee Tool",
             Tool::Mirror => "Mirror Tool",
             Tool::Blur => "Blur Tool",
-            Tool::Embed => "Embed Tool",
+            Tool::Embed => "Widgets Tool",
             Tool::PaintBucket => "Paint Bucket Tool",
         }
     }
@@ -582,6 +582,18 @@ pub struct PlacedImage {
     pub antialias: bool,
     #[serde(default)]
     pub eraser_apply_to_source: Option<bool>,
+    #[serde(default)]
+    pub source_rotation: f32,
+    #[serde(default)]
+    pub source_skew: egui::Vec2,
+    #[serde(default)]
+    pub source_perspective: [egui::Vec2; 4],
+    #[serde(default = "default_source_scale")]
+    pub source_scale: egui::Vec2,
+    #[serde(default = "default_capture_source")]
+    pub capture_source: CaptureSource,
+    #[serde(default = "default_target_hwnd")]
+    pub target_hwnd: isize,
 }
 
 impl Clone for PlacedImage {
@@ -615,10 +627,6 @@ impl Clone for PlacedImage {
             outline: self.outline,
             outline_color: self.outline_color,
             outline_width: self.outline_width,
-            
-            
-            
-            
             source_rect: self.source_rect,
             url: self.url.clone(),
             blur: self.blur,
@@ -644,8 +652,6 @@ impl Clone for PlacedImage {
             grayscale: self.grayscale,
             invert: self.invert,
             sepia: self.sepia,
-            
-            
             locked: self.locked,
             snip_points: self.snip_points.clone(),
             cached_texture: None,
@@ -653,6 +659,12 @@ impl Clone for PlacedImage {
             chromatic_aberration: self.chromatic_aberration,
             antialias: self.antialias,
             eraser_apply_to_source: self.eraser_apply_to_source,
+            source_rotation: self.source_rotation,
+            source_skew: self.source_skew,
+            source_perspective: self.source_perspective,
+            source_scale: self.source_scale,
+            capture_source: self.capture_source,
+            target_hwnd: self.target_hwnd,
         }
     }
 }
@@ -714,8 +726,21 @@ impl PlacedImage {
             chromatic_aberration: 0.0,
             antialias: false,
             eraser_apply_to_source: None,
+            source_rotation: 0.0,
+            source_skew: egui::Vec2::ZERO,
+            source_perspective: [egui::Vec2::ZERO; 4],
+            source_scale: egui::vec2(1.0, 1.0),
+            capture_source: CaptureSource::Desktop,
+            target_hwnd: 0,
         }
     }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub enum CaptureSource {
+    Desktop,
+    Overlay,
+    Origin,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -780,6 +805,30 @@ impl Default for SelectionMode { fn default() -> Self { Self::New } }
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     pub hotkey: HotkeyBinding,
+    #[serde(default = "default_snip_source")]
+    pub snip_source: CaptureSource,
+    #[serde(default = "default_target_hwnd")]
+    pub origin_target_hwnd: isize,
+    #[serde(default = "default_keybind_move")]
+    pub keybind_move: HotkeyBinding,
+    #[serde(default = "default_keybind_brush")]
+    pub keybind_brush: HotkeyBinding,
+    #[serde(default = "default_keybind_eraser")]
+    pub keybind_eraser: HotkeyBinding,
+    #[serde(default = "default_keybind_text")]
+    pub keybind_text: HotkeyBinding,
+    #[serde(default = "default_keybind_shape")]
+    pub keybind_shape: HotkeyBinding,
+    #[serde(default = "default_keybind_snip")]
+    pub keybind_snip: HotkeyBinding,
+    #[serde(default = "default_keybind_cut")]
+    pub keybind_cut: HotkeyBinding,
+    #[serde(default = "default_keybind_mirror")]
+    pub keybind_mirror: HotkeyBinding,
+    #[serde(default = "default_keybind_blur")]
+    pub keybind_blur: HotkeyBinding,
+    #[serde(default = "default_keybind_paint_bucket")]
+    pub keybind_paint_bucket: HotkeyBinding,
     pub pen_color: [u8; 4],
     pub pen_width: f32,
     pub font_size: f32,
@@ -969,6 +1018,22 @@ fn default_highlight_opacity() -> f32 { 0.4 }
 fn default_show_screen_controls() -> bool { true }
 fn default_auto_exclude_live() -> bool { true }
 
+fn default_capture_source() -> CaptureSource { CaptureSource::Desktop }
+fn default_target_hwnd() -> isize { 0 }
+fn default_source_scale() -> egui::Vec2 { egui::vec2(1.0, 1.0) }
+fn default_snip_source() -> CaptureSource { CaptureSource::Desktop }
+
+fn default_keybind_move() -> HotkeyBinding { HotkeyBinding { vk_code: 0x56, name: "Ctrl + V".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_brush() -> HotkeyBinding { HotkeyBinding { vk_code: 0x42, name: "Ctrl + B".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_eraser() -> HotkeyBinding { HotkeyBinding { vk_code: 0x45, name: "Ctrl + E".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_text() -> HotkeyBinding { HotkeyBinding { vk_code: 0x54, name: "Ctrl + T".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_shape() -> HotkeyBinding { HotkeyBinding { vk_code: 0x55, name: "Ctrl + U".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_snip() -> HotkeyBinding { HotkeyBinding { vk_code: 0x53, name: "Ctrl + S".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_cut() -> HotkeyBinding { HotkeyBinding { vk_code: 0x43, name: "Ctrl + C".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_mirror() -> HotkeyBinding { HotkeyBinding { vk_code: 0x4D, name: "Ctrl + M".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_blur() -> HotkeyBinding { HotkeyBinding { vk_code: 0x4B, name: "Ctrl + K".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_keybind_paint_bucket() -> HotkeyBinding { HotkeyBinding { vk_code: 0x47, name: "Ctrl + G".to_string(), ctrl: true, alt: false, shift: false } }
+
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
 impl Default for BrushShape { fn default() -> Self { Self::Round } }
@@ -986,6 +1051,18 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             hotkey: HotkeyBinding::default(),
+            snip_source: CaptureSource::Desktop,
+            origin_target_hwnd: 0,
+            keybind_move: default_keybind_move(),
+            keybind_brush: default_keybind_brush(),
+            keybind_eraser: default_keybind_eraser(),
+            keybind_text: default_keybind_text(),
+            keybind_shape: default_keybind_shape(),
+            keybind_snip: default_keybind_snip(),
+            keybind_cut: default_keybind_cut(),
+            keybind_mirror: default_keybind_mirror(),
+            keybind_blur: default_keybind_blur(),
+            keybind_paint_bucket: default_keybind_paint_bucket(),
             pen_color: [255, 255, 255, 255],
             pen_width: 3.0,
             font_size: 20.0,

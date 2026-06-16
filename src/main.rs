@@ -322,6 +322,15 @@ impl OwerlayerApp {
         let sh = frame.height as usize;
         let mut pixels = frame.pixels;
         
+        if self.settings.snip_source == CaptureSource::Origin {
+            let center_x = (screen_bounds.min.x + screen_bounds.width() / 2.0) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
+            let center_y = (screen_bounds.min.y + screen_bounds.height() / 2.0) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
+            if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
+                self.settings.origin_target_hwnd = hwnd as isize;
+                self.settings.save();
+            }
+        }
+        
         let mut mask = vec![255u8; sw * sh];
         for py in 0..sh {
             for px in 0..sw {
@@ -344,6 +353,8 @@ impl OwerlayerApp {
             new_img.is_live = self.settings.snip_live;
             new_img.blur = self.settings.blur_strength;
             new_img.blur_effect = self.settings.blur_effect;
+            new_img.capture_source = self.settings.snip_source;
+            new_img.target_hwnd = self.settings.origin_target_hwnd;
             new_img.mask = Some(mask);
             new_img.mask_size = Some([sw, sh]);
             new_img.mask_dirty = true;
@@ -371,6 +382,8 @@ impl OwerlayerApp {
             new_img.is_live = self.settings.snip_live;
             new_img.blur = self.settings.blur_strength;
             new_img.blur_effect = self.settings.blur_effect;
+            new_img.capture_source = self.settings.snip_source;
+            new_img.target_hwnd = self.settings.origin_target_hwnd;
             
             let is_rect = matches!(sel.shape, SelectionShape::Rect(_)) && sel.ops.is_empty();
             if !is_rect {
@@ -679,6 +692,33 @@ impl eframe::App for OwerlayerApp {
         self.prev_mouse_down = mouse.left_down;
         self.prev_mouse_pos = mouse.pos;
 
+        // Evaluate customizable tool hotkeys
+        if !self.listening_for_hotkey {
+            let tools_to_check = [
+                (&self.settings.keybind_move, overlay::Tool::Move),
+                (&self.settings.keybind_brush, overlay::Tool::Brush),
+                (&self.settings.keybind_eraser, overlay::Tool::Eraser),
+                (&self.settings.keybind_text, overlay::Tool::Text),
+                (&self.settings.keybind_shape, overlay::Tool::Shape),
+                (&self.settings.keybind_snip, overlay::Tool::Snip),
+                (&self.settings.keybind_cut, overlay::Tool::Cut),
+                (&self.settings.keybind_mirror, overlay::Tool::Mirror),
+                (&self.settings.keybind_blur, overlay::Tool::Blur),
+                (&self.settings.keybind_paint_bucket, overlay::Tool::PaintBucket),
+            ];
+
+            for (keybind, tool) in tools_to_check {
+                if hotkey::is_hotkey_held(keybind) {
+                    if self.active_tool != tool || !self.edit_mode {
+                        self.active_tool = tool;
+                        self.edit_mode = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        crate::winapi_utils::force_focus();
+                    }
+                }
+            }
+        }
+
         // ---- 2. Hotkey / toggle ----
         let key_held = if self.listening_for_hotkey { false }
                        else { hotkey::is_hotkey_held(&self.settings.hotkey) };
@@ -771,7 +811,7 @@ impl eframe::App for OwerlayerApp {
             let has_active_live_desktop_snip = self.project.layers.iter()
                 .filter(|l| l.visible)
                 .flat_map(|l| &l.placed_images)
-                .any(|img| img.is_live && !img.snip_source_overlay);
+                .any(|img| img.is_live && img.capture_source == CaptureSource::Desktop && !img.snip_source_overlay);
             if has_active_live_desktop_snip && self.settings.auto_exclude_live_capture {
                 expected_exclude = true;
             }
@@ -994,6 +1034,15 @@ impl eframe::App for OwerlayerApp {
                             let sx = (screen_bounds.min.x * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
                             let sy = (screen_bounds.min.y * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
                             
+                            if self.settings.snip_source == CaptureSource::Origin {
+                                let center_x = (screen_bounds.min.x + screen_bounds.width() / 2.0) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
+                                let center_y = (screen_bounds.min.y + screen_bounds.height() / 2.0) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
+                                if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
+                                    self.settings.origin_target_hwnd = hwnd as isize;
+                                    self.settings.save();
+                                }
+                            }
+                            
                             let captured_pixels = if trigger_copy || trigger_cut || !self.settings.snip_live {
                                 crate::tools::snip::capture_screen_rect_safe(&self.settings, sx, sy, sw, sh)
                             } else {
@@ -1024,6 +1073,8 @@ impl eframe::App for OwerlayerApp {
                                 new_img.is_live = self.settings.snip_live;
                                 new_img.blur = self.settings.blur_strength;
                                 new_img.blur_effect = self.settings.blur_effect;
+                                new_img.capture_source = self.settings.snip_source;
+                                new_img.target_hwnd = self.settings.origin_target_hwnd;
                                 new_img.mask = Some(mask);
                                 new_img.mask_size = Some([sw as usize, sh as usize]);
                                 new_img.mask_dirty = true;
@@ -1053,6 +1104,8 @@ impl eframe::App for OwerlayerApp {
                                 new_img.is_live = self.settings.snip_live;
                                 new_img.blur = self.settings.blur_strength;
                                 new_img.blur_effect = self.settings.blur_effect;
+                                new_img.capture_source = self.settings.snip_source;
+                                new_img.target_hwnd = self.settings.origin_target_hwnd;
                                 
                                 let is_rect = matches!(sel.shape, SelectionShape::Rect(_)) && sel.ops.is_empty();
                                 if !is_rect {
@@ -2024,6 +2077,8 @@ impl eframe::App for OwerlayerApp {
             ctx.request_repaint(); // Native framerate for smooth brush or live mirror/capture
         } else if self.settings.keep_ui_visible {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        } else if !self.settings.hide_all {
+            ctx.request_repaint_after(std::time::Duration::from_millis(33)); // 30 FPS fallback to keep OBS capture active and realtime!
         } else {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }

@@ -5,15 +5,15 @@ use crate::overlay::*;
 use crate::tools::ToolContext;
 
 pub fn capture_screen_rect_safe(settings: &crate::types::Settings, sx: i32, sy: i32, w: i32, h: i32) -> Option<Vec<u8>> {
-    let was_excluded = settings.exclude_from_capture;
-    let should_exclude = !settings.snip_source_overlay && !was_excluded;
-    if should_exclude {
-        crate::winapi_utils::set_capture_exclusion(true);
+    let should_hide = !settings.snip_source_overlay;
+    if should_hide {
+        crate::winapi_utils::set_window_visibility(false);
         std::thread::sleep(std::time::Duration::from_millis(40));
     }
     let res = crate::winapi_utils::capture_screen_rect(sx, sy, w, h);
-    if should_exclude {
-        crate::winapi_utils::set_capture_exclusion(false);
+    if should_hide {
+        crate::winapi_utils::set_window_visibility(true);
+        crate::winapi_utils::force_focus();
     }
     res
 }

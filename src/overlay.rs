@@ -14,6 +14,23 @@ use crate::tools::ToolContext;
 pub use crate::types::*;
 use crate::ui::toolbar::{apply_box_blur, apply_pixelate, apply_vhs_glitch};
 
+pub fn add_quad_with_custom_uv(
+    mesh: &mut egui::Mesh,
+    rect: egui::Rect,
+    uv_lt: egui::Pos2,
+    uv_rt: egui::Pos2,
+    uv_rb: egui::Pos2,
+    uv_lb: egui::Pos2,
+    color: egui::Color32,
+) {
+    let idx = mesh.vertices.len() as u32;
+    mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_top(), uv: uv_lt, color });
+    mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_top(), uv: uv_rt, color });
+    mesh.vertices.push(egui::epaint::Vertex { pos: rect.right_bottom(), uv: uv_rb, color });
+    mesh.vertices.push(egui::epaint::Vertex { pos: rect.left_bottom(), uv: uv_lb, color });
+    mesh.indices.extend([idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+}
+
 // ──────────────────────────────────────────────────────────────
 //  Color helpers
 // ──────────────────────────────────────────────────────────────
@@ -197,7 +214,23 @@ pub fn render_canvas(
                     let (ox, oy) = if settings.use_absolute_screen_coords { (0, 0) } else { (wx, wy) };
                     
                     let src_rect = if let Some(src) = img.source_rect {
-                        src
+                        if img.source_rotation != 0.0 || img.source_skew != egui::Vec2::ZERO || img.source_perspective != [egui::Vec2::ZERO; 4] || img.source_scale != egui::vec2(1.0, 1.0) {
+                            let rect_untransformed = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                            let src_center = rect_untransformed.center();
+                            let p_arr = img.source_perspective;
+                            let c0 = transform_point_complex(rect_untransformed.left_top(), src_center, img.source_rotation, img.source_skew, p_arr, rect_untransformed, img.source_scale);
+                            let c1 = transform_point_complex(rect_untransformed.right_top(), src_center, img.source_rotation, img.source_skew, p_arr, rect_untransformed, img.source_scale);
+                            let c2 = transform_point_complex(rect_untransformed.left_bottom(), src_center, img.source_rotation, img.source_skew, p_arr, rect_untransformed, img.source_scale);
+                            let c3 = transform_point_complex(rect_untransformed.right_bottom(), src_center, img.source_rotation, img.source_skew, p_arr, rect_untransformed, img.source_scale);
+                            
+                            let min_x = c0.x.min(c1.x).min(c2.x).min(c3.x);
+                            let max_x = c0.x.max(c1.x).max(c2.x).max(c3.x);
+                            let min_y = c0.y.min(c1.y).min(c2.y).min(c3.y);
+                            let max_y = c0.y.max(c1.y).max(c2.y).max(c3.y);
+                            [min_x, min_y, max_x - min_x, max_y - min_y]
+                        } else {
+                            src
+                        }
                     } else {
                         let mut dummy_mesh = egui::Mesh::default();
                         dummy_mesh.add_rect_with_uv(
@@ -224,7 +257,11 @@ pub fn render_canvas(
                         blur_effect: img.blur_effect,
                         window_offset: (ox, oy),
                         use_absolute: settings.use_absolute_screen_coords,
-                        hwnd: img.hwnd,
+                        hwnd: match img.capture_source {
+                            CaptureSource::Desktop => 0,
+                            CaptureSource::Overlay => img.hwnd,
+                            CaptureSource::Origin => img.target_hwnd as usize,
+                        },
                         mask: img.mask.clone(),
                         mask_size: img.mask_size.unwrap_or(img.size),
                         exclude_from_capture: settings.exclude_from_capture,
@@ -361,6 +398,36 @@ pub fn render_canvas(
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
                 let center = (img.position - render_offset) + egui::vec2(disp_w * 0.5, disp_h * 0.5);
 
+                let mut uv_lt = egui::pos2(0.0, 0.0);
+                let mut uv_rt = egui::pos2(1.0, 0.0);
+                let mut uv_rb = egui::pos2(1.0, 1.0);
+                let mut uv_lb = egui::pos2(0.0, 1.0);
+
+                if let Some(src) = img.source_rect {
+                    if img.source_rotation != 0.0 || img.source_skew != egui::Vec2::ZERO || img.source_perspective != [egui::Vec2::ZERO; 4] || img.source_scale != egui::vec2(1.0, 1.0) {
+                        let rect_untransformed = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                        let src_center = rect_untransformed.center();
+                        let p_arr = img.source_perspective;
+                        let c0 = transform_point_complex(rect_untransformed.left_top(), src_center, img.source_rotation, img.source_skew, p_arr, rect_untransformed, img.source_scale);
+                        let c1 = transform_point_complex(rect_untransformed.right_top(), src_center, img.source_rotation, img.source_skew, p_arr, rect_untransformed, img.source_scale);
+                        let c2 = transform_point_complex(rect_untransformed.left_bottom(), src_center, img.source_rotation, img.source_skew, p_arr, rect_untransformed, img.source_scale);
+                        let c3 = transform_point_complex(rect_untransformed.right_bottom(), src_center, img.source_rotation, img.source_skew, p_arr, rect_untransformed, img.source_scale);
+                        
+                        let min_x = c0.x.min(c1.x).min(c2.x).min(c3.x);
+                        let max_x = c0.x.max(c1.x).max(c2.x).max(c3.x);
+                        let min_y = c0.y.min(c1.y).min(c2.y).min(c3.y);
+                        let max_y = c0.y.max(c1.y).max(c2.y).max(c3.y);
+                        let aabb = egui::Rect::from_min_max(egui::pos2(min_x, min_y), egui::pos2(max_x, max_y));
+                        let sz = aabb.size();
+                        if sz.x > 0.0 && sz.y > 0.0 {
+                            uv_lt = egui::pos2((c0.x - aabb.min.x) / sz.x, (c0.y - aabb.min.y) / sz.y);
+                            uv_rt = egui::pos2((c1.x - aabb.min.x) / sz.x, (c1.y - aabb.min.y) / sz.y);
+                            uv_lb = egui::pos2((c2.x - aabb.min.x) / sz.x, (c2.y - aabb.min.y) / sz.y);
+                            uv_rb = egui::pos2((c3.x - aabb.min.x) / sz.x, (c3.y - aabb.min.y) / sz.y);
+                        }
+                    }
+                }
+
                 let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 
                 let mut final_scale = img.scale;
@@ -437,19 +504,53 @@ pub fn render_canvas(
                         draw_scale.y *= scale_y;
                     }
                     
+                    let mut uv_lt_p = uv_lt;
+                    let mut uv_rt_p = uv_rt;
+                    let mut uv_rb_p = uv_rb;
+                    let mut uv_lb_p = uv_lb;
+                    
+                    if pass_pad > 0.0 {
+                        // Extrapolate UVs outwards from the center of the UV quad
+                        let uv_center = egui::pos2(
+                            (uv_lt.x + uv_rt.x + uv_rb.x + uv_lb.x) * 0.25,
+                            (uv_lt.y + uv_rt.y + uv_rb.y + uv_lb.y) * 0.25,
+                        );
+                        let scale_x = 1.0 + (pass_pad / disp_w.max(1.0)) * 2.0;
+                        let scale_y = 1.0 + (pass_pad / disp_h.max(1.0)) * 2.0;
+                        
+                        let pad_uv = |p: egui::Pos2| {
+                            let dx = p.x - uv_center.x;
+                            let dy = p.y - uv_center.y;
+                            egui::pos2(uv_center.x + dx * scale_x, uv_center.y + dy * scale_y)
+                        };
+                        uv_lt_p = pad_uv(uv_lt);
+                        uv_rt_p = pad_uv(uv_rt);
+                        uv_rb_p = pad_uv(uv_rb);
+                        uv_lb_p = pad_uv(uv_lb);
+                    }
+                    
                     if pass_pad > 0.0 {
                         padded_w += pass_pad * 2.0;
                         padded_h += pass_pad * 2.0;
-                        let uv_width = uv.width();
-                        let uv_height = uv.height();
-                        let uv_min_x = uv.min.x - (pass_pad / disp_w.max(1.0)) * uv_width;
-                        let uv_min_y = uv.min.y - (pass_pad / disp_h.max(1.0)) * uv_height;
-                        let uv_max_x = uv.max.x + (pass_pad / disp_w.max(1.0)) * uv_width;
-                        let uv_max_y = uv.max.y + (pass_pad / disp_h.max(1.0)) * uv_height;
-                        let padded_uv = egui::Rect::from_min_max(egui::pos2(uv_min_x, uv_min_y), egui::pos2(uv_max_x, uv_max_y));
-                        mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x + offset_x - padded_w*0.5, center.y + offset_y - padded_h*0.5), egui::vec2(padded_w, padded_h)), padded_uv, egui::Color32::WHITE);
+                        add_quad_with_custom_uv(
+                            &mut mesh,
+                            egui::Rect::from_min_size(egui::pos2(center.x + offset_x - padded_w*0.5, center.y + offset_y - padded_h*0.5), egui::vec2(padded_w, padded_h)),
+                            uv_lt_p,
+                            uv_rt_p,
+                            uv_rb_p,
+                            uv_lb_p,
+                            egui::Color32::WHITE
+                        );
                     } else {
-                        mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::pos2(center.x + offset_x - disp_w*0.5, center.y + offset_y - disp_h*0.5), egui::vec2(disp_w, disp_h)), uv, egui::Color32::WHITE);
+                        add_quad_with_custom_uv(
+                            &mut mesh,
+                            egui::Rect::from_min_size(egui::pos2(center.x + offset_x - disp_w*0.5, center.y + offset_y - disp_h*0.5), egui::vec2(disp_w, disp_h)),
+                            uv_lt_p,
+                            uv_rt_p,
+                            uv_rb_p,
+                            uv_lb_p,
+                            egui::Color32::WHITE
+                        );
                     }
                     
                     transform_mesh(&mut mesh, center + egui::vec2(offset_x, offset_y), img.rotation, img.skew, img.perspective, draw_scale);
@@ -1070,10 +1171,14 @@ pub fn render_canvas(
                                 img.cached_mask_outline = Some(get_mask_outline(mask_ref, img.mask_size.unwrap_or(img.size), ppp));
                             }
                             if let Some(ref loops) = img.cached_mask_outline {
+                                let src_center = src_rect.center();
+                                let p_arr = img.source_perspective;
                                 for path in loops {
                                     let mut current_path = Vec::with_capacity(path.len());
                                     for &p in path {
-                                        current_path.push(egui::pos2(src_rect.min.x + p.x - ctx.render_offset.x, src_rect.min.y + p.y - ctx.render_offset.y));
+                                        let world_pt = egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y);
+                                        let transformed = crate::utils::transform_point_complex(world_pt, src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
+                                        current_path.push(transformed);
                                     }
                                     if !current_path.is_empty() {
                                         crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
@@ -1081,6 +1186,8 @@ pub fn render_canvas(
                                 }
                             }
                         } else if let Some(ref local_pts) = img.snip_points {
+                            let src_center = src_rect.center();
+                            let p_arr = img.source_perspective;
                             let mut current_path = Vec::new();
                             for p in local_pts {
                                 if p.x.is_nan() || p.y.is_nan() {
@@ -1092,7 +1199,9 @@ pub fn render_canvas(
                                         current_path.clear();
                                     }
                                 } else {
-                                    current_path.push(egui::pos2(src_rect.min.x + p.x - ctx.render_offset.x, src_rect.min.y + p.y - ctx.render_offset.y));
+                                    let world_pt = egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y);
+                                    let transformed = crate::utils::transform_point_complex(world_pt, src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
+                                    current_path.push(transformed);
                                 }
                             }
                             if !current_path.is_empty() {
@@ -1103,13 +1212,23 @@ pub fn render_canvas(
                             }
                         } else {
                             let r = src_rect.translate(-ctx.render_offset);
-                            let pts = vec![
-                                r.left_top(),
-                                r.right_top(),
-                                r.right_bottom(),
-                                r.left_bottom(),
-                                r.left_top(),
-                            ];
+                            let pts = if img.source_rotation != 0.0 || img.source_skew != egui::Vec2::ZERO || img.source_perspective != [egui::Vec2::ZERO; 4] || img.source_scale != egui::vec2(1.0, 1.0) {
+                                let src_center = src_rect.center();
+                                let p_arr = img.source_perspective;
+                                let c0 = transform_point_complex(src_rect.left_top(), src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
+                                let c1 = transform_point_complex(src_rect.right_top(), src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
+                                let c2 = transform_point_complex(src_rect.left_bottom(), src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
+                                let c3 = transform_point_complex(src_rect.right_bottom(), src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
+                                vec![c0, c1, c3, c2, c0]
+                            } else {
+                                vec![
+                                    r.left_top(),
+                                    r.right_top(),
+                                    r.right_bottom(),
+                                    r.left_bottom(),
+                                    r.left_top(),
+                                ]
+                            };
                             crate::utils::draw_dashed_path_color(&painter, &pts, time, stroke_color, stroke_width);
                         }
                     }
@@ -1179,7 +1298,7 @@ fn get_mask_outline(mask: &[u8], size: [usize; 2], ppp: f32) -> Vec<Vec<egui::Po
     let h = size[1];
     if w == 0 || h == 0 { return Vec::new(); }
 
-    let step = (w.max(h) as f32 / 150.0).max(1.0);
+    let step = (w.max(h) as f32 / 400.0).max(1.0);
     let cols = (w as f32 / step).ceil() as i32 + 1;
     let rows = (h as f32 / step).ceil() as i32 + 1;
 

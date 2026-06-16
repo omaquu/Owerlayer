@@ -168,6 +168,8 @@ impl CaptureThread {
         let mut mask_cache: HashMap<usize, MaskCacheEntry> = HashMap::new();
         #[cfg(windows)]
         let mut wgc_sessions: HashMap<isize, Result<crate::wgc_capture::wgc::WgcCaptureSession, Instant>> = HashMap::new();
+        #[cfg(windows)]
+        let mut wgc_window_sessions: HashMap<isize, Result<crate::wgc_capture::wgc::WgcCaptureSession, Instant>> = HashMap::new();
 
         while running.load(Ordering::Relaxed) {
             let start = Instant::now();
@@ -191,6 +193,11 @@ impl CaptureThread {
                         let _ = session.poll_new_frame(&active_ids);
                     }
                 }
+                for session_res in wgc_window_sessions.values() {
+                    if let Ok(session) = session_res {
+                        let _ = session.poll_new_frame(&active_ids);
+                    }
+                }
             }
 
             let mut got_new_frame = false;
@@ -199,7 +206,14 @@ impl CaptureThread {
 
                 let result = if req.hwnd != 0 {
                     // Window capture
-                    Self::capture_window(req, &mut mask_cache)
+                    #[cfg(windows)]
+                    {
+                        Self::capture_window(req, &mut mask_cache, &mut wgc_window_sessions)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Self::capture_window(req, &mut mask_cache)
+                    }
                 } else {
                     // Screen rect capture
                     #[cfg(windows)]
@@ -689,39 +703,194 @@ impl CaptureThread {
         })
     }
 
-    fn capture_window(req: &CaptureRequest, mask_cache: &mut HashMap<usize, MaskCacheEntry>) -> Option<CaptureResult> {
-        let (mut pixels, pw, ph) = crate::winapi_utils::capture_window(req.hwnd)?;
-        
+    #[cfg(windows)]
+    fn capture_window(
+        req: &CaptureRequest,
+        mask_cache: &mut HashMap<usize, MaskCacheEntry>,
+        wgc_window_sessions: &mut HashMap<isize, Result<crate::wgc_capture::wgc::WgcCaptureSession, Instant>>,
+    ) -> Option<CaptureResult> {
+        let total_start = std::time::Instant::now();
+        let mut perf = CapturePerfMetrics::default();
+
+        let hwnd = req.hwnd as isize;
+        if hwnd == 0 { return None; }
+
+        let mut crop = None;
+        let mut r = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        let mut has_rect = false;
+        unsafe {
+            if windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd as *mut _, &mut r) != 0 {
+                has_rect = true;
+            }
+        }
+        if has_rect {
+            let (wx, wy) = req.window_offset;
+            let sx = (req.source_rect[0] * req.ppp).round() as i32 + if req.use_absolute { 0 } else { wx };
+            let sy = (req.source_rect[1] * req.ppp).round() as i32 + if req.use_absolute { 0 } else { wy };
+            let sw = (req.source_rect[2] * req.ppp).round() as i32;
+            let sh = (req.source_rect[3] * req.ppp).round() as i32;
+            
+            let cx = sx - r.left;
+            let cy = sy - r.top;
+            crop = Some((cx, cy, sw, sh));
+        }
+
+        let mut pixels = None;
+        let mut pw = 0;
+        let mut ph = 0;
+        let mut wgc_attempted = false;
+
+        // Try WGC for window capture
+        if !req.live_performance_mode {
+            let mut needs_retry = false;
+            if let Some(entry) = wgc_window_sessions.get(&hwnd) {
+                if let Err(last_failed) = entry {
+                    if last_failed.elapsed() >= Duration::from_secs(2) {
+                        needs_retry = true;
+                    }
+                }
+            }
+
+            if needs_retry {
+                match crate::wgc_capture::wgc::WgcCaptureSession::start_window_capture(hwnd) {
+                    Ok(session) => {
+                        wgc_window_sessions.insert(hwnd, Ok(session));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to start WGC window capture on retry: {:?}", e);
+                        wgc_window_sessions.insert(hwnd, Err(Instant::now()));
+                    }
+                }
+            } else if !wgc_window_sessions.contains_key(&hwnd) {
+                match crate::wgc_capture::wgc::WgcCaptureSession::start_window_capture(hwnd) {
+                    Ok(session) => {
+                        wgc_window_sessions.insert(hwnd, Ok(session));
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to start WGC window capture: {:?}", e);
+                        wgc_window_sessions.insert(hwnd, Err(Instant::now()));
+                    }
+                }
+            }
+
+            if let Some(Ok(session)) = wgc_window_sessions.get(&hwnd) {
+                wgc_attempted = true;
+                if let Ok(Some((crop_pixels, crop_w, crop_h, gpu_copy_us, map_wait_us, pixel_swap_us))) = session.get_latest_frame(req.id, crop) {
+                    perf.wgc_gpu_copy_us = gpu_copy_us;
+                    perf.wgc_map_wait_us = map_wait_us;
+                    perf.wgc_pixel_swap_us = pixel_swap_us;
+
+                    pixels = Some(crop_pixels);
+                    pw = crop_w;
+                    ph = crop_h;
+                } else {
+                    // WGC session is active, but no new frame was available.
+                    return None;
+                }
+            }
+        } else {
+            wgc_window_sessions.remove(&hwnd);
+        }
+
+        let is_bgra = wgc_attempted;
+
+        // Fallback to GDI legacy window capture
+        let mut pixels = match pixels {
+            Some(p) => p,
+            None => {
+                if wgc_attempted {
+                    return None;
+                }
+                let gdi_start = std::time::Instant::now();
+                let (p, w, h) = crate::winapi_utils::capture_window(req.hwnd)?;
+                perf.gdi_capture_us = gdi_start.elapsed().as_micros();
+                
+                if let Some((cx, cy, cw, ch)) = crop {
+                    let cx_clamped = cx.clamp(0, w as i32) as usize;
+                    let cy_clamped = cy.clamp(0, h as i32) as usize;
+                    let end_x_clamped = (cx + cw).clamp(0, w as i32) as usize;
+                    let end_y_clamped = (cy + ch).clamp(0, h as i32) as usize;
+                    
+                    if end_x_clamped > cx_clamped && end_y_clamped > cy_clamped {
+                        let cropped_w = end_x_clamped - cx_clamped;
+                        let cropped_h = end_y_clamped - cy_clamped;
+                        let mut cropped = vec![0u8; cropped_w * cropped_h * 4];
+                        for y in 0..cropped_h {
+                            let src_start = ((cy_clamped + y) * w + cx_clamped) * 4;
+                            let dest_start = y * cropped_w * 4;
+                            if src_start + cropped_w * 4 <= p.len() && dest_start + cropped_w * 4 <= cropped.len() {
+                                cropped[dest_start..dest_start + cropped_w * 4].copy_from_slice(&p[src_start..src_start + cropped_w * 4]);
+                            }
+                        }
+                        pw = cropped_w;
+                        ph = cropped_h;
+                        cropped
+                    } else {
+                        pw = w;
+                        ph = h;
+                        p
+                    }
+                } else {
+                    pw = w;
+                    ph = h;
+                    p
+                }
+            }
+        };
+
+        if pw == 0 || ph == 0 { return None; }
+
         Self::apply_mask_to_captured_pixels(req, &mut pixels, pw, ph, mask_cache);
 
-        let color_pixels: Vec<egui::Color32> = if pixels.len() > 100_000 {
+        let mask_effects_start = std::time::Instant::now();
+        if req.blur > 0.1 {
+            match req.blur_effect {
+                BlurEffect::Gaussian => apply_box_blur(&mut pixels, pw, ph, req.blur as usize),
+                BlurEffect::Pixelate => apply_pixelate(&mut pixels, pw, ph, (req.blur * req.ppp) as usize),
+                BlurEffect::Glitch => apply_vhs_glitch(&mut pixels, pw, ph, req.blur / 100.0),
+            }
+        }
+        perf.thread_mask_effects_us = mask_effects_start.elapsed().as_micros();
+
+        let conv_start = std::time::Instant::now();
+        let color_pixels: Vec<egui::Color32> = if is_bgra {
             use rayon::prelude::*;
-            pixels
-                .par_chunks_exact(4)
-                .map(|chunk| {
-                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
-                })
-                .collect()
+            pixels.par_chunks_exact_mut(4).map(|chunk| {
+                let b = chunk[0];
+                let g = chunk[1];
+                let r = chunk[2];
+                let a = chunk[3];
+                chunk[0] = r;
+                chunk[1] = g;
+                chunk[2] = b;
+                egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+            }).collect()
         } else {
-            pixels
-                .chunks_exact(4)
-                .map(|chunk| {
-                    egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
-                })
-                .collect()
+            use rayon::prelude::*;
+            pixels.par_chunks_exact(4).map(|chunk| {
+                egui::Color32::from_rgba_unmultiplied(chunk[0], chunk[1], chunk[2], chunk[3])
+            }).collect()
         };
-        let color_image = Arc::new(egui::ColorImage {
+
+        let color_image = std::sync::Arc::new(egui::ColorImage {
             size: [pw, ph],
             pixels: color_pixels,
         });
+        perf.thread_color32_conv_us = conv_start.elapsed().as_micros();
+        perf.thread_total_us = total_start.elapsed().as_micros();
 
         Some(CaptureResult {
             pixels,
             size: [pw, ph],
             color_image: Some(color_image),
-            perf: CapturePerfMetrics::default(),
+            perf,
             is_bgra: false,
         })
+    }
+
+    #[cfg(not(windows))]
+    fn capture_window(req: &CaptureRequest, _mask_cache: &mut HashMap<usize, MaskCacheEntry>) -> Option<CaptureResult> {
+        None
     }
 }
 

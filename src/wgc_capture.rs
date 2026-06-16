@@ -87,6 +87,67 @@ pub mod wgc {
             }
         }
 
+        pub fn start_window_capture(window_handle: isize) -> Result<Self> {
+            unsafe {
+                // 1. Init COM
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+                // 2. Create D3D11 Device
+                let mut d3d_device: Option<ID3D11Device> = None;
+                let mut d3d_context: Option<ID3D11DeviceContext> = None;
+                D3D11CreateDevice(
+                    None,
+                    D3D_DRIVER_TYPE_HARDWARE,
+                    windows::Win32::Foundation::HMODULE::default(),
+                    D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                    Some(&[D3D_FEATURE_LEVEL_11_0]),
+                    D3D11_SDK_VERSION,
+                    Some(&mut d3d_device),
+                    None,
+                    Some(&mut d3d_context),
+                )?;
+                let d3d_device = d3d_device.unwrap();
+                let d3d_context = d3d_context.unwrap();
+
+                // 3. Create WinRT Device wrapper
+                let dxgi_device: IDXGIDevice = d3d_device.cast()?;
+                let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device)?;
+                let winrt_device: IDirect3DDevice = inspectable.cast()?;
+
+                // 4. Create Capture Item using Interop
+                let interop: IGraphicsCaptureItemInterop =
+                    windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+                let item: GraphicsCaptureItem =
+                    interop.CreateForWindow(windows::Win32::Foundation::HWND(window_handle as _))?;
+
+                // 5. Create Frame Pool
+                let size = item.Size()?;
+                let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
+                    &winrt_device,
+                    DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                    2,
+                    size,
+                )?;
+
+                // 6. Create Session
+                let session = frame_pool.CreateCaptureSession(&item)?;
+                let _ = session.SetIsBorderRequired(false);
+                session.StartCapture()?;
+
+                Ok(Self {
+                    _item: item,
+                    frame_pool,
+                    _session: session,
+                    d3d_device,
+                    d3d_context,
+                    staging_textures: std::sync::Mutex::new(std::collections::HashMap::new()),
+                    shared_texture: std::sync::Mutex::new(None),
+                    frame_counter: std::sync::atomic::AtomicU64::new(0),
+                    client_last_state: std::sync::Mutex::new(std::collections::HashMap::new()),
+                })
+            }
+        }
+
         pub fn poll_new_frame(&self, active_clients: &std::collections::HashSet<usize>) -> Result<bool> {
             unsafe {
                 // Prune inactive clients to prevent memory growth
@@ -221,14 +282,17 @@ pub mod wgc {
                     let need_new = if let Some(tex) = stagings.get(&client_id) {
                         let mut staging_desc = D3D11_TEXTURE2D_DESC::default();
                         tex.GetDesc(&mut staging_desc as *mut _);
-                        staging_desc.Width != desc.Width || staging_desc.Height != desc.Height
+                        staging_desc.Width < crop_width as u32 || staging_desc.Height < crop_height as u32
                     } else {
                         true
                     };
 
                     if need_new {
+                        let mut padded_desc = desc;
+                        padded_desc.Width = ((crop_width as f32) * 1.25).ceil() as u32;
+                        padded_desc.Height = ((crop_height as f32) * 1.25).ceil() as u32;
                         let mut new_tex: Option<ID3D11Texture2D> = None;
-                        self.d3d_device.CreateTexture2D(&desc as *const _, None, Some(&mut new_tex))?;
+                        self.d3d_device.CreateTexture2D(&padded_desc as *const _, None, Some(&mut new_tex))?;
                         stagings.insert(client_id, new_tex.unwrap());
                     }
                     stagings.get(&client_id).unwrap().clone()

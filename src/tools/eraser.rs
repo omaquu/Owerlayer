@@ -21,6 +21,81 @@ fn get_transformed_points(s: &crate::overlay::Stroke) -> Vec<egui::Pos2> {
     }).collect()
 }
 
+fn hit_test_image(img: &crate::types::PlacedImage, pos: egui::Pos2, r: f32, brush_shape: BrushShape) -> bool {
+    let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+    let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+    let center = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
+    
+    let max_scale = img.scale.x.abs().max(img.scale.y.abs()).max(0.001);
+    let half_diagonal = (disp_w * disp_w + disp_h * disp_h).sqrt() * 0.5 * max_scale;
+    if pos.distance(center) > half_diagonal + r {
+        return false;
+    }
+    
+    let scale_x = img.size[0] as f32 / disp_w;
+    let scale_y = img.size[1] as f32 / disp_h;
+    let rel_world = pos - center;
+    let cos = img.rotation.cos();
+    let sin = img.rotation.sin();
+    let px_rot = rel_world.x * cos + rel_world.y * sin;
+    let py_rot = rel_world.y * cos - rel_world.x * sin;
+    
+    let mut sx = img.scale.x;
+    let mut sy = img.scale.y;
+    if img.flipped_h { sx *= -1.0; }
+    if img.flipped_v { sy *= -1.0; }
+    
+    let kx = img.skew.x;
+    let ky = img.skew.y;
+    let det = 1.0 - kx * ky;
+    let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+        ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+    } else {
+        (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+    };
+    
+    let base_p = center + egui::vec2(rel_x, rel_y);
+    let lx = (base_p.x - img.position.x) * scale_x;
+    let ly = (base_p.y - img.position.y) * scale_y;
+    
+    let rx_local = r * scale_x / max_scale;
+    let ry_local = r * scale_y / max_scale;
+    
+    if lx < -rx_local || lx > img.size[0] as f32 + rx_local ||
+       ly < -ry_local || ly > img.size[1] as f32 + ry_local {
+        return false;
+    }
+    
+    let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
+    let mut draw_scale = img.scale;
+    if img.flipped_h { draw_scale.x *= -1.0; }
+    if img.flipped_v { draw_scale.y *= -1.0; }
+    
+    // Check if the closest pixel on the image boundaries or inside is within brush radius
+    let clamp_lx = lx.clamp(0.0, img.size[0] as f32);
+    let clamp_ly = ly.clamp(0.0, img.size[1] as f32);
+    let px_norm = clamp_lx / img.size[0] as f32;
+    let py_norm = clamp_ly / img.size[1] as f32;
+    let p_local = img.position + egui::vec2(px_norm * disp_w, py_norm * disp_h);
+    
+    let pixel_screen_pos = crate::utils::transform_point_complex(
+        p_local,
+        center,
+        img.rotation,
+        img.skew,
+        img.perspective,
+        img_rect,
+        draw_scale
+    );
+    
+    if brush_shape == BrushShape::Square {
+        (pixel_screen_pos.x - pos.x).abs() <= r && (pixel_screen_pos.y - pos.y).abs() <= r
+    } else {
+        pixel_screen_pos.distance(pos) <= r
+    }
+}
+
+
 pub fn update(ctx: &mut ToolContext) {
     if *ctx.layer_prompt_open { return; }
     let project = &mut *ctx.project;
@@ -147,28 +222,14 @@ pub fn update(ctx: &mut ToolContext) {
                 img_idx += 1;
                 if let Some(sel) = project.selected_object {
                     if sel == (SelectedObject { layer_idx: active_layer_idx, object_type: ObjectType::Image, object_idx: idx }) {
-                        let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                        let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
-                        let hit = if settings.brush_shape == BrushShape::Square {
-                            img_rect.intersects(egui::Rect::from_center_size(pos, egui::vec2(r*2.0, r*2.0)))
-                        } else {
-                            img_rect.distance_to_pos(pos) <= r
-                        };
+                        let hit = hit_test_image(img, pos, r, settings.brush_shape);
                         !hit
                     } else {
                         true // Keep other images
                     }
                 } else {
                     // No selection: erase anything
-                    let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                    let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                    let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
-                    let hit = if settings.brush_shape == BrushShape::Square {
-                        img_rect.intersects(egui::Rect::from_center_size(pos, egui::vec2(r*2.0, r*2.0)))
-                    } else {
-                        img_rect.distance_to_pos(pos) <= r
-                    };
+                    let hit = hit_test_image(img, pos, r, settings.brush_shape);
                     !hit
                 }
             });
@@ -275,13 +336,12 @@ pub fn update(ctx: &mut ToolContext) {
 
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
-                let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
+                let center = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
                 
-                let overlaps = if settings.brush_shape == BrushShape::Square {
-                    img_rect.intersects(egui::Rect::from_center_size(pos, egui::vec2(r*2.0, r*2.0)))
-                } else {
-                    img_rect.distance_to_pos(pos) <= r
-                };
+                // Bounding circle pre-filter
+                let max_scale_factor = img.scale.x.abs().max(img.scale.y.abs()).max(0.001);
+                let half_diagonal = (disp_w * disp_w + disp_h * disp_h).sqrt() * 0.5 * max_scale_factor;
+                let overlaps = pos.distance(center) <= half_diagonal + r;
 
                 if overlaps {
                     let mut modified = false;
@@ -293,22 +353,68 @@ pub fn update(ctx: &mut ToolContext) {
                     let scale_x = img.size[0] as f32 / disp_w;
                     let scale_y = img.size[1] as f32 / disp_h;
                     
-                    let min_px = (((pos.x - r - img.position.x) * scale_x).floor() as i32).max(0) as usize;
-                    let max_px = (((pos.x + r - img.position.x) * scale_x).ceil() as i32).min(img.size[0] as i32) as usize;
-                    let min_py = (((pos.y - r - img.position.y) * scale_y).floor() as i32).max(0) as usize;
-                    let max_py = (((pos.y + r - img.position.y) * scale_y).ceil() as i32).min(img.size[1] as i32) as usize;
+                    // Compute inverse transform to get local mouse position (lx, ly)
+                    let rel_world = pos - center;
+                    let cos = img.rotation.cos();
+                    let sin = img.rotation.sin();
+                    let px_rot = rel_world.x * cos + rel_world.y * sin;
+                    let py_rot = rel_world.y * cos - rel_world.x * sin;
+                    
+                    let mut sx = img.scale.x;
+                    let mut sy = img.scale.y;
+                    if img.flipped_h { sx *= -1.0; }
+                    if img.flipped_v { sy *= -1.0; }
+                    
+                    let kx = img.skew.x;
+                    let ky = img.skew.y;
+                    let det = 1.0 - kx * ky;
+                    let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+                        ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+                    } else {
+                        (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+                    };
+                    
+                    let base_p = center + egui::vec2(rel_x, rel_y);
+                    let lx = (base_p.x - img.position.x) * scale_x;
+                    let ly = (base_p.y - img.position.y) * scale_y;
+                    
+                    // Detailed candidate pixel range based on brush radius mapped to local space
+                    let r_local_x = (r * scale_x / max_scale_factor) * 2.0;
+                    let r_local_y = (r * scale_y / max_scale_factor) * 2.0;
+                    
+                    let min_px = ((lx - r_local_x).floor() as i32).max(0) as usize;
+                    let max_px = ((lx + r_local_x).ceil() as i32).min(img.size[0] as i32) as usize;
+                    let min_py = ((ly - r_local_y).floor() as i32).max(0) as usize;
+                    let max_py = ((ly + r_local_y).ceil() as i32).min(img.size[1] as i32) as usize;
+
+                    let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
+                    let mut draw_scale = img.scale;
+                    if img.flipped_h { draw_scale.x *= -1.0; }
+                    if img.flipped_v { draw_scale.y *= -1.0; }
 
                     for py in min_py..max_py {
                         for px in min_px..max_px {
-                            let local_pos = img.position + egui::vec2(
-                                px as f32 * (disp_w / img.size[0] as f32),
-                                py as f32 * (disp_h / img.size[1] as f32)
+                            let px_norm = px as f32 / img.size[0] as f32;
+                            let py_norm = py as f32 / img.size[1] as f32;
+                            let p_local = img.position + egui::vec2(px_norm * disp_w, py_norm * disp_h);
+                            
+                            // Map pixel local coordinate back to screen space using full forward transform
+                            let pixel_screen_pos = crate::utils::transform_point_complex(
+                                p_local,
+                                center,
+                                img.rotation,
+                                img.skew,
+                                img.perspective,
+                                img_rect,
+                                draw_scale
                             );
+                            
                             let erase_hit = if settings.brush_shape == BrushShape::Square {
-                                (local_pos.x - pos.x).abs() <= r && (local_pos.y - pos.y).abs() <= r
+                                (pixel_screen_pos.x - pos.x).abs() <= r && (pixel_screen_pos.y - pos.y).abs() <= r
                             } else {
-                                local_pos.distance(pos) < r
+                                pixel_screen_pos.distance(pos) < r
                             };
+                            
                             if erase_hit {
                                 let idx = py * img.size[0] + px;
                                 if img.is_live {

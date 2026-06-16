@@ -354,7 +354,7 @@ pub fn render_photoshop_panel(
     filters_open: &mut Option<usize>,
 ) {
     let main_tools = vec![
-        Tool::Move, Tool::Brush, Tool::Eraser, Tool::PaintBucket, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur,
+        Tool::Move, Tool::Brush, Tool::Eraser, Tool::PaintBucket, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur, Tool::Embed,
     ];
     
     let hide_icon = if settings.hide_all { "👁" } else { "👓" };
@@ -386,8 +386,6 @@ pub fn render_photoshop_panel(
                         let is_selected = *active_tool == *tool;
                         if tool_btn_custom(ui, *tool, is_selected).clicked() { *active_tool = *tool; }
                     }
-                    // Embed tool greyed out
-                    tool_btn_disabled(ui, Tool::Embed);
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
                     if ui.add(egui::Button::new("🕓").min_size(egui::vec2(28.0, 24.0))).on_hover_text("History").clicked() { *show_history_panel = !*show_history_panel; }
@@ -409,8 +407,6 @@ pub fn render_photoshop_panel(
                         let is_selected = *active_tool == *tool;
                         if tool_btn_custom(ui, *tool, is_selected).clicked() { *active_tool = *tool; }
                     }
-                    // Embed tool greyed out
-                    tool_btn_disabled(ui, Tool::Embed);
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
                     if ui.add(egui::Button::new("🕓").min_size(egui::vec2(28.0, 24.0))).on_hover_text("History").clicked() { *show_history_panel = !*show_history_panel; }
@@ -549,40 +545,40 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::PaintBucket => {
-            ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Tolerance: "));
+            ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Tolerance: ")).on_hover_text("Color tolerance for magic wand fill");
         }
         Tool::Shape => {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Rect, "Rect");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Circle, "Circ");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Star, "Star");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Heart, "Heart");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Arrow, "Arrow");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Poly, "Poly");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Rect, "Rect").on_hover_text("Draw rectangle shape");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Circle, "Circ").on_hover_text("Draw circle/ellipse shape");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Star, "Star").on_hover_text("Draw star shape");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Heart, "Heart").on_hover_text("Draw heart shape");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Arrow, "Arrow").on_hover_text("Draw arrow shape");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Poly, "Poly").on_hover_text("Draw polygon shape");
             });
         }
         Tool::Snip => {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Rect, "Rect");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Circle, "Circ");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Lasso, "Lasso");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star");
-                ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Rect, "Rect").on_hover_text("Rectangular snip");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Circle, "Circ").on_hover_text("Elliptical snip");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Lasso, "Lasso").on_hover_text("Freehand lasso snip");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Polygon, "Poly").on_hover_text("Polygon snip");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Star, "Star").on_hover_text("Star-shaped snip");
+                ui.selectable_value(&mut settings.snip_mode, SnipMode::Heart, "Heart").on_hover_text("Heart-shaped snip");
                 ui.add(egui::Separator::default().vertical());
                 let static_sel = !settings.snip_live;
                 let live_sel = settings.snip_live;
                 let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
                 let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
-                if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
+                if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).on_hover_text("Capture static/non-refreshing snip").clicked() { settings.snip_live = false; }
+                if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).on_hover_text("Capture real-time live mirror snip").clicked() { settings.snip_live = true; }
                 ui.add(egui::Separator::default().vertical());
-                ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0));
+                ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0)).on_hover_text("Blur strength for capture");
                 if settings.blur_strength > 0.1 {
                     ui.add(egui::Separator::default().vertical());
-                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
-                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
-                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
+                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus").on_hover_text("Gaussian Blur Effect");
+                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix").on_hover_text("Pixelation Effect");
+                    ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS").on_hover_text("VHS Glitch Effect");
                 }
                 
                 let active_layer_idx = project.active_layer;
@@ -602,7 +598,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     if let Some(img) = found_img {
                         ui.add(egui::Separator::default().vertical());
                         let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
-                        if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
+                        if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).on_hover_text("Show/hide the capture source outline on screen").clicked() {
                             img.show_source_rect = !img.show_source_rect;
                             settings.show_source_rect = img.show_source_rect;
                             settings.save();
@@ -614,18 +610,18 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
         Tool::Cut => {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut settings.cut_mode, CutMode::Rect, "Rect");
-                    ui.selectable_value(&mut settings.cut_mode, CutMode::Circle, "Circ");
-                    ui.selectable_value(&mut settings.cut_mode, CutMode::Star, "Star");
-                    ui.selectable_value(&mut settings.cut_mode, CutMode::Heart, "Heart");
-                    ui.selectable_value(&mut settings.cut_mode, CutMode::Lasso, "Lasso");
-                    ui.selectable_value(&mut settings.cut_mode, CutMode::Polygon, "Poly");
-                    ui.selectable_value(&mut settings.cut_mode, CutMode::MagicWand, "Wand");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Rect, "Rect").on_hover_text("Rectangular selection cut");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Circle, "Circ").on_hover_text("Elliptical selection cut");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Star, "Star").on_hover_text("Star-shaped selection cut");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Heart, "Heart").on_hover_text("Heart-shaped selection cut");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Lasso, "Lasso").on_hover_text("Freehand lasso selection cut");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::Polygon, "Poly").on_hover_text("Polygon selection cut");
+                    ui.selectable_value(&mut settings.cut_mode, CutMode::MagicWand, "Wand").on_hover_text("Magic wand color tolerance selection cut");
                     ui.add(egui::Separator::default().vertical());
                     
                     // Invert button instead of checkbox
                     let inv_color = if settings.inverted_cut { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
-                    if ui.add(egui::Button::new(egui::RichText::new("Invert").color(inv_color).strong()).selected(settings.inverted_cut)).clicked() {
+                    if ui.add(egui::Button::new(egui::RichText::new("Invert").color(inv_color).strong()).selected(settings.inverted_cut)).on_hover_text("Invert selection cut area").clicked() {
                         settings.inverted_cut = !settings.inverted_cut;
                     }
                     
@@ -640,15 +636,15 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     let add_color = if add_sel { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
                     let sub_color = if sub_sel { egui::Color32::from_rgb(255, 100, 100) } else { egui::Color32::from_gray(140) };
                     
-                    if ui.add(egui::Button::new(egui::RichText::new("New").color(new_color).strong()).selected(new_sel)).clicked() { settings.selection_mode = SelectionMode::New; }
-                    if ui.add(egui::Button::new(egui::RichText::new("Add").color(add_color).strong()).selected(add_sel)).clicked() { settings.selection_mode = SelectionMode::Add; }
-                    if ui.add(egui::Button::new(egui::RichText::new("Sub").color(sub_color).strong()).selected(sub_sel)).clicked() { settings.selection_mode = SelectionMode::Subtract; }
+                    if ui.add(egui::Button::new(egui::RichText::new("New").color(new_color).strong()).selected(new_sel)).on_hover_text("Start a new selection").clicked() { settings.selection_mode = SelectionMode::New; }
+                    if ui.add(egui::Button::new(egui::RichText::new("Add").color(add_color).strong()).selected(add_sel)).on_hover_text("Add to current selection").clicked() { settings.selection_mode = SelectionMode::Add; }
+                    if ui.add(egui::Button::new(egui::RichText::new("Sub").color(sub_color).strong()).selected(sub_sel)).on_hover_text("Subtract from current selection").clicked() { settings.selection_mode = SelectionMode::Subtract; }
                     
                     ui.add(egui::Separator::default().vertical());
                     
                     if settings.cut_mode == CutMode::MagicWand {
                         ui.add(egui::Separator::default().vertical());
-                        ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: "));
+                        ui.add(egui::DragValue::new(&mut settings.magic_wand_threshold).range(0.0..=100.0).prefix("Thresh: ")).on_hover_text("Magic wand color tolerance");
                     }
                 });
                 
@@ -657,41 +653,67 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     let live_sel = settings.snip_live;
                     let static_color = if static_sel { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
                     let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                    if ui.add(egui::Button::new(egui::RichText::new("Static").color(static_color).strong()).selected(static_sel)).clicked() { settings.snip_live = false; }
-                    if ui.add(egui::Button::new(egui::RichText::new("Live").color(live_color).strong()).selected(live_sel)).clicked() { settings.snip_live = true; }
+                    if ui.add(egui::Button::new(egui::RichText::new("Static").color(static_color).strong()).selected(static_sel)).on_hover_text("Capture static/non-refreshing cut source").clicked() { settings.snip_live = false; }
+                    if ui.add(egui::Button::new(egui::RichText::new("Live").color(live_color).strong()).selected(live_sel)).on_hover_text("Capture live mirror cut source").clicked() { settings.snip_live = true; }
                     
                     ui.add(egui::Separator::default().vertical());
+ 
+                    // Snip source Buttons
+                    let mut source_changed = false;
+                    let desktop_color = if settings.snip_source == CaptureSource::Desktop { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                    let overlay_color = if settings.snip_source == CaptureSource::Overlay { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                    let origin_color = if settings.snip_source == CaptureSource::Origin { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
 
-                    // Desktop / Overlay capture source toggle
-                    let source_desktop = !settings.snip_source_overlay;
-                    let source_overlay = settings.snip_source_overlay;
-                    let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
-                    let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                    if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).clicked() {
-                        update_snip_source_overlay(ui, project, settings, false);
+                    if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(settings.snip_source == CaptureSource::Desktop)).on_hover_text("Capture from Desktop").clicked() {
+                        settings.snip_source = CaptureSource::Desktop;
+                        settings.snip_source_overlay = false;
+                        source_changed = true;
                     }
-                    if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).clicked() {
-                        update_snip_source_overlay(ui, project, settings, true);
+                    if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(settings.snip_source == CaptureSource::Overlay)).on_hover_text("Capture from Overlay").clicked() {
+                        settings.snip_source = CaptureSource::Overlay;
+                        settings.snip_source_overlay = true;
+                        source_changed = true;
+                    }
+                    if ui.add(egui::Button::new(egui::RichText::new("Origin").color(origin_color).strong()).selected(settings.snip_source == CaptureSource::Origin)).on_hover_text("Capture from specific Window background").clicked() {
+                        settings.snip_source = CaptureSource::Origin;
+                        settings.snip_source_overlay = false;
+                        source_changed = true;
+                    }
+
+                    if source_changed {
+                        update_snip_source_overlay(ui, project, settings, settings.snip_source_overlay);
+                        settings.save();
+                    }
+
+                    if settings.snip_source == CaptureSource::Origin {
+                        // Auto-detect window at screen center when no target is set
+                        if settings.origin_target_hwnd == 0 {
+                            let (sw, sh) = crate::winapi_utils::get_screen_size(false);
+                            if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point((sw as i32) / 2, (sh as i32) / 2) {
+                                settings.origin_target_hwnd = hwnd as isize;
+                                settings.save();
+                            }
+                        }
                     }
                     
                     ui.add(egui::Separator::default().vertical());
-                    ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0));
+                    ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0)).on_hover_text("Blur strength for capture");
                     if settings.blur_strength > 0.1 {
                         ui.add(egui::Separator::default().vertical());
-                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
-                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
-                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus").on_hover_text("Gaussian Blur Effect");
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix").on_hover_text("Pixelation Effect");
+                        ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS").on_hover_text("VHS Glitch Effect");
                     }
                     
                     if project.marquee_selection.is_some() {
                         ui.add(egui::Separator::default().vertical());
-                        if ui.add(egui::Button::new(egui::RichText::new("✂ Snip").color(egui::Color32::from_rgb(100, 220, 100)).strong())).clicked() {
+                        if ui.add(egui::Button::new(egui::RichText::new("✂ Snip").color(egui::Color32::from_rgb(100, 220, 100)).strong())).on_hover_text("Snip and extract the selection marquee").clicked() {
                             project.request_copy = true;
                         }
-                        if ui.add(egui::Button::new(egui::RichText::new("✂ Cut").color(egui::Color32::from_rgb(255, 180, 50)).strong())).clicked() {
+                        if ui.add(egui::Button::new(egui::RichText::new("✂ Cut").color(egui::Color32::from_rgb(255, 180, 50)).strong())).on_hover_text("Cut selection marquee out").clicked() {
                             project.request_cut = true;
                         }
-                        if ui.add(egui::Button::new(egui::RichText::new("💧 Blur").color(egui::Color32::from_rgb(100, 180, 255)).strong())).clicked() {
+                        if ui.add(egui::Button::new(egui::RichText::new("💧 Blur").color(egui::Color32::from_rgb(100, 180, 255)).strong())).on_hover_text("Blur selection marquee area").clicked() {
                             project.request_blur = true;
                         }
                     }
@@ -713,7 +735,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         if let Some(img) = found_img {
                             ui.add(egui::Separator::default().vertical());
                             let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
-                            if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
+                            if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).on_hover_text("Show/hide the capture source outline on screen").clicked() {
                                 img.show_source_rect = !img.show_source_rect;
                                 settings.show_source_rect = img.show_source_rect;
                                 settings.save();
@@ -724,32 +746,58 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             });
         }
         Tool::Blur => {
-            ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0));
+            ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0)).on_hover_text("Blur strength");
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus");
-                ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix");
-                ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS");
+                ui.selectable_value(&mut settings.blur_effect, BlurEffect::Gaussian, "Gaus").on_hover_text("Gaussian Blur Effect");
+                ui.selectable_value(&mut settings.blur_effect, BlurEffect::Pixelate, "Pix").on_hover_text("Pixelation Effect");
+                ui.selectable_value(&mut settings.blur_effect, BlurEffect::Glitch, "VHS").on_hover_text("VHS Glitch Effect");
             });
             ui.add(egui::Separator::default());
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Rect, "Rect");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Circle, "Circ");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Star, "Star");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Heart, "Heart");
-                ui.selectable_value(&mut settings.shape_type, ShapeType::Poly, "Poly");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Rect, "Rect").on_hover_text("Draw rectangular blur");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Circle, "Circ").on_hover_text("Draw circular blur");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Star, "Star").on_hover_text("Draw star-shaped blur");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Heart, "Heart").on_hover_text("Draw heart-shaped blur");
+                ui.selectable_value(&mut settings.shape_type, ShapeType::Poly, "Poly").on_hover_text("Draw polygon blur");
             });
 
             ui.add(egui::Separator::default());
             ui.horizontal(|ui| {
-                let source_desktop = !settings.snip_source_overlay;
-                let source_overlay = settings.snip_source_overlay;
-                let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
-                let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).on_hover_text("Blur desktop content").clicked() {
-                    update_snip_source_overlay(ui, project, settings, false);
+                let mut source_changed = false;
+                let desktop_color = if settings.snip_source == CaptureSource::Desktop { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                let overlay_color = if settings.snip_source == CaptureSource::Overlay { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                let origin_color = if settings.snip_source == CaptureSource::Origin { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+
+                if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(settings.snip_source == CaptureSource::Desktop)).on_hover_text("Capture from Desktop").clicked() {
+                    settings.snip_source = CaptureSource::Desktop;
+                    settings.snip_source_overlay = false;
+                    source_changed = true;
                 }
-                if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).on_hover_text("Blur overlay content").clicked() {
-                    update_snip_source_overlay(ui, project, settings, true);
+                if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(settings.snip_source == CaptureSource::Overlay)).on_hover_text("Capture from Overlay").clicked() {
+                    settings.snip_source = CaptureSource::Overlay;
+                    settings.snip_source_overlay = true;
+                    source_changed = true;
+                }
+                if ui.add(egui::Button::new(egui::RichText::new("Origin").color(origin_color).strong()).selected(settings.snip_source == CaptureSource::Origin)).on_hover_text("Capture from specific Window background").clicked() {
+                    settings.snip_source = CaptureSource::Origin;
+                    settings.snip_source_overlay = false;
+                    source_changed = true;
+                }
+
+                if source_changed {
+                    update_snip_source_overlay(ui, project, settings, settings.snip_source_overlay);
+                    settings.save();
+                }
+
+                if settings.snip_source == CaptureSource::Origin {
+                    // Auto-detect window at screen center when no target is set
+                    if settings.origin_target_hwnd == 0 {
+                        let (sw, sh) = crate::winapi_utils::get_screen_size(false);
+                        if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point((sw as i32) / 2, (sh as i32) / 2) {
+                            settings.origin_target_hwnd = hwnd as isize;
+                            settings.save();
+                        }
+                    }
                 }
             });
         }
@@ -831,15 +879,84 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             };
                             if img_is_live || img_has_source_rect {
                                 ui.separator();
-                                let source_desktop = !settings.snip_source_overlay;
-                                let source_overlay = settings.snip_source_overlay;
-                                let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
-                                let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                                if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).clicked() {
-                                    update_snip_source_overlay(ui, project, settings, false);
+                                let mut img_source_changed = false;
+                                let ppp = ui.ctx().pixels_per_point();
+                                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+
+                                {
+                                    let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                    let img_desktop_color = if img.capture_source == CaptureSource::Desktop { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                                    let img_overlay_color = if img.capture_source == CaptureSource::Overlay { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                                    let img_origin_color = if img.capture_source == CaptureSource::Origin { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+
+                                    if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(img_desktop_color).strong()).selected(img.capture_source == CaptureSource::Desktop)).on_hover_text("Capture from Desktop").clicked() {
+                                        img.capture_source = CaptureSource::Desktop;
+                                        img.snip_source_overlay = false;
+                                        img_source_changed = true;
+                                    }
+                                    if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(img_overlay_color).strong()).selected(img.capture_source == CaptureSource::Overlay)).on_hover_text("Capture from Overlay").clicked() {
+                                        img.capture_source = CaptureSource::Overlay;
+                                        img.snip_source_overlay = true;
+                                        img_source_changed = true;
+                                    }
+                                    if ui.add(egui::Button::new(egui::RichText::new("Origin").color(img_origin_color).strong()).selected(img.capture_source == CaptureSource::Origin)).on_hover_text("Capture from specific Window background").clicked() {
+                                        img.capture_source = CaptureSource::Origin;
+                                        img.snip_source_overlay = false;
+                                        img_source_changed = true;
+                                    }
+
+                                    if img.capture_source == CaptureSource::Origin && img.target_hwnd == 0 {
+                                        // Auto-detect window behind source rect center
+                                        if let Some(src) = img.source_rect {
+                                            let center_x = (src[0] + src[2] / 2.0) as i32;
+                                            let center_y = (src[1] + src[3] / 2.0) as i32;
+                                            if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
+                                                img.target_hwnd = hwnd as isize;
+                                                img_source_changed = true;
+                                            }
+                                        }
+                                    }
                                 }
-                                if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).clicked() {
-                                    update_snip_source_overlay(ui, project, settings, true);
+
+                                if img_source_changed {
+                                    let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                    img.thumbnail_texture = None;
+                                    img.texture = None;
+                                    
+                                    if !img.is_live {
+                                        if let Some(src) = img.source_rect {
+                                            let sx = (src[0] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                                            let sy = (src[1] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                                            let pw = (src[2] * ppp).round() as i32;
+                                            let ph = (src[3] * ppp).round() as i32;
+                                            
+                                            let captured_pixels = if img.capture_source == CaptureSource::Origin && img.target_hwnd != 0 {
+                                                if let Some((p, w, h)) = crate::winapi_utils::capture_window(img.target_hwnd as usize) {
+                                                    Some((p, w, h))
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, pw, ph)
+                                                    .map(|p| (p, pw as usize, ph as usize))
+                                            };
+
+                                            if let Some((mut pixels, w, h)) = captured_pixels {
+                                                if let Some(ref mask) = img.mask {
+                                                    if mask.len() == w * h {
+                                                        for (i, &m) in mask.iter().enumerate() {
+                                                            if m == 0 && i * 4 + 3 < pixels.len() {
+                                                                pixels[i * 4 + 3] = 0;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                img.pixels = pixels;
+                                                img.size = [w, h];
+                                            }
+                                        }
+                                    }
+                                    project.save();
                                 }
 
                                 if img_is_live {
@@ -848,11 +965,11 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                                     let real_mode = !settings.live_performance_mode;
                                     let perf_color = if perf_mode { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
                                     let real_color = if real_mode { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                                    if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).clicked() {
+                                    if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).on_hover_text("Reduced capture frequency to save system resources").clicked() {
                                         settings.live_performance_mode = true;
                                         settings.save();
                                     }
-                                    if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).clicked() {
+                                    if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).on_hover_text("Maximum capture frequency for smooth real-time updates").clicked() {
                                         settings.live_performance_mode = false;
                                         settings.save();
                                     }
@@ -996,15 +1113,41 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         }
 
                         ui.separator();
-                        let source_desktop = !settings.snip_source_overlay;
-                        let source_overlay = settings.snip_source_overlay;
-                        let desktop_color = if source_desktop { egui::Color32::from_rgb(100, 200, 255) } else { egui::Color32::from_gray(140) };
-                        let overlay_color = if source_overlay { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                        if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(source_desktop)).clicked() {
-                            update_snip_source_overlay(ui, project, settings, false);
+                        let mut source_changed = false;
+                        let desktop_color = if settings.snip_source == CaptureSource::Desktop { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                        let overlay_color = if settings.snip_source == CaptureSource::Overlay { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                        let origin_color = if settings.snip_source == CaptureSource::Origin { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+
+                        if ui.add(egui::Button::new(egui::RichText::new("Desktop").color(desktop_color).strong()).selected(settings.snip_source == CaptureSource::Desktop)).on_hover_text("Capture from Desktop").clicked() {
+                            settings.snip_source = CaptureSource::Desktop;
+                            settings.snip_source_overlay = false;
+                            source_changed = true;
                         }
-                        if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(source_overlay)).clicked() {
-                            update_snip_source_overlay(ui, project, settings, true);
+                        if ui.add(egui::Button::new(egui::RichText::new("Overlay").color(overlay_color).strong()).selected(settings.snip_source == CaptureSource::Overlay)).on_hover_text("Capture from Overlay").clicked() {
+                            settings.snip_source = CaptureSource::Overlay;
+                            settings.snip_source_overlay = true;
+                            source_changed = true;
+                        }
+                        if ui.add(egui::Button::new(egui::RichText::new("Origin").color(origin_color).strong()).selected(settings.snip_source == CaptureSource::Origin)).on_hover_text("Capture from specific Window background").clicked() {
+                            settings.snip_source = CaptureSource::Origin;
+                            settings.snip_source_overlay = false;
+                            source_changed = true;
+                        }
+
+                        if source_changed {
+                            update_snip_source_overlay(ui, project, settings, settings.snip_source_overlay);
+                            settings.save();
+                        }
+
+                        if settings.snip_source == CaptureSource::Origin {
+                            // Auto-detect window at screen center when no target is set
+                            if settings.origin_target_hwnd == 0 {
+                                let (sw, sh) = crate::winapi_utils::get_screen_size(false);
+                                if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point((sw as i32) / 2, (sh as i32) / 2) {
+                                    settings.origin_target_hwnd = hwnd as isize;
+                                    settings.save();
+                                }
+                            }
                         }
 
                         ui.separator();
@@ -1065,32 +1208,53 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
         }
         Tool::Embed => {
             ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("?? YouTube").clicked() {
-                        *embed_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string();
-                        *embed_trigger = true;
+                #[cfg(feature = "webengine")]
+                {
+                    if !crate::web_engine::is_available() {
+                        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Web Engine Not Available:");
+                        ui.label(egui::RichText::new("'resources/' folder is missing!").size(11.0).color(egui::Color32::from_rgb(240, 150, 150)));
+                        ui.label(egui::RichText::new("Copy 'resources' folder from Ultralight SDK to current directory.").size(10.0).color(egui::Color32::GRAY));
+                        if ui.button("Try Initialize").clicked() {
+                            crate::web_engine::init();
+                        }
+                        ui.separator();
                     }
-                    if ui.button("?? Browser").clicked() {
-                        *embed_url = "https://www.google.com".to_string();
-                        *embed_trigger = true;
-                    }
+                }
+                #[cfg(not(feature = "webengine"))]
+                {
+                    ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Web Engine Feature Not Enabled:");
+                    ui.label(egui::RichText::new("Compile with --features webengine").size(10.0).color(egui::Color32::GRAY));
+                    ui.separator();
+                }
+
+                ui.add_enabled_ui(false, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Select Window:");
+                        let mut selected_hwnd = None;
+                        egui::ComboBox::from_id_salt("running_programs")
+                            .selected_text("Select Window...")
+                            .show_ui(ui, |ui| {
+                                let windows = crate::winapi_utils::list_visible_windows();
+                                for (hwnd, title) in windows {
+                                    if ui.selectable_label(false, &title).clicked() {
+                                        selected_hwnd = Some(hwnd);
+                                    }
+                                }
+                            });
+                        if let Some(hwnd) = selected_hwnd {
+                            *embed_url = format!("window://{}", hwnd);
+                            *embed_trigger = true;
+                        }
+                    });
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Program:");
-                    let mut selected_hwnd = None;
-                    egui::ComboBox::from_id_salt("running_programs")
-                        .selected_text("Select Program...")
-                        .show_ui(ui, |ui| {
-                            let windows = crate::winapi_utils::list_visible_windows();
-                            for (hwnd, title) in windows {
-                                if ui.selectable_label(false, &title).clicked() {
-                                    selected_hwnd = Some(hwnd);
-                                }
-                            }
-                        });
-                    if let Some(hwnd) = selected_hwnd {
-                        *embed_url = format!("window://{}", hwnd);
+                    if ui.button("📺 YouTube").clicked() {
+                        *embed_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string();
+                        *embed_trigger = true;
+                    }
+                    if ui.button("🌐 Browser").clicked() {
+                        *embed_url = "https://www.google.com".to_string();
                         *embed_trigger = true;
                     }
                 });
@@ -1168,27 +1332,49 @@ fn update_snip_source_overlay(ui: &mut egui::Ui, project: &mut crate::project::P
     settings.snip_source_overlay = val;
     let ppp = ui.ctx().pixels_per_point();
     let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
-    for layer in &mut project.layers {
-        for img in &mut layer.placed_images {
-            img.snip_source_overlay = val;
-            img.thumbnail_texture = None;
-            img.texture = None;
-            if !img.is_live {
-                if let Some(src) = img.source_rect {
-                    let sx = (src[0] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
-                    let sy = (src[1] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                    let pw = (src[2] * ppp).round() as i32;
-                    let ph = (src[3] * ppp).round() as i32;
-                    if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, pw, ph) {
-                        if let Some(ref mask) = img.mask {
-                            for (i, &m) in mask.iter().enumerate() {
-                                if m == 0 && i * 4 + 3 < pixels.len() {
-                                    pixels[i * 4 + 3] = 0;
+    
+    // Only update the currently selected image/object (if there is one) rather than globally modifying all images.
+    if let Some(sel) = project.selected_object {
+        if sel.layer_idx < project.layers.len() {
+            let layer = &mut project.layers[sel.layer_idx];
+            if sel.object_type == ObjectType::Image && sel.object_idx < layer.placed_images.len() {
+                let img = &mut layer.placed_images[sel.object_idx];
+                img.snip_source_overlay = val;
+                img.capture_source = settings.snip_source;
+                img.target_hwnd = settings.origin_target_hwnd;
+                img.thumbnail_texture = None;
+                img.texture = None;
+                if !img.is_live {
+                    if let Some(src) = img.source_rect {
+                        let sx = (src[0] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                        let sy = (src[1] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                        let pw = (src[2] * ppp).round() as i32;
+                        let ph = (src[3] * ppp).round() as i32;
+                        
+                        let captured_pixels = if img.capture_source == CaptureSource::Origin && img.target_hwnd != 0 {
+                            if let Some((p, w, h)) = crate::winapi_utils::capture_window(img.target_hwnd as usize) {
+                                Some((p, w, h))
+                            } else {
+                                None
+                            }
+                        } else {
+                            crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, pw, ph)
+                                .map(|p| (p, pw as usize, ph as usize))
+                        };
+                        
+                        if let Some((mut pixels, w, h)) = captured_pixels {
+                            if let Some(ref mask) = img.mask {
+                                if mask.len() == w * h {
+                                    for (i, &m) in mask.iter().enumerate() {
+                                        if m == 0 && i * 4 + 3 < pixels.len() {
+                                            pixels[i * 4 + 3] = 0;
+                                        }
+                                    }
                                 }
                             }
+                            img.pixels = pixels;
+                            img.size = [w, h];
                         }
-                        img.pixels = pixels;
-                        img.size = [pw as usize, ph as usize];
                     }
                 }
             }

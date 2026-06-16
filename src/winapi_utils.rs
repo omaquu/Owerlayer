@@ -6,7 +6,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
     WindowFromPoint, GetAncestor, GA_ROOT, GetWindowTextW,
     GetWindowRect, IsWindowVisible, SetWindowDisplayAffinity, SetForegroundWindow,
-    EnumWindows,
+    EnumWindows, ShowWindow, SW_HIDE, SW_SHOW,
 };
 use windows_sys::Win32::Graphics::Gdi::{
     GetDC, ReleaseDC, CreateCompatibleDC, CreateCompatibleBitmap, SelectObject,
@@ -522,6 +522,20 @@ pub fn set_capture_exclusion(enabled: bool) {
 #[cfg(not(windows))]
 pub fn set_capture_exclusion(_enabled: bool) {}
 
+/// Sets window visibility.
+#[cfg(windows)]
+pub fn set_window_visibility(visible: bool) {
+    let hwnd = OVERLAY_HWND.load(Ordering::Relaxed);
+    if !hwnd.is_null() {
+        unsafe {
+            ShowWindow(hwnd, if visible { SW_SHOW } else { SW_HIDE });
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_window_visibility(_visible: bool) {}
+
 /// Force the overlay to become the foreground window so it
 /// can receive keyboard input (used when entering edit mode).
 #[cfg(windows)]
@@ -638,35 +652,29 @@ pub fn capture_screen_rect(x: i32, y: i32, width: i32, height: i32) -> Option<Ve
 #[cfg(windows)]
 pub fn get_window_at_point(sx: i32, sy: i32) -> Option<(usize, String, [i32; 4])> {
     unsafe {
-        let pt = POINT { x: sx, y: sy };
-        let child = WindowFromPoint(pt);
-        if child.is_null() { return None; }
-
-        // Walk to top-level ancestor
-        let hwnd = GetAncestor(child, GA_ROOT);
-        if hwnd.is_null() { return None; }
-
-        // Skip our own overlay window
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindow, GetTopWindow, GW_HWNDNEXT,
+        };
         let overlay = OVERLAY_HWND.load(Ordering::Relaxed);
-        if hwnd == overlay { return None; }
-
-        // Must be visible
-        if IsWindowVisible(hwnd) == 0 { return None; }
-
-        // Get title (skip taskbar / untitled system windows)
-        let mut buf = [0u16; 256];
-        let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), 256);
-        if len == 0 { return None; }
-        let title = String::from_utf16_lossy(&buf[..len as usize]);
-
-        // Get window rect
-        let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-        GetWindowRect(hwnd, &mut r);
-        let w = r.right - r.left;
-        let h = r.bottom - r.top;
-        if w <= 0 || h <= 0 { return None; }
-
-        Some((hwnd as usize, title, [r.left, r.top, w, h]))
+        let mut hwnd = GetTopWindow(std::ptr::null_mut());
+        while !hwnd.is_null() {
+            if hwnd != overlay && IsWindowVisible(hwnd) != 0 {
+                let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                GetWindowRect(hwnd, &mut r);
+                if sx >= r.left && sx < r.right && sy >= r.top && sy < r.bottom {
+                    let mut buf = [0u16; 256];
+                    let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), 256);
+                    if len > 0 {
+                        let title = String::from_utf16_lossy(&buf[..len as usize]);
+                        let w = r.right - r.left;
+                        let h = r.bottom - r.top;
+                        return Some((hwnd as usize, title, [r.left, r.top, w, h]));
+                    }
+                }
+            }
+            hwnd = GetWindow(hwnd, GW_HWNDNEXT);
+        }
+        None
     }
 }
 
@@ -803,6 +811,17 @@ pub fn list_visible_windows() -> Vec<(usize, String)> {
         EnumWindows(Some(enum_window_proc), &mut windows as *mut _ as isize);
         windows.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
         windows
+    }
+}
+
+pub fn enumerate_visible_windows() -> Vec<(isize, String)> {
+    #[cfg(windows)]
+    {
+        list_visible_windows().into_iter().map(|(hwnd, title)| (hwnd as isize, title)).collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
     }
 }
 
