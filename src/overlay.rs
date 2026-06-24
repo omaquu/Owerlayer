@@ -110,6 +110,8 @@ pub fn render_canvas(
     rasterize_bbox: Option<[f32; 4]>,
     rasterize_capture: crate::rasterize::CaptureBuffer,
     perf_stats: &mut crate::types::AppPerfStats,
+    volume_sessions: &[crate::volume_mixer::AudioSessionInfo],
+    volume_mixer_cmd_tx: &std::sync::mpsc::Sender<crate::volume_mixer::MixerCommand>,
 ) {
     let rect = ui.available_rect_before_wrap();
     
@@ -178,17 +180,29 @@ pub fn render_canvas(
         return; // Prevent other interactions
     }
 
-    // ── Hide All Logic ──
-    if settings.hide_all { 
-        // We still allow drawing if edit_mode is true? 
-        // User said: "same button should show the once hid when clicking it"
-        // Usually, hide all means visually hidden.
+    // ── Grid Rendering ──
+    if settings.show_grid && !settings.hide_all {
+        let grid_size = settings.grid_size.max(10.0);
+        let color = egui::Color32::from_rgba_premultiplied(128, 128, 128, 12);
+        let stroke = egui::Stroke::new(1.0, color);
+        // Vertical lines
+        let mut x = rect.min.x;
+        while x <= rect.max.x {
+            painter.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], stroke);
+            x += grid_size;
+        }
+        // Horizontal lines
+        let mut y = rect.min.y;
+        while y <= rect.max.y {
+            painter.line_segment([egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)], stroke);
+            y += grid_size;
+        }
     }
-
 
     // ── Layers Rendering ──
     let rasterize_req = project.rasterize_request;
     for (i, layer) in project.layers.iter_mut().enumerate().filter(|(_, l)| l.visible) {
+        if settings.hide_all && rasterize_phase == 0 { continue; }
         // During rasterize capture, only render the target layer
         if rasterize_phase == 1 {
             if let Some(req) = &rasterize_req {
@@ -203,6 +217,603 @@ pub fn render_canvas(
 
         for img in layer.placed_images.iter_mut() {
             if !img.visible { continue; }
+            if let Some(w_type) = img.widget_type {
+                let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
+                let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+                let area_pos = img.position - render_offset;
+
+                let apply_filters = |mut c: egui::Color32| -> egui::Color32 {
+                    c = crate::utils::apply_color_effects(c, img.grayscale, img.invert, img.sepia, img.glow, img.glow_strength);
+                    c.gamma_multiply(img.opacity)
+                };
+
+                let bg_color = apply_filters(crate::utils::color32(&settings.pen_color));
+                let accent_color = apply_filters(crate::utils::color32(&settings.background_color));
+
+                let adjust_brightness = |c: egui::Color32, amount: f32| -> egui::Color32 {
+                    let mut r = c.r() as f32 + amount * 255.0;
+                    let mut g = c.g() as f32 + amount * 255.0;
+                    let mut b = c.b() as f32 + amount * 255.0;
+                    egui::Color32::from_rgba_unmultiplied(
+                        r.clamp(0.0, 255.0) as u8,
+                        g.clamp(0.0, 255.0) as u8,
+                        b.clamp(0.0, 255.0) as u8,
+                        c.a(),
+                    )
+                };
+
+                let hover_bg = adjust_brightness(bg_color, 0.1);
+                let active_bg = adjust_brightness(bg_color, 0.2);
+                let hover_accent = adjust_brightness(accent_color, 0.1);
+                let active_accent = adjust_brightness(accent_color, 0.2);
+
+                let mut frame = egui::Frame::window(ui.style())
+                    .fill(if img.transparent_bg { egui::Color32::TRANSPARENT } else { bg_color })
+                    .stroke(if img.transparent_bg && !img.outline { egui::Stroke::NONE } else { egui::Stroke::new(1.0, accent_color) });
+
+                if img.outline {
+                    let outline_color = apply_filters(crate::utils::color32(&img.outline_color));
+                    frame = frame.stroke(egui::Stroke::new(img.outline_width.max(1.0), outline_color));
+                }
+
+                if img.shadow {
+                    let shadow_color = apply_filters(crate::utils::color32(&img.shadow_color));
+                    frame = frame.shadow(egui::Shadow {
+                        offset: [img.shadow_offset[0] as i8, img.shadow_offset[1] as i8],
+                        blur: img.shadow_blur.clamp(0.0, 255.0) as u8,
+                        spread: img.shadow_spread.clamp(0.0, 255.0) as u8,
+                        color: shadow_color,
+                    });
+                } else if img.glow {
+                    let glow_color = apply_filters(crate::utils::color32(&img.glow_color));
+                    frame = frame.shadow(egui::Shadow {
+                        offset: [0, 0],
+                        blur: (img.glow_strength * 2.0).clamp(0.0, 255.0) as u8,
+                        spread: img.glow_spread.clamp(0.0, 255.0) as u8,
+                        color: glow_color,
+                    });
+                } else {
+                    frame = frame.shadow(egui::Shadow::NONE);
+                }
+
+                egui::Area::new(egui::Id::new(img.id))
+                    .fixed_pos(area_pos)
+                    .order(egui::Order::Foreground)
+                    .show(ui.ctx(), |ui| {
+                        let visuals = ui.visuals_mut();
+                        visuals.widgets.inactive.bg_fill = bg_color;
+                        visuals.widgets.inactive.weak_bg_fill = bg_color;
+                        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, accent_color);
+                        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, apply_filters(egui::Color32::WHITE));
+
+                        visuals.widgets.hovered.bg_fill = hover_bg;
+                        visuals.widgets.hovered.weak_bg_fill = hover_bg;
+                        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, hover_accent);
+                        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, apply_filters(egui::Color32::WHITE));
+
+                        visuals.widgets.active.bg_fill = active_bg;
+                        visuals.widgets.active.weak_bg_fill = active_bg;
+                        visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, active_accent);
+                        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, apply_filters(egui::Color32::WHITE));
+
+                        visuals.widgets.noninteractive.bg_fill = bg_color;
+                        visuals.widgets.noninteractive.weak_bg_fill = bg_color;
+                        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, accent_color);
+                        visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, apply_filters(egui::Color32::WHITE));
+
+                        frame.show(ui, |ui| {
+                            ui.set_width(disp_w);
+                            ui.set_height(disp_h);
+                            match w_type {
+                                crate::types::WidgetType::Calculator => {
+                                    let mut calc = img.calculator_state.clone().unwrap_or_default();
+                                    
+                                    // Dynamic scaling based on widget size
+                                    let default_w: f32 = 140.0;
+                                    let default_h: f32 = 180.0;
+                                    let scale_x = (disp_w / default_w).max(0.3);
+                                    let scale_y = (disp_h / default_h).max(0.3);
+                                    let scale = scale_x.min(scale_y);
+                                    let btn_size = (26.0 * scale).max(12.0);
+                                    let btn_font = (12.0 * scale).max(6.0);
+                                    let display_font = (14.0 * scale).max(7.0);
+                                    let spacing = (4.0 * scale).max(1.0);
+
+                                    let rect = ui.max_rect();
+                                    let is_hovered = ui.rect_contains_pointer(rect);
+                                    if is_hovered {
+                                        ui.input(|i| {
+                                            for event in &i.events {
+                                                if let egui::Event::Text(t) = event {
+                                                    for c in t.chars() {
+                                                        if c.is_digit(10) || c == '.' {
+                                                            calc.push_char(c);
+                                                        } else if c == '+' || c == '-' || c == '*' || c == '/' {
+                                                            calc.set_op(c);
+                                                        } else if c == '=' || c == '\r' || c == '\n' {
+                                                            calc.calculate();
+                                                        }
+                                                    }
+                                                } else if let egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } = event {
+                                                    calc.backspace();
+                                                } else if let egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } = event {
+                                                    calc.clear();
+                                                }
+                                            }
+                                        });
+                                    }
+
+                                    ui.vertical(|ui| {
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            ui.label(egui::RichText::new(&calc.display)
+                                                .font(egui::FontId::monospace(display_font))
+                                                .color(apply_filters(egui::Color32::WHITE)));
+                                        });
+                                        ui.separator();
+
+                                        egui::Grid::new(format!("calc_grid_{}", img.id))
+                                            .spacing(egui::vec2(spacing, spacing))
+                                            .show(ui, |ui| {
+                                                let btn = |ui: &mut egui::Ui, label: &str, bg: egui::Color32| {
+                                                    let response = ui.add(egui::Button::new(
+                                                        egui::RichText::new(label).font(egui::FontId::proportional(btn_font))
+                                                            .color(apply_filters(egui::Color32::WHITE))
+                                                    ).fill(bg).min_size(egui::vec2(btn_size, btn_size)));
+                                                    response.clicked()
+                                                };
+                                                
+                                                let gray = adjust_brightness(bg_color, 0.1);
+                                                let dark_gray = bg_color;
+                                                let orange = accent_color;
+
+                                                if btn(ui, "C", gray) { calc.clear(); }
+                                                if btn(ui, "±", gray) { calc.negate(); }
+                                                if btn(ui, "%", gray) { calc.percent(); }
+                                                if btn(ui, "÷", orange) { calc.set_op('/'); }
+                                                ui.end_row();
+
+                                                if btn(ui, "7", dark_gray) { calc.push_char('7'); }
+                                                if btn(ui, "8", dark_gray) { calc.push_char('8'); }
+                                                if btn(ui, "9", dark_gray) { calc.push_char('9'); }
+                                                if btn(ui, "×", orange) { calc.set_op('*'); }
+                                                ui.end_row();
+
+                                                if btn(ui, "4", dark_gray) { calc.push_char('4'); }
+                                                if btn(ui, "5", dark_gray) { calc.push_char('5'); }
+                                                if btn(ui, "6", dark_gray) { calc.push_char('6'); }
+                                                if btn(ui, "−", orange) { calc.set_op('-'); }
+                                                ui.end_row();
+
+                                                if btn(ui, "1", dark_gray) { calc.push_char('1'); }
+                                                if btn(ui, "2", dark_gray) { calc.push_char('2'); }
+                                                if btn(ui, "3", dark_gray) { calc.push_char('3'); }
+                                                if btn(ui, "+", orange) { calc.set_op('+'); }
+                                                ui.end_row();
+
+                                                if btn(ui, "0", dark_gray) { calc.push_char('0'); }
+                                                if btn(ui, ".", dark_gray) { calc.push_char('.'); }
+                                                if btn(ui, "⌫", dark_gray) { calc.backspace(); }
+                                                if btn(ui, "=", orange) { calc.calculate(); }
+                                                ui.end_row();
+                                            });
+                                    });
+                                    img.calculator_state = Some(calc);
+                                }
+                                crate::types::WidgetType::VolumeMixer => {
+                                    let mixer_state = img.volume_mixer_state.clone().unwrap_or_default();
+                                    if mixer_state.mode == crate::types::MixerMode::Single {
+                                        let session_name = &mixer_state.target_session;
+                                        let session_opt = volume_sessions.iter().find(|s| &s.name == session_name);
+                                        let (current_volume, is_muted, pid) = if let Some(session) = session_opt {
+                                            (session.volume, session.mute, session.pid)
+                                        } else {
+                                            (0.5, false, u32::MAX)
+                                        };
+
+                                        let (rect, response) = ui.allocate_exact_size(
+                                            egui::vec2(disp_w, disp_h),
+                                            egui::Sense::click_and_drag()
+                                        );
+
+                                        let mut volume = current_volume;
+                                        let mut changed = false;
+
+                                        if response.dragged() || response.clicked() {
+                                            if let Some(mouse_pos) = ui.input(|i| i.pointer.hover_pos()) {
+                                                if mixer_state.style == crate::types::SliderStyle::Knob {
+                                                    if response.dragged() {
+                                                        let delta = ui.input(|i| i.pointer.delta());
+                                                        let speed = 0.005;
+                                                        volume = (volume - delta.y * speed).clamp(0.0, 1.0);
+                                                        changed = true;
+                                                    } else if response.clicked() {
+                                                        let center = rect.center();
+                                                        let dx = mouse_pos.x - center.x;
+                                                        let dy = mouse_pos.y - center.y;
+                                                        let mut angle = dy.atan2(dx);
+                                                        if angle < 0.0 { angle += 2.0 * std::f32::consts::PI; }
+                                                        let angle_deg = angle.to_degrees();
+                                                        let mut shifted = angle_deg - 135.0;
+                                                        if shifted < 0.0 { shifted += 360.0; }
+                                                        if shifted > 270.0 {
+                                                            if shifted > 315.0 {
+                                                                volume = 0.0;
+                                                            } else {
+                                                                volume = 1.0;
+                                                            }
+                                                        } else {
+                                                            volume = shifted / 270.0;
+                                                        }
+                                                        changed = true;
+                                                    }
+                                                } else {
+                                                    let val = if mixer_state.orientation == crate::types::SliderOrientation::Horizontal {
+                                                        let margin = 12.0;
+                                                        let width = rect.width() - 2.0 * margin;
+                                                        if width > 0.0 {
+                                                            ((mouse_pos.x - rect.left() - margin) / width).clamp(0.0, 1.0)
+                                                        } else {
+                                                            0.5
+                                                        }
+                                                    } else {
+                                                        let margin = 12.0;
+                                                        let height = rect.height() - 2.0 * margin;
+                                                        if height > 0.0 {
+                                                            (1.0 - (mouse_pos.y - rect.top() - margin) / height).clamp(0.0, 1.0)
+                                                        } else {
+                                                            0.5
+                                                        }
+                                                    };
+                                                    volume = val;
+                                                    changed = true;
+                                                }
+                                            }
+                                        }
+
+                                        if changed && volume != current_volume {
+                                            let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetVolume { pid, volume });
+                                        }
+
+                                        if response.double_clicked() {
+                                            let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetMute { pid, mute: !is_muted });
+                                        }
+
+                                        let painter = ui.painter();
+                                        let orientation = mixer_state.orientation;
+                                        
+                                        match mixer_state.style {
+                                            crate::types::SliderStyle::SleekPill => {
+                                                let radius = rect.height().min(rect.width()) * 0.5;
+                                                if orientation == crate::types::SliderOrientation::Horizontal {
+                                                    let track_rect = rect;
+                                                    painter.rect_filled(track_rect, radius, adjust_brightness(bg_color, -0.05));
+                                                    let fill_width = volume * (rect.width() - 2.0 * radius) + radius;
+                                                    let fill_rect = egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + fill_width + radius, rect.max.y));
+                                                    painter.rect_filled(fill_rect.intersect(rect), radius, if is_muted { apply_filters(egui::Color32::from_gray(100)) } else { accent_color });
+                                                    
+                                                    let handle_center_x = rect.min.x + radius + volume * (rect.width() - 2.0 * radius);
+                                                    let handle_rect = egui::Rect::from_center_size(
+                                                        egui::pos2(handle_center_x, rect.center().y),
+                                                        egui::vec2(24.0, rect.height() - 4.0)
+                                                    );
+                                                    painter.rect_filled(handle_rect, 6.0, adjust_brightness(bg_color, 0.2));
+                                                    painter.rect_stroke(handle_rect, 6.0, egui::Stroke::new(1.0, accent_color), egui::StrokeKind::Middle);
+                                                    
+                                                    let gx = handle_rect.center().x;
+                                                    let gy = handle_rect.center().y;
+                                                    let g_stroke = egui::Stroke::new(1.5, adjust_brightness(accent_color, -0.1));
+                                                    painter.line_segment([egui::pos2(gx - 4.0, gy - 6.0), egui::pos2(gx - 4.0, gy + 6.0)], g_stroke);
+                                                    painter.line_segment([egui::pos2(gx, gy - 6.0), egui::pos2(gx, gy + 6.0)], g_stroke);
+                                                    painter.line_segment([egui::pos2(gx + 4.0, gy - 6.0), egui::pos2(gx + 4.0, gy + 6.0)], g_stroke);
+                                                } else {
+                                                    let track_rect = rect;
+                                                    painter.rect_filled(track_rect, radius, adjust_brightness(bg_color, -0.05));
+                                                    let fill_height = volume * (rect.height() - 2.0 * radius) + radius;
+                                                    let fill_rect = egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - fill_height - radius), rect.max);
+                                                    painter.rect_filled(fill_rect.intersect(rect), radius, if is_muted { apply_filters(egui::Color32::from_gray(100)) } else { accent_color });
+                                                    
+                                                    let handle_center_y = rect.max.y - radius - volume * (rect.height() - 2.0 * radius);
+                                                    let handle_rect = egui::Rect::from_center_size(
+                                                        egui::pos2(rect.center().x, handle_center_y),
+                                                        egui::vec2(rect.width() - 4.0, 24.0)
+                                                    );
+                                                    painter.rect_filled(handle_rect, 6.0, adjust_brightness(bg_color, 0.2));
+                                                    painter.rect_stroke(handle_rect, 6.0, egui::Stroke::new(1.0, accent_color), egui::StrokeKind::Middle);
+                                                    
+                                                    let gx = handle_rect.center().x;
+                                                    let gy = handle_rect.center().y;
+                                                    let g_stroke = egui::Stroke::new(1.5, adjust_brightness(accent_color, -0.1));
+                                                    painter.line_segment([egui::pos2(gx - 6.0, gy - 4.0), egui::pos2(gx + 6.0, gy - 4.0)], g_stroke);
+                                                    painter.line_segment([egui::pos2(gx - 6.0, gy), egui::pos2(gx + 6.0, gy)], g_stroke);
+                                                    painter.line_segment([egui::pos2(gx - 6.0, gy + 4.0), egui::pos2(gx + 6.0, gy + 4.0)], g_stroke);
+                                                }
+                                            }
+                                            crate::types::SliderStyle::ThinMetal => {
+                                                if orientation == crate::types::SliderOrientation::Horizontal {
+                                                    let cy = rect.center().y;
+                                                    let track_line = egui::Rect::from_min_max(egui::pos2(rect.min.x + 10.0, cy - 1.5), egui::pos2(rect.max.x - 10.0, cy + 1.5));
+                                                    painter.rect_filled(track_line, 1.0, adjust_brightness(bg_color, -0.1));
+                                                    
+                                                    let tick_y = cy + 12.0;
+                                                    let num_ticks = 11;
+                                                    for idx in 0..num_ticks {
+                                                        let frac = idx as f32 / (num_ticks - 1) as f32;
+                                                        let tx = rect.min.x + 10.0 + frac * (rect.width() - 20.0);
+                                                        let tick_len = if idx % 5 == 0 { 6.0 } else { 3.0 };
+                                                        painter.line_segment(
+                                                            [egui::pos2(tx, tick_y), egui::pos2(tx, tick_y + tick_len)],
+                                                            egui::Stroke::new(1.0, adjust_brightness(bg_color, 0.1))
+                                                        );
+                                                    }
+                                                    
+                                                    let handle_x = rect.min.x + 10.0 + volume * (rect.width() - 20.0);
+                                                    let handle_rect = egui::Rect::from_center_size(egui::pos2(handle_x, cy), egui::vec2(16.0, 16.0));
+                                                    painter.rect_filled(handle_rect, 3.0, apply_filters(egui::Color32::from_gray(200)));
+                                                    painter.rect_stroke(handle_rect, 3.0, egui::Stroke::new(1.0, apply_filters(egui::Color32::from_gray(100))), egui::StrokeKind::Middle);
+                                                    painter.circle_filled(handle_rect.center(), 3.0, if is_muted { apply_filters(egui::Color32::from_gray(100)) } else { accent_color });
+                                                } else {
+                                                    let cx = rect.center().x;
+                                                    let track_line = egui::Rect::from_min_max(egui::pos2(cx - 1.5, rect.min.y + 10.0), egui::pos2(cx + 1.5, rect.max.y - 10.0));
+                                                    painter.rect_filled(track_line, 1.0, adjust_brightness(bg_color, -0.1));
+                                                    
+                                                    let tick_x = cx - 12.0;
+                                                    let num_ticks = 11;
+                                                    for idx in 0..num_ticks {
+                                                        let frac = idx as f32 / (num_ticks - 1) as f32;
+                                                        let ty = rect.max.y - 10.0 - frac * (rect.height() - 20.0);
+                                                        let tick_len = if idx % 5 == 0 { 6.0 } else { 3.0 };
+                                                        painter.line_segment(
+                                                            [egui::pos2(tick_x - tick_len, ty), egui::pos2(tick_x, ty)],
+                                                            egui::Stroke::new(1.0, adjust_brightness(bg_color, 0.1))
+                                                        );
+                                                    }
+                                                    
+                                                    let handle_y = rect.max.y - 10.0 - volume * (rect.height() - 20.0);
+                                                    let handle_rect = egui::Rect::from_center_size(egui::pos2(cx, handle_y), egui::vec2(16.0, 16.0));
+                                                    painter.rect_filled(handle_rect, 3.0, apply_filters(egui::Color32::from_gray(200)));
+                                                    painter.rect_stroke(handle_rect, 3.0, egui::Stroke::new(1.0, apply_filters(egui::Color32::from_gray(100))), egui::StrokeKind::Middle);
+                                                    painter.circle_filled(handle_rect.center(), 3.0, if is_muted { apply_filters(egui::Color32::from_gray(100)) } else { accent_color });
+                                                }
+                                            }
+                                            crate::types::SliderStyle::ThickTicks => {
+                                                if orientation == crate::types::SliderOrientation::Horizontal {
+                                                    let cy = rect.center().y;
+                                                    let track_rect = egui::Rect::from_min_max(egui::pos2(rect.min.x + 10.0, cy - 4.0), egui::pos2(rect.max.x - 10.0, cy + 4.0));
+                                                    painter.rect_filled(track_rect, 2.0, adjust_brightness(bg_color, -0.1));
+                                                    let handle_x = rect.min.x + 10.0 + volume * (rect.width() - 20.0);
+                                                    let fill_rect = egui::Rect::from_min_max(track_rect.min, egui::pos2(handle_x, track_rect.max.y));
+                                                    painter.rect_filled(fill_rect, 2.0, if is_muted { apply_filters(egui::Color32::from_gray(100)) } else { accent_color });
+                                                    
+                                                    let tick_y = cy + 14.0;
+                                                    let num_ticks = 6;
+                                                    for idx in 0..num_ticks {
+                                                        let frac = idx as f32 / (num_ticks - 1) as f32;
+                                                        let tx = rect.min.x + 10.0 + frac * (rect.width() - 20.0);
+                                                        painter.line_segment(
+                                                            [egui::pos2(tx, tick_y), egui::pos2(tx, tick_y + 4.0)],
+                                                            egui::Stroke::new(2.0, adjust_brightness(bg_color, 0.2))
+                                                        );
+                                                    }
+                                                    
+                                                    let handle_rect = egui::Rect::from_center_size(egui::pos2(handle_x, cy), egui::vec2(18.0, 18.0));
+                                                    painter.rect_filled(handle_rect, 4.0, adjust_brightness(bg_color, 0.3));
+                                                    painter.rect_stroke(handle_rect, 4.0, egui::Stroke::new(1.5, accent_color), egui::StrokeKind::Middle);
+                                                } else {
+                                                    let cx = rect.center().x;
+                                                    let track_rect = egui::Rect::from_min_max(egui::pos2(cx - 4.0, rect.min.y + 10.0), egui::pos2(cx + 4.0, rect.max.y - 10.0));
+                                                    painter.rect_filled(track_rect, 2.0, adjust_brightness(bg_color, -0.1));
+                                                    let handle_y = rect.max.y - 10.0 - volume * (rect.height() - 20.0);
+                                                    let fill_rect = egui::Rect::from_min_max(egui::pos2(track_rect.min.x, handle_y), track_rect.max);
+                                                    painter.rect_filled(fill_rect, 2.0, if is_muted { apply_filters(egui::Color32::from_gray(100)) } else { accent_color });
+                                                    
+                                                    let tick_x = cx + 14.0;
+                                                    let num_ticks = 6;
+                                                    for idx in 0..num_ticks {
+                                                        let frac = idx as f32 / (num_ticks - 1) as f32;
+                                                        let ty = rect.max.y - 10.0 - frac * (rect.height() - 20.0);
+                                                        painter.line_segment(
+                                                            [egui::pos2(tick_x, ty), egui::pos2(tick_x + 4.0, ty)],
+                                                            egui::Stroke::new(2.0, adjust_brightness(bg_color, 0.2))
+                                                        );
+                                                    }
+                                                    
+                                                    let handle_rect = egui::Rect::from_center_size(egui::pos2(cx, handle_y), egui::vec2(18.0, 18.0));
+                                                    painter.rect_filled(handle_rect, 4.0, adjust_brightness(bg_color, 0.3));
+                                                    painter.rect_stroke(handle_rect, 4.0, egui::Stroke::new(1.5, accent_color), egui::StrokeKind::Middle);
+                                                }
+                                            }
+                                            crate::types::SliderStyle::GradientBar => {
+                                                let radius = rect.height().min(rect.width()) * 0.5;
+                                                if orientation == crate::types::SliderOrientation::Horizontal {
+                                                    painter.rect_filled(rect, radius, adjust_brightness(bg_color, -0.1));
+                                                    let fill_width = volume * (rect.width() - 2.0 * radius) + radius;
+                                                    let fill_rect = egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + fill_width + radius, rect.max.y)).intersect(rect);
+                                                    
+                                                    let start_color = if is_muted { apply_filters(egui::Color32::from_gray(80)) } else { accent_color };
+                                                    let end_color = if is_muted { apply_filters(egui::Color32::from_gray(120)) } else { adjust_brightness(accent_color, 0.3) };
+                                                    let mut mesh = egui::Mesh::default();
+                                                    let idx = mesh.vertices.len() as u32;
+                                                    mesh.vertices.push(egui::epaint::Vertex { pos: fill_rect.left_top(), uv: egui::pos2(0.0,0.0), color: start_color });
+                                                    mesh.vertices.push(egui::epaint::Vertex { pos: fill_rect.right_top(), uv: egui::pos2(0.0,0.0), color: end_color });
+                                                    mesh.vertices.push(egui::epaint::Vertex { pos: fill_rect.right_bottom(), uv: egui::pos2(0.0,0.0), color: end_color });
+                                                    mesh.vertices.push(egui::epaint::Vertex { pos: fill_rect.left_bottom(), uv: egui::pos2(0.0,0.0), color: start_color });
+                                                    mesh.indices.extend([idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+                                                    painter.add(egui::Shape::mesh(mesh));
+                                                    painter.rect_stroke(fill_rect, radius, egui::Stroke::new(1.0, start_color), egui::StrokeKind::Middle);
+                                                    
+                                                    let handle_center_x = rect.min.x + radius + volume * (rect.width() - 2.0 * radius);
+                                                    let handle_rect = egui::Rect::from_center_size(
+                                                        egui::pos2(handle_center_x, rect.center().y),
+                                                        egui::vec2(12.0, rect.height() - 6.0)
+                                                    );
+                                                    painter.rect_filled(handle_rect, 4.0, apply_filters(egui::Color32::WHITE));
+                                                    painter.rect_stroke(handle_rect, 4.0, egui::Stroke::new(1.0, apply_filters(egui::Color32::from_gray(150))), egui::StrokeKind::Middle);
+                                                } else {
+                                                    painter.rect_filled(rect, radius, adjust_brightness(bg_color, -0.1));
+                                                    let fill_height = volume * (rect.height() - 2.0 * radius) + radius;
+                                                    let fill_rect = egui::Rect::from_min_max(egui::pos2(rect.min.x, rect.max.y - fill_height - radius), rect.max).intersect(rect);
+                                                    
+                                                    let start_color = if is_muted { apply_filters(egui::Color32::from_gray(80)) } else { accent_color };
+                                                    let end_color = if is_muted { apply_filters(egui::Color32::from_gray(120)) } else { adjust_brightness(accent_color, 0.3) };
+                                                    let mut mesh = egui::Mesh::default();
+                                                    let idx = mesh.vertices.len() as u32;
+                                                    mesh.vertices.push(egui::epaint::Vertex { pos: fill_rect.left_top(), uv: egui::pos2(0.0,0.0), color: end_color });
+                                                    mesh.vertices.push(egui::epaint::Vertex { pos: fill_rect.right_top(), uv: egui::pos2(0.0,0.0), color: end_color });
+                                                    mesh.vertices.push(egui::epaint::Vertex { pos: fill_rect.right_bottom(), uv: egui::pos2(0.0,0.0), color: start_color });
+                                                    mesh.vertices.push(egui::epaint::Vertex { pos: fill_rect.left_bottom(), uv: egui::pos2(0.0,0.0), color: start_color });
+                                                    mesh.indices.extend([idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+                                                    painter.add(egui::Shape::mesh(mesh));
+                                                    painter.rect_stroke(fill_rect, radius, egui::Stroke::new(1.0, start_color), egui::StrokeKind::Middle);
+                                                    
+                                                    let handle_center_y = rect.max.y - radius - volume * (rect.height() - 2.0 * radius);
+                                                    let handle_rect = egui::Rect::from_center_size(
+                                                        egui::pos2(rect.center().x, handle_center_y),
+                                                        egui::vec2(rect.width() - 6.0, 12.0)
+                                                    );
+                                                    painter.rect_filled(handle_rect, 4.0, apply_filters(egui::Color32::WHITE));
+                                                    painter.rect_stroke(handle_rect, 4.0, egui::Stroke::new(1.0, apply_filters(egui::Color32::from_gray(150))), egui::StrokeKind::Middle);
+                                                }
+                                            }
+                                            crate::types::SliderStyle::Knob => {
+                                                let center = rect.center();
+                                                let outer_radius = rect.width().min(rect.height()) * 0.45;
+                                                let inner_radius = outer_radius * 0.8;
+                                                
+                                                painter.circle_stroke(center, outer_radius, egui::Stroke::new(3.0, adjust_brightness(bg_color, -0.2)));
+                                                
+                                                let start_angle = 135.0_f32.to_radians();
+                                                let end_angle = 405.0_f32.to_radians();
+                                                let target_angle = start_angle + volume * (end_angle - start_angle);
+                                                
+                                                let arc_steps = 30;
+                                                let mut points = Vec::new();
+                                                for idx in 0..=arc_steps {
+                                                    let frac = idx as f32 / arc_steps as f32;
+                                                    let angle = start_angle + frac * (target_angle - start_angle);
+                                                    if angle <= target_angle {
+                                                        let x = center.x + angle.cos() * outer_radius;
+                                                        let y = center.y + angle.sin() * outer_radius;
+                                                        points.push(egui::pos2(x, y));
+                                                    }
+                                                }
+                                                if points.len() >= 2 {
+                                                    painter.line(points, egui::Stroke::new(3.0, if is_muted { apply_filters(egui::Color32::from_gray(100)) } else { accent_color }));
+                                                }
+                                                
+                                                painter.circle_filled(center, inner_radius, adjust_brightness(bg_color, 0.15));
+                                                painter.circle_stroke(center, inner_radius, egui::Stroke::new(1.0, adjust_brightness(accent_color, -0.1)));
+                                                
+                                                let pointer_radius = inner_radius * 0.6;
+                                                let px = center.x + target_angle.cos() * pointer_radius;
+                                                let py = center.y + target_angle.sin() * pointer_radius;
+                                                painter.circle_filled(egui::pos2(px, py), 2.5, apply_filters(egui::Color32::WHITE));
+                                            }
+                                        }
+
+                                        let text_col = apply_filters(egui::Color32::WHITE);
+                                        let percentage_text = format!("{}%", (volume * 100.0).round() as i32);
+                                        
+                                        if mixer_state.style == crate::types::SliderStyle::Knob {
+                                            let center = rect.center();
+                                            let outer_radius = rect.width().min(rect.height()) * 0.45;
+                                            painter.text(
+                                                egui::pos2(center.x, center.y + outer_radius + 10.0),
+                                                egui::Align2::CENTER_CENTER,
+                                                format!("{}: {}", session_name, percentage_text),
+                                                egui::FontId::proportional(10.0),
+                                                text_col
+                                            );
+                                        } else if orientation == crate::types::SliderOrientation::Horizontal {
+                                            painter.text(
+                                                egui::pos2(rect.center().x, rect.top() + 6.0),
+                                                egui::Align2::CENTER_CENTER,
+                                                format!("{}: {}", session_name, percentage_text),
+                                                egui::FontId::proportional(10.0),
+                                                text_col
+                                            );
+                                        } else {
+                                            painter.text(
+                                                egui::pos2(rect.center().x, rect.top() + 6.0),
+                                                egui::Align2::CENTER_CENTER,
+                                                session_name,
+                                                egui::FontId::proportional(9.0),
+                                                text_col
+                                            );
+                                            painter.text(
+                                                egui::pos2(rect.center().x, rect.bottom() - 10.0),
+                                                egui::Align2::CENTER_CENTER,
+                                                percentage_text,
+                                                egui::FontId::proportional(10.0),
+                                                text_col
+                                            );
+                                        }
+                                    } else {
+                                        let show_all = settings.selected_mixer_apps.is_empty();
+                                        
+                                        ui.vertical(|ui| {
+                                            ui.label(egui::RichText::new("Volume Mixer").strong().color(accent_color));
+                                            ui.separator();
+                                            
+                                            egui::ScrollArea::vertical().max_height(disp_h - 70.0).show(ui, |ui| {
+                                                let mut rendered_any = false;
+                                                for session in volume_sessions.iter() {
+                                                    let is_selected = settings.selected_mixer_apps.contains(&session.name);
+                                                    if is_selected || show_all {
+                                                        rendered_any = true;
+                                                        ui.horizontal(|ui| {
+                                                            ui.set_min_height(24.0);
+                                                            let short_name = if session.name.len() > 10 {
+                                                                format!("{}...", &session.name[..8])
+                                                            } else {
+                                                                session.name.clone()
+                                                            };
+                                                            ui.label(&short_name).on_hover_text(&session.name);
+                                                            
+                                                            let mut vol = session.volume;
+                                                            if ui.add_sized([70.0, 16.0], egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false)).changed() {
+                                                                let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetVolume { pid: session.pid, volume: vol });
+                                                            }
+                                                            
+                                                            let mute_text = if session.mute { "🔇" } else { "🔊" };
+                                                            if ui.small_button(mute_text).clicked() {
+                                                                let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetMute { pid: session.pid, mute: !session.mute });
+                                                            }
+                                                        });
+                                                    }
+                                                }
+                                                if !rendered_any {
+                                                    ui.label("No apps selected.");
+                                                }
+                                            });
+                                            
+                                            ui.separator();
+                                            egui::CollapsingHeader::new("Visibility Settings").show(ui, |ui| {
+                                                let mut active_app_names: Vec<String> = volume_sessions.iter().map(|s| s.name.clone()).collect();
+                                                active_app_names.sort();
+                                                active_app_names.dedup();
+                                                
+                                                for app_name in active_app_names {
+                                                    let mut is_checked = settings.selected_mixer_apps.contains(&app_name);
+                                                    if ui.checkbox(&mut is_checked, &app_name).changed() {
+                                                        if is_checked {
+                                                            if !settings.selected_mixer_apps.contains(&app_name) {
+                                                                settings.selected_mixer_apps.push(app_name);
+                                                            }
+                                                        } else {
+                                                            settings.selected_mixer_apps.retain(|x| x != &app_name);
+                                                        }
+                                                        settings.save();
+                                                    }
+                                                }
+                                            });
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    });
+                continue;
+            }
             if img.is_live {
                 let ppp = ui.ctx().pixels_per_point();
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
@@ -296,7 +907,7 @@ pub fn render_canvas(
                             tex.set(egui::ImageData::Color(color_image), egui::TextureOptions::LINEAR);
                         } else {
                             img.texture = Some(ui.ctx().load_texture(
-                                format!("snip_{}_{}", layer.name, img.id),
+                                format!("snip_{}_{}_{}", layer.name, img.id, img.texture_version),
                                 egui::ImageData::Color(color_image),
                                 egui::TextureOptions::LINEAR,
                             ));
@@ -322,7 +933,7 @@ pub fn render_canvas(
                 if img.thumbnail_texture.is_none() {
                     let color_image = egui::ColorImage::from_rgba_unmultiplied(img.size, &img.pixels);
                     img.thumbnail_texture = Some(ui.ctx().load_texture(
-                        format!("thumb_{}_{}", layer.name, img.id),
+                        format!("thumb_{}_{}_{}", layer.name, img.id, img.texture_version),
                         color_image,
                         egui::TextureOptions::LINEAR,
                     ));
@@ -344,7 +955,7 @@ pub fn render_canvas(
                     if let Some(tex) = &mut img.texture {
                         tex.set(color_image, Default::default());
                     } else {
-                        img.texture = Some(ui.ctx().load_texture(format!("gif_{}", img.id), color_image, Default::default()));
+                        img.texture = Some(ui.ctx().load_texture(format!("gif_{}_{}", img.id, img.texture_version), color_image, Default::default()));
                     }
                 }
                 ui.ctx().request_repaint();
@@ -361,7 +972,7 @@ pub fn render_canvas(
                         tex.set(color_image, egui::TextureOptions::LINEAR);
                     } else {
                         img.texture = Some(ui.ctx().load_texture(
-                            format!("snip_{}_{}", layer.name, img.id),
+                            format!("snip_{}_{}_{}", layer.name, img.id, img.texture_version),
                             color_image,
                             egui::TextureOptions::LINEAR,
                         ));

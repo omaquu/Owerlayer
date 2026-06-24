@@ -352,6 +352,7 @@ pub fn render_photoshop_panel(
     show_history_panel: &mut bool,
     request_history_push: &mut Option<String>,
     filters_open: &mut Option<usize>,
+    volume_sessions: &Vec<crate::volume_mixer::AudioSessionInfo>,
 ) {
     let main_tools = vec![
         Tool::Move, Tool::Brush, Tool::Eraser, Tool::PaintBucket, Tool::Text, Tool::Shape, Tool::Snip, Tool::Cut, Tool::Blur, Tool::Embed,
@@ -359,6 +360,7 @@ pub fn render_photoshop_panel(
     
     let hide_icon = if settings.hide_all { "👁" } else { "👓" };
     let is_vertical = settings.is_vertical;
+    let accent = crate::utils::color32(&settings.accent_color);
 
     let frame = photoshop_frame(settings);
     let mut win = crate::utils::panel_window_pos(
@@ -368,12 +370,17 @@ pub fn render_photoshop_panel(
             .collapsible(false)
             .movable(true)
             .pivot(egui::Align2::LEFT_TOP)
+            .auto_sized()
             .frame(frame),
         settings.toolbar_pos,
         settings.ui_reset_frames,
     );
     
-    if is_vertical { win = win.min_width(160.0); }
+    if is_vertical {
+        win = win.min_width(160.0);
+    } else {
+        win = win.max_width(800.0);
+    }
     
     let win_resp = win.show(ctx, |ui| {
         if is_vertical {
@@ -381,6 +388,27 @@ pub fn render_photoshop_panel(
                 ui.vertical(|ui| {
                     ui.set_width(32.0);
                     if ui.add(egui::Button::new(hide_icon).min_size(egui::vec2(28.0, 24.0))).on_hover_text("Hide UI").clicked() { settings.hide_all = !settings.hide_all; }
+                    let grid_color = if settings.show_grid { accent } else { egui::Color32::from_gray(140) };
+                    ui.menu_button(egui::RichText::new("▦").color(grid_color).strong(), |ui| {
+                        ui.set_max_width(180.0);
+                        if ui.checkbox(&mut settings.show_grid, "Show Grid").changed() {
+                            settings.save();
+                        }
+                        if ui.checkbox(&mut settings.snap_to_grid, "Snap to Grid").changed() {
+                            settings.save();
+                        }
+                        ui.separator();
+                        ui.label("Grid Size:");
+                        if ui.selectable_value(&mut settings.grid_size, 20.0, "Small (20px)").changed() {
+                            settings.save();
+                        }
+                        if ui.selectable_value(&mut settings.grid_size, 50.0, "Medium (50px)").changed() {
+                            settings.save();
+                        }
+                        if ui.selectable_value(&mut settings.grid_size, 100.0, "Large (100px)").changed() {
+                            settings.save();
+                        }
+                    });
                     ui.separator();
                     for tool in &main_tools {
                         let is_selected = *active_tool == *tool;
@@ -395,13 +423,34 @@ pub fn render_photoshop_panel(
                 ui.add(egui::Separator::default().vertical());
                 ui.vertical(|ui| {
                     ui.set_width(120.0);
-                    render_tool_options(ui, active_tool, settings, project, true, embed_url, embed_trigger, request_history_push, filters_open);
+                    render_tool_options(ui, active_tool, settings, project, true, embed_url, embed_trigger, request_history_push, filters_open, volume_sessions);
                 });
             });
         } else {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     if ui.add(egui::Button::new(hide_icon).min_size(egui::vec2(28.0, 24.0))).on_hover_text("Hide UI").clicked() { settings.hide_all = !settings.hide_all; }
+                    let grid_color = if settings.show_grid { accent } else { egui::Color32::from_gray(140) };
+                    ui.menu_button(egui::RichText::new("▦").color(grid_color).strong(), |ui| {
+                        ui.set_max_width(180.0);
+                        if ui.checkbox(&mut settings.show_grid, "Show Grid").changed() {
+                            settings.save();
+                        }
+                        if ui.checkbox(&mut settings.snap_to_grid, "Snap to Grid").changed() {
+                            settings.save();
+                        }
+                        ui.separator();
+                        ui.label("Grid Size:");
+                        if ui.selectable_value(&mut settings.grid_size, 20.0, "Small (20px)").changed() {
+                            settings.save();
+                        }
+                        if ui.selectable_value(&mut settings.grid_size, 50.0, "Medium (50px)").changed() {
+                            settings.save();
+                        }
+                        if ui.selectable_value(&mut settings.grid_size, 100.0, "Large (100px)").changed() {
+                            settings.save();
+                        }
+                    });
                     ui.separator();
                     for tool in &main_tools {
                         let is_selected = *active_tool == *tool;
@@ -416,7 +465,8 @@ pub fn render_photoshop_panel(
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.set_height(24.0);
-                    render_tool_options(ui, active_tool, settings, project, false, embed_url, embed_trigger, request_history_push, filters_open);
+                    ui.set_max_width(780.0);
+                    render_tool_options(ui, active_tool, settings, project, false, embed_url, embed_trigger, request_history_push, filters_open, volume_sessions);
                 });
             });
         }
@@ -435,13 +485,25 @@ pub fn render_photoshop_panel(
     );
 }
 
-pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: &mut Settings, project: &mut crate::project::Project, _is_vertical: bool, embed_url: &mut String, embed_trigger: &mut bool, request_history_push: &mut Option<String>, filters_open: &mut Option<usize>) {
+pub fn render_tool_options(
+    ui: &mut egui::Ui,
+    active_tool: &mut Tool,
+    settings: &mut Settings,
+    project: &mut crate::project::Project,
+    _is_vertical: bool,
+    embed_url: &mut String,
+    embed_trigger: &mut bool,
+    request_history_push: &mut Option<String>,
+    filters_open: &mut Option<usize>,
+    volume_sessions: &Vec<crate::volume_mixer::AudioSessionInfo>,
+) {
     ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
     
-    if !matches!(active_tool, Tool::Move | Tool::Mirror | Tool::Embed) {
+    let show_color_pickers = !matches!(active_tool, Tool::Mirror);
+    if show_color_pickers {
         ui.horizontal(|ui| {
             let mut fg = color32(&settings.pen_color);
-            if ui.color_edit_button_srgba(&mut fg).on_hover_text("Pen Color").changed() { settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()]; }
+            if egui::color_picker::color_edit_button_srgba(ui, &mut fg, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Pen Color (Widget BG)").changed() { settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()]; }
 
             let (rect, resp) = ui.allocate_at_least(egui::vec2(24.0, 24.0), egui::Sense::click());
             if resp.clicked() { settings.picking_stroke_color = true; }
@@ -449,9 +511,10 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
             draw_pick_color_icon(ui, rect, egui::Color32::WHITE);
             resp.on_hover_text("Pick Color");
             
-            if *active_tool == Tool::Shape {
+            let show_bg_picker = matches!(active_tool, Tool::Shape | Tool::Move | Tool::Embed);
+            if show_bg_picker {
                 let mut bg = color32(&settings.background_color);
-                if ui.color_edit_button_srgba(&mut bg).on_hover_text("Fill Color").changed() { settings.background_color = [bg.r(), bg.g(), bg.b(), bg.a()]; }
+                if ui.color_edit_button_srgba(&mut bg).on_hover_text("Fill Color (Widget Border/Accent)").changed() { settings.background_color = [bg.r(), bg.g(), bg.b(), bg.a()]; }
                 
                 let (rect2, resp2) = ui.allocate_at_least(egui::vec2(24.0, 24.0), egui::Sense::click());
                 if resp2.clicked() { settings.picking_fill_color = true; }
@@ -462,6 +525,8 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
         });
         ui.add(egui::Separator::default().vertical());
     }
+
+
 
     match active_tool {
         Tool::Brush | Tool::Eraser => {
@@ -846,13 +911,12 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                         ui.separator();
 
                         // Opacity
-                        ui.label("Op:");
                         let mut op = match sel.object_type {
                             ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity,
                             ObjectType::Stroke => project.layers[sel.layer_idx].strokes[sel.object_idx].opacity,
                             ObjectType::Text => project.layers[sel.layer_idx].text_annotations[sel.object_idx].opacity,
                         } * 100.0;
-                        if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).suffix("%")).changed() {
+                        if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).prefix("Op: ").suffix("%")).changed() {
                             let final_op = op / 100.0;
                             match sel.object_type {
                                 ObjectType::Image => project.layers[sel.layer_idx].placed_images[sel.object_idx].opacity = final_op,
@@ -925,21 +989,20 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                                     
                                     if !img.is_live {
                                         if let Some(src) = img.source_rect {
-                                            let sx = (src[0] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
-                                            let sy = (src[1] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                                            let sx = (src[0] * ppp).round() as i32;
+                                            let sy = (src[1] * ppp).round() as i32;
                                             let pw = (src[2] * ppp).round() as i32;
                                             let ph = (src[3] * ppp).round() as i32;
-                                            
-                                            let captured_pixels = if img.capture_source == CaptureSource::Origin && img.target_hwnd != 0 {
-                                                if let Some((p, w, h)) = crate::winapi_utils::capture_window(img.target_hwnd as usize) {
-                                                    Some((p, w, h))
-                                                } else {
-                                                    None
-                                                }
-                                            } else {
-                                                crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, pw, ph)
-                                                    .map(|p| (p, pw as usize, ph as usize))
-                                            };
+                                            let captured_pixels = crate::tools::snip::capture_static_image(
+                                                settings,
+                                                img.capture_source,
+                                                img.target_hwnd,
+                                                img.hwnd,
+                                                sx,
+                                                sy,
+                                                pw,
+                                                ph,
+                                            ).map(|pixels| (pixels, pw as usize, ph as usize));
 
                                             if let Some((mut pixels, w, h)) = captured_pixels {
                                                 if let Some(ref mask) = img.mask {
@@ -959,20 +1022,114 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                                     project.save();
                                 }
 
-                                if img_is_live {
-                                    ui.separator();
-                                    let perf_mode = settings.live_performance_mode;
-                                    let real_mode = !settings.live_performance_mode;
-                                    let perf_color = if perf_mode { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
-                                    let real_color = if real_mode { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
-                                    if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).on_hover_text("Reduced capture frequency to save system resources").clicked() {
-                                        settings.live_performance_mode = true;
-                                        settings.save();
+                                ui.separator();
+                                let perf_mode = settings.live_performance_mode;
+                                let real_mode = !settings.live_performance_mode;
+                                let perf_color = if perf_mode { egui::Color32::from_rgb(100, 220, 100) } else { egui::Color32::from_gray(140) };
+                                let real_color = if real_mode { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
+                                if ui.add(egui::Button::new(egui::RichText::new("Performance").color(perf_color).strong()).selected(perf_mode)).on_hover_text("Reduced capture frequency to save system resources").clicked() {
+                                    settings.live_performance_mode = true;
+                                    settings.save();
+                                }
+                                if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).on_hover_text("Maximum capture frequency for smooth real-time updates").clicked() {
+                                    settings.live_performance_mode = false;
+                                    settings.save();
+                                }
+                            }
+                            
+                            let mut transparent_changed = false;
+                            {
+                                let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                ui.separator();
+                                if ui.checkbox(&mut img.transparent_bg, "Transparent BG").on_hover_text("Make the background transparent for this widget/image").changed() {
+                                    transparent_changed = true;
+                                }
+                            }
+                            if transparent_changed {
+                                project.save();
+                            }
+                            let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                            let accent = crate::utils::color32(&settings.accent_color);
+                            if img.widget_type == Some(crate::types::WidgetType::VolumeMixer) {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Volume Mixer Options").strong().color(accent));
+                                
+                                let mut state = img.volume_mixer_state.clone().unwrap_or_default();
+                                let mut state_changed = false;
+                                
+                                ui.horizontal(|ui| {
+                                    ui.label("Mode:");
+                                    if ui.selectable_value(&mut state.mode, crate::types::MixerMode::Full, "Full Mixer").changed() {
+                                        state_changed = true;
                                     }
-                                    if ui.add(egui::Button::new(egui::RichText::new("Realtime").color(real_color).strong()).selected(real_mode)).on_hover_text("Maximum capture frequency for smooth real-time updates").clicked() {
-                                        settings.live_performance_mode = false;
-                                        settings.save();
+                                    if ui.selectable_value(&mut state.mode, crate::types::MixerMode::Single, "Single Slider").changed() {
+                                        state_changed = true;
+                                        if state.orientation == crate::types::SliderOrientation::Horizontal {
+                                            img.display_size = Some([160.0, 60.0]);
+                                        } else {
+                                            img.display_size = Some([60.0, 160.0]);
+                                        }
                                     }
+                                });
+                                
+                                if state.mode == crate::types::MixerMode::Single {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Session:");
+                                        egui::ComboBox::from_id_source(format!("session_select_{}", img.id))
+                                            .selected_text(&state.target_session)
+                                            .show_ui(ui, |ui| {
+                                                if ui.selectable_value(&mut state.target_session, "Master".to_string(), "Master Volume").changed() {
+                                                    state_changed = true;
+                                                }
+                                                let mut app_names: Vec<String> = volume_sessions.iter().map(|s| s.name.clone()).collect();
+                                                app_names.sort();
+                                                app_names.dedup();
+                                                for name in app_names {
+                                                    if ui.selectable_value(&mut state.target_session, name.clone(), name).changed() {
+                                                        state_changed = true;
+                                                    }
+                                                }
+                                            });
+                                    });
+                                    
+                                    ui.horizontal(|ui| {
+                                        ui.label("Orientation:");
+                                        let prev_orient = state.orientation;
+                                        if ui.selectable_value(&mut state.orientation, crate::types::SliderOrientation::Horizontal, "Horizontal").changed() {
+                                            state_changed = true;
+                                            if prev_orient != crate::types::SliderOrientation::Horizontal {
+                                                if let Some(ds) = img.display_size {
+                                                    img.display_size = Some([ds[1], ds[0]]);
+                                                }
+                                            }
+                                        }
+                                        if ui.selectable_value(&mut state.orientation, crate::types::SliderOrientation::Vertical, "Vertical").changed() {
+                                            state_changed = true;
+                                            if prev_orient != crate::types::SliderOrientation::Vertical {
+                                                if let Some(ds) = img.display_size {
+                                                    img.display_size = Some([ds[1], ds[0]]);
+                                                }
+                                            }
+                                        }
+                                    });
+                                    
+                                    ui.horizontal(|ui| {
+                                        ui.label("Style:");
+                                        egui::ComboBox::from_id_source(format!("style_select_{}", img.id))
+                                            .selected_text(format!("{:?}", state.style))
+                                            .show_ui(ui, |ui| {
+                                                if ui.selectable_value(&mut state.style, crate::types::SliderStyle::SleekPill, "Sleek Pill").changed() { state_changed = true; }
+                                                if ui.selectable_value(&mut state.style, crate::types::SliderStyle::ThinMetal, "Thin Metal").changed() { state_changed = true; }
+                                                if ui.selectable_value(&mut state.style, crate::types::SliderStyle::ThickTicks, "Thick Ticks").changed() { state_changed = true; }
+                                                if ui.selectable_value(&mut state.style, crate::types::SliderStyle::GradientBar, "Gradient Bar").changed() { state_changed = true; }
+                                                if ui.selectable_value(&mut state.style, crate::types::SliderStyle::Knob, "Knob / Dial").changed() { state_changed = true; }
+                                            });
+                                    });
+                                }
+                                
+                                if state_changed {
+                                    img.volume_mixer_state = Some(state);
+                                    project.save();
                                 }
                             }
                         }
@@ -1087,13 +1244,18 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                     // LAYER MODE
                     let active_layer_idx = project.active_layer;
                     ui.horizontal(|ui| {
-                        ui.label("Active Layer:");
                         let layer = &mut project.layers[active_layer_idx];
                         let mut op = layer.opacity * 100.0;
                         if ui.add(egui::DragValue::new(&mut op).range(0.0..=100.0).prefix("Op: ").suffix("%")).changed() {
                             layer.opacity = op / 100.0;
                         }
                         ui.separator();
+                        if ui.button("⟳").on_hover_text("Rotate Layer 90").clicked() {
+                            for img in &mut layer.placed_images { img.rotation += std::f32::consts::PI / 2.0; }
+                            for s in &mut layer.strokes { s.rotation += std::f32::consts::PI / 2.0; }
+                            for ann in &mut layer.text_annotations { ann.rotation += std::f32::consts::PI / 2.0; }
+                            *request_history_push = Some("Rotate Layer 90".into());
+                        }
                         if ui.button("⬌").on_hover_text("Flip Layer Horizontal").clicked() {
                             for img in &mut layer.placed_images { img.flipped_h = !img.flipped_h; }
                             for s in &mut layer.strokes { s.flipped_h = !s.flipped_h; }
@@ -1107,7 +1269,7 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
                             *request_history_push = Some("Flip Layer V".into());
                         }
                         ui.separator();
-                        if ui.button("⎌").on_hover_text("Reset Layer Transforms").clicked() {
+                        if ui.button("↺").on_hover_text("Reset Layer Transforms").clicked() {
                             crate::utils::translate_layer(layer, -crate::utils::layer_bounds(layer).map(|b| b.min.to_vec2()).unwrap_or(egui::Vec2::ZERO));
                             *request_history_push = Some("Reset Layer".into());
                         }
@@ -1208,90 +1370,104 @@ pub fn render_tool_options(ui: &mut egui::Ui, active_tool: &mut Tool, settings: 
         }
         Tool::Embed => {
             ui.vertical(|ui| {
-                #[cfg(feature = "webengine")]
-                {
-                    if !crate::web_engine::is_available() {
-                        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Web Engine Not Available:");
-                        ui.label(egui::RichText::new("'resources/' folder is missing!").size(11.0).color(egui::Color32::from_rgb(240, 150, 150)));
-                        ui.label(egui::RichText::new("Copy 'resources' folder from Ultralight SDK to current directory.").size(10.0).color(egui::Color32::GRAY));
-                        if ui.button("Try Initialize").clicked() {
-                            crate::web_engine::init();
+                ui.horizontal(|ui| {
+                    ui.label("Widget Type:");
+                    ui.selectable_value(&mut settings.widget_place_type, crate::types::WidgetPlaceType::Browser, "🌐 Browser");
+                    ui.selectable_value(&mut settings.widget_place_type, crate::types::WidgetPlaceType::Calculator, "🧮 Calculator");
+                    ui.selectable_value(&mut settings.widget_place_type, crate::types::WidgetPlaceType::VolumeMixer, "🔊 Volume Mixer");
+                });
+                ui.separator();
+
+                if settings.widget_place_type == crate::types::WidgetPlaceType::Browser {
+                    #[cfg(feature = "webengine")]
+                    {
+                        if !crate::web_engine::is_available() {
+                            ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Web Engine Not Available:");
+                            let status_msg = crate::web_engine::get_status_string();
+                            ui.label(egui::RichText::new(status_msg).size(10.0).color(egui::Color32::from_rgb(240, 150, 150)));
+                            if ui.button("Try Initialize").clicked() {
+                                crate::web_engine::init();
+                            }
+                            ui.separator();
                         }
+                    }
+                    #[cfg(not(feature = "webengine"))]
+                    {
+                        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Web Engine Feature Not Enabled:");
+                        ui.label(egui::RichText::new("Compile with --features webengine").size(10.0).color(egui::Color32::GRAY));
                         ui.separator();
                     }
-                }
-                #[cfg(not(feature = "webengine"))]
-                {
-                    ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Web Engine Feature Not Enabled:");
-                    ui.label(egui::RichText::new("Compile with --features webengine").size(10.0).color(egui::Color32::GRAY));
-                    ui.separator();
-                }
 
-                ui.add_enabled_ui(false, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Select Window:");
-                        let mut selected_hwnd = None;
-                        egui::ComboBox::from_id_salt("running_programs")
-                            .selected_text("Select Window...")
-                            .show_ui(ui, |ui| {
-                                let windows = crate::winapi_utils::list_visible_windows();
-                                for (hwnd, title) in windows {
-                                    if ui.selectable_label(false, &title).clicked() {
-                                        selected_hwnd = Some(hwnd);
+                    ui.add_enabled_ui(false, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Select Window:");
+                            let mut selected_hwnd = None;
+                            egui::ComboBox::from_id_salt("running_programs")
+                                .selected_text("Select Window...")
+                                .show_ui(ui, |ui| {
+                                    let windows = crate::winapi_utils::list_visible_windows();
+                                    for (hwnd, title) in windows {
+                                        if ui.selectable_label(false, &title).clicked() {
+                                            selected_hwnd = Some(hwnd);
+                                        }
                                     }
-                                }
-                            });
-                        if let Some(hwnd) = selected_hwnd {
-                            *embed_url = format!("window://{}", hwnd);
+                                });
+                            if let Some(hwnd) = selected_hwnd {
+                                *embed_url = format!("window://{}", hwnd);
+                                *embed_trigger = true;
+                            }
+                        });
+                    });
+
+                    ui.horizontal(|ui| {
+                        if ui.button("📺 YouTube").clicked() {
+                            *embed_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string();
+                            *embed_trigger = true;
+                        }
+                        if ui.button("🌐 Browser").clicked() {
+                            *embed_url = "https://www.google.com".to_string();
                             *embed_trigger = true;
                         }
                     });
-                });
 
-                ui.horizontal(|ui| {
-                    if ui.button("📺 YouTube").clicked() {
-                        *embed_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string();
-                        *embed_trigger = true;
-                    }
-                    if ui.button("🌐 Browser").clicked() {
-                        *embed_url = "https://www.google.com".to_string();
-                        *embed_trigger = true;
-                    }
-                });
-
-                ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(embed_url).hint_text("URL...").desired_width(120.0));
-                    if ui.button("Load").clicked() {
-                        *embed_trigger = true;
-                    }
-                    if ui.button("+").on_hover_text("Save URL shortcut").clicked() {
-                        if !embed_url.is_empty() {
-                            let label = embed_url.chars().take(15).collect::<String>();
-                            settings.saved_embed_urls.push((label, embed_url.clone()));
-                            settings.save();
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(embed_url).hint_text("URL...").desired_width(120.0));
+                        if ui.button("Load").clicked() {
+                            *embed_trigger = true;
                         }
-                    }
-                });
-
-                if !settings.saved_embed_urls.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        let mut to_remove = None;
-                        for (idx, (label, url)) in settings.saved_embed_urls.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                if ui.button(label).clicked() {
-                                    *embed_url = url.clone();
-                                    *embed_trigger = true;
-                                }
-                                if ui.small_button("x").clicked() {
-                                    to_remove = Some(idx);
-                                }
-                            });
-                        }
-                        if let Some(idx) = to_remove {
-                            settings.saved_embed_urls.remove(idx);
-                            settings.save();
+                        if ui.button("+").on_hover_text("Save URL shortcut").clicked() {
+                            if !embed_url.is_empty() {
+                                let label = embed_url.chars().take(15).collect::<String>();
+                                settings.saved_embed_urls.push((label, embed_url.clone()));
+                                settings.save();
+                            }
                         }
                     });
+
+                    if !settings.saved_embed_urls.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            let mut to_remove = None;
+                            for (idx, (label, url)) in settings.saved_embed_urls.iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    if ui.button(label).clicked() {
+                                        *embed_url = url.clone();
+                                        *embed_trigger = true;
+                                    }
+                                    if ui.small_button("x").clicked() {
+                                        to_remove = Some(idx);
+                                    }
+                                });
+                            }
+                            if let Some(idx) = to_remove {
+                                settings.saved_embed_urls.remove(idx);
+                                settings.save();
+                            }
+                        });
+                    }
+                } else if settings.widget_place_type == crate::types::WidgetPlaceType::Calculator {
+                    ui.label("Click on canvas to place Calculator");
+                } else if settings.widget_place_type == crate::types::WidgetPlaceType::VolumeMixer {
+                    ui.label("Click on canvas to place Volume Mixer");
                 }
             });
         }
@@ -1320,9 +1496,10 @@ pub fn render_toolbar(
     show_history_panel: &mut bool,
     request_history_push: &mut Option<String>,
     filters_open: &mut Option<usize>,
+    volume_sessions: &Vec<crate::volume_mixer::AudioSessionInfo>,
 ) {
     let old_settings = settings.clone();
-    render_photoshop_panel(ctx, active_tool, settings, show_settings_panel, show_layers_panel, show_exit_dialog, project, embed_url, embed_trigger, show_history_panel, request_history_push, filters_open);
+    render_photoshop_panel(ctx, active_tool, settings, show_settings_panel, show_layers_panel, show_exit_dialog, project, embed_url, embed_trigger, show_history_panel, request_history_push, filters_open, volume_sessions);
     if settings != &old_settings {
         settings.save();
     }
@@ -1346,21 +1523,20 @@ fn update_snip_source_overlay(ui: &mut egui::Ui, project: &mut crate::project::P
                 img.texture = None;
                 if !img.is_live {
                     if let Some(src) = img.source_rect {
-                        let sx = (src[0] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
-                        let sy = (src[1] * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                        let sx = (src[0] * ppp).round() as i32;
+                        let sy = (src[1] * ppp).round() as i32;
                         let pw = (src[2] * ppp).round() as i32;
                         let ph = (src[3] * ppp).round() as i32;
-                        
-                        let captured_pixels = if img.capture_source == CaptureSource::Origin && img.target_hwnd != 0 {
-                            if let Some((p, w, h)) = crate::winapi_utils::capture_window(img.target_hwnd as usize) {
-                                Some((p, w, h))
-                            } else {
-                                None
-                            }
-                        } else {
-                            crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, pw, ph)
-                                .map(|p| (p, pw as usize, ph as usize))
-                        };
+                        let captured_pixels = crate::tools::snip::capture_static_image(
+                            settings,
+                            img.capture_source,
+                            img.target_hwnd,
+                            img.hwnd,
+                            sx,
+                            sy,
+                            pw,
+                            ph,
+                        ).map(|pixels| (pixels, pw as usize, ph as usize));
                         
                         if let Some((mut pixels, w, h)) = captured_pixels {
                             if let Some(ref mask) = img.mask {

@@ -47,7 +47,7 @@ fn expand_image_to_rect(img: &mut crate::types::PlacedImage, target_rect: egui::
     img.size = [new_iw, new_ih];
     img.display_size = Some([new_dw, new_dh]);
     img.pixels = new_pixels;
-    img.texture = None;
+    img.clear_texture();
     img.thumbnail_dirty = true;
 }
 
@@ -227,7 +227,7 @@ pub fn update(ctx: &mut ToolContext) {
 
                     if project.marquee_selection.is_some() {
                         paint_bucket_flood_fill(img, 0, 0, [0,0,0,0], settings.pen_color, settings.magic_wand_threshold, &project.marquee_selection);
-                        img.texture = None;
+                        img.clear_texture();
                         img.thumbnail_dirty = true;
                         *ctx.request_history_push = Some("Paint Bucket".into());
                     } else {
@@ -271,7 +271,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 let fill_color = settings.pen_color;
                                 
                                 paint_bucket_flood_fill(img, px, py, start_color, fill_color, settings.magic_wand_threshold, &project.marquee_selection);
-                                img.texture = None;
+                                img.clear_texture();
                                 img.thumbnail_dirty = true;
                                 *ctx.request_history_push = Some("Paint Bucket".into());
                             }

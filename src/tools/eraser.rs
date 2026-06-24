@@ -24,6 +24,9 @@ fn get_transformed_points(s: &crate::overlay::Stroke) -> Vec<egui::Pos2> {
 fn hit_test_image(img: &crate::types::PlacedImage, pos: egui::Pos2, r: f32, brush_shape: BrushShape) -> bool {
     let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
     let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+    if disp_w <= 0.1 || disp_h <= 0.1 || img.size[0] == 0 || img.size[1] == 0 {
+        return false;
+    }
     let center = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
     
     let max_scale = img.scale.x.abs().max(img.scale.y.abs()).max(0.001);
@@ -57,6 +60,10 @@ fn hit_test_image(img: &crate::types::PlacedImage, pos: egui::Pos2, r: f32, brus
     let base_p = center + egui::vec2(rel_x, rel_y);
     let lx = (base_p.x - img.position.x) * scale_x;
     let ly = (base_p.y - img.position.y) * scale_y;
+    
+    if lx.is_nan() || ly.is_nan() || lx.is_infinite() || ly.is_infinite() {
+        return false;
+    }
     
     let rx_local = r * scale_x / max_scale;
     let ry_local = r * scale_y / max_scale;
@@ -336,6 +343,9 @@ pub fn update(ctx: &mut ToolContext) {
 
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
                 let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+                if disp_w <= 0.1 || disp_h <= 0.1 || img.size[0] == 0 || img.size[1] == 0 {
+                    continue;
+                }
                 let center = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
                 
                 // Bounding circle pre-filter
@@ -345,7 +355,7 @@ pub fn update(ctx: &mut ToolContext) {
 
                 if overlaps {
                     let mut modified = false;
-                    if img.is_live && img.mask.is_none() {
+                    if img.mask.is_none() {
                         img.mask = Some(vec![255; img.size[0] * img.size[1]]);
                         img.mask_size = Some(img.size);
                     }
@@ -378,14 +388,18 @@ pub fn update(ctx: &mut ToolContext) {
                     let lx = (base_p.x - img.position.x) * scale_x;
                     let ly = (base_p.y - img.position.y) * scale_y;
                     
+                    if lx.is_nan() || ly.is_nan() || lx.is_infinite() || ly.is_infinite() {
+                        continue;
+                    }
+                    
                     // Detailed candidate pixel range based on brush radius mapped to local space
                     let r_local_x = (r * scale_x / max_scale_factor) * 2.0;
                     let r_local_y = (r * scale_y / max_scale_factor) * 2.0;
                     
-                    let min_px = ((lx - r_local_x).floor() as i32).max(0) as usize;
-                    let max_px = ((lx + r_local_x).ceil() as i32).min(img.size[0] as i32) as usize;
-                    let min_py = ((ly - r_local_y).floor() as i32).max(0) as usize;
-                    let max_py = ((ly + r_local_y).ceil() as i32).min(img.size[1] as i32) as usize;
+                    let min_px = (((lx - r_local_x).floor() as i32).max(0) as usize).min(img.size[0]);
+                    let max_px = (((lx + r_local_x).ceil() as i32).max(0) as usize).min(img.size[0]);
+                    let min_py = (((ly - r_local_y).floor() as i32).max(0) as usize).min(img.size[1]);
+                    let max_py = (((ly + r_local_y).ceil() as i32).max(0) as usize).min(img.size[1]);
 
                     let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
                     let mut draw_scale = img.scale;
@@ -416,15 +430,21 @@ pub fn update(ctx: &mut ToolContext) {
                             };
                             
                             if erase_hit {
-                                let idx = py * img.size[0] + px;
-                                if img.is_live {
-                                    let mask = img.mask.as_mut().unwrap();
-                                    if idx < mask.len() && mask[idx] != 0 { 
-                                        mask[idx] = 0; 
-                                        modified = true; 
-                                        img.mask_dirty = true;
+                                if let Some(ref mut mask) = img.mask {
+                                    let m_size = img.mask_size.unwrap_or(img.size);
+                                    if m_size[0] > 0 && m_size[1] > 0 && img.size[0] > 0 && img.size[1] > 0 {
+                                        let mx = ((px * m_size[0]) / img.size[0]).min(m_size[0] - 1);
+                                        let my = ((py * m_size[1]) / img.size[1]).min(m_size[1] - 1);
+                                        let m_idx = my * m_size[0] + mx;
+                                        if m_idx < mask.len() && mask[m_idx] != 0 {
+                                            mask[m_idx] = 0;
+                                            modified = true;
+                                            img.mask_dirty = true;
+                                        }
                                     }
-                                } else {
+                                }
+                                if !img.is_live {
+                                    let idx = py * img.size[0] + px;
                                     let b_idx = idx * 4;
                                     if b_idx + 3 < img.pixels.len() && img.pixels[b_idx + 3] != 0 {
                                         img.pixels[b_idx + 3] = 0;
@@ -435,7 +455,8 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                     }
                     if modified {
-                        img.texture = None;
+                        img.clear_texture();
+                        img.cached_mask_outline = None;
                     }
                 }
             }

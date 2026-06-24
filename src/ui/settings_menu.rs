@@ -19,6 +19,7 @@ pub fn render_settings_window(
 
     let win_resp = crate::utils::panel_window_pos(
         egui::Window::new(egui::RichText::new("Settings").color(accent).size(16.0))
+            .id(egui::Id::new("Settings"))
             .open(show)
             .resizable(false)
             .collapsible(true)
@@ -67,191 +68,232 @@ pub fn render_settings_window(
                 ui.add(egui::Slider::new(&mut settings.ui_scale, 0.5..=2.5).show_value(true));
             });
 
-            ui.add_space(12.0);
+            ui.add_space(8.0);
             ui.add(egui::Separator::default().spacing(6.0));
 
-            // ── Activation ──
-            section_heading(ui, "Activation", accent);
-            ui.checkbox(&mut settings.toggle_mode, "Toggle mode (tap to toggle)");
-            ui.label(egui::RichText::new(
-                if settings.toggle_mode { "Press hotkey once to enter edit, again to exit." }
-                else { "Hold hotkey to draw. Release = pass-through." }
-            ).size(11.0).color(egui::Color32::from_gray(120)));
+            // ── Activation & Capture Options ──
+            egui::CollapsingHeader::new(egui::RichText::new("Activation & Capture").color(accent).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.checkbox(&mut settings.toggle_mode, "Toggle mode (tap to toggle)");
+                    ui.label(egui::RichText::new(
+                        if settings.toggle_mode { "Press hotkey once to enter edit, again to exit." }
+                        else { "Hold hotkey to draw. Release = pass-through." }
+                    ).size(11.0).color(egui::Color32::from_gray(120)));
 
-            ui.add_space(6.0);
-            ui.checkbox(&mut settings.keep_ui_visible, "Keep toolbar visible in pass-through");
-            ui.checkbox(&mut settings.hide_edit_info, "Hide Edit Mode Info Text");
-            ui.checkbox(&mut settings.prompt_delete_layer, "Prompt before deleting layer");
-            ui.checkbox(&mut settings.show_screen_controls, "Show On-Screen Layer Overlay Controls");
-            
-            ui.add_space(4.0);
-            let mut auto_new = settings.auto_new_layer.unwrap_or(true);
-            let mut prompt = settings.auto_new_layer.is_none();
-            ui.horizontal(|ui| {
-                ui.label("When switching tools:");
-                if ui.selectable_value(&mut prompt, true, "Prompt").clicked() {
-                    settings.auto_new_layer = None;
-                }
-                if ui.selectable_value(&mut prompt, false, "Remember").clicked() {
-                    settings.auto_new_layer = Some(auto_new);
-                }
-            });
-            if !prompt {
-                if ui.checkbox(&mut auto_new, "Auto-create new layer").changed() {
-                    settings.auto_new_layer = Some(auto_new);
-                }
-            }
-
-            if settings.experimental_features {
-                ui.label("Warning: Web embeds may degrade performance.");
-            }
-            ui.horizontal(|ui| {
-                ui.label("Auto-hide drawings (s):");
-                ui.add(egui::DragValue::new(&mut settings.auto_hide_seconds).range(0.0..=3600.0));
-            });
-            ui.label(egui::RichText::new("0 = Never hide automatically").size(10.0).color(egui::Color32::GRAY));
-
-            ui.add_space(4.0);
-            if ui.checkbox(&mut settings.exclude_from_capture, "Exclude from capture").on_hover_text("Hides this window from OBS, Discord, and Mirror. Must be OFF for OBS to capture Owerlayer.").changed() {
-                crate::winapi_utils::set_capture_exclusion(settings.exclude_from_capture);
-            }
-            ui.checkbox(&mut settings.auto_exclude_live_capture, "Auto-exclude during live desktop snip")
-                .on_hover_text("Prevents infinite mirror when live-capturing the desktop. Turn OFF to allow OBS capture while live snip is active.");
-            ui.label(egui::RichText::new("OBS: Window Capture → Method: Windows 10 (1903+). Or Game Capture with Allow Transparency. Exclude must be OFF.").size(10.0).color(egui::Color32::GRAY));
-            ui.label(egui::RichText::new("F12 — reset menus and overlay to primary monitor (monitor 1)").size(10.0).color(egui::Color32::GRAY));
-
-
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("Default Snip Source:");
-                egui::ComboBox::from_id_salt("snip_source_combobox")
-                    .selected_text(match settings.snip_source {
-                        CaptureSource::Desktop => "Desktop",
-                        CaptureSource::Overlay => "Overlay",
-                        CaptureSource::Origin => "Origin (Window)",
-                    })
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_value(&mut settings.snip_source, CaptureSource::Desktop, "Desktop").changed() {
-                            settings.snip_source_overlay = false;
-                            settings.save();
+                    ui.add_space(6.0);
+                    ui.checkbox(&mut settings.keep_ui_visible, "Keep toolbar visible in pass-through");
+                    ui.checkbox(&mut settings.hide_edit_info, "Hide Edit Mode Info Text");
+                    ui.checkbox(&mut settings.prompt_delete_layer, "Prompt before deleting layer");
+                    ui.checkbox(&mut settings.show_screen_controls, "Show On-Screen Layer Overlay Controls");
+                    
+                    ui.add_space(4.0);
+                    let mut auto_new = settings.auto_new_layer.unwrap_or(true);
+                    let mut prompt = settings.auto_new_layer.is_none();
+                    ui.horizontal(|ui| {
+                        ui.label("When switching tools:");
+                        if ui.selectable_value(&mut prompt, true, "Prompt").clicked() {
+                            settings.auto_new_layer = None;
                         }
-                        if ui.selectable_value(&mut settings.snip_source, CaptureSource::Overlay, "Overlay").changed() {
-                            settings.snip_source_overlay = true;
-                            settings.save();
-                        }
-                        if ui.selectable_value(&mut settings.snip_source, CaptureSource::Origin, "Origin (Window)").changed() {
-                            settings.save();
+                        if ui.selectable_value(&mut prompt, false, "Remember").clicked() {
+                            settings.auto_new_layer = Some(auto_new);
                         }
                     });
-            });
+                    if !prompt {
+                        if ui.checkbox(&mut auto_new, "Auto-create new layer").changed() {
+                            settings.auto_new_layer = Some(auto_new);
+                        }
+                    }
 
-            if settings.snip_source == CaptureSource::Origin {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label("Target Window:");
-                    let windows = crate::winapi_utils::enumerate_visible_windows();
-                    let current_name = windows.iter()
-                        .find(|(hwnd, _)| *hwnd == settings.origin_target_hwnd)
-                        .map(|(_, name)| name.as_str())
-                        .unwrap_or("Select Window...");
-                    
-                    egui::ComboBox::from_id_salt("origin_target_hwnd_combobox")
-                        .selected_text(current_name)
-                        .show_ui(ui, |ui| {
-                            for (hwnd, name) in windows {
-                                if ui.selectable_value(&mut settings.origin_target_hwnd, hwnd, &name).changed() {
+                    if settings.experimental_features {
+                        ui.label("Warning: Web embeds may degrade performance.");
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Auto-hide drawings (s):");
+                        ui.add(egui::DragValue::new(&mut settings.auto_hide_seconds).range(0.0..=3600.0));
+                    });
+                    ui.label(egui::RichText::new("0 = Never hide automatically").size(10.0).color(egui::Color32::GRAY));
+
+                    ui.add_space(4.0);
+                    if ui.checkbox(&mut settings.exclude_from_capture, "Exclude from capture").on_hover_text("Hides this window from OBS, Discord, and Mirror. Must be OFF for OBS to capture Owerlayer.").changed() {
+                        crate::winapi_utils::set_capture_exclusion(settings.exclude_from_capture);
+                    }
+                    ui.checkbox(&mut settings.auto_exclude_live_capture, "Auto-exclude during live desktop snip")
+                        .on_hover_text("Prevents infinite mirror when live-capturing the desktop. Turn OFF to allow OBS capture while live snip is active.");
+                    ui.label(egui::RichText::new("OBS: Window Capture → Method: Windows 10 (1903+). Or Game Capture with Allow Transparency. Exclude must be OFF.").size(10.0).color(egui::Color32::GRAY));
+                    ui.label(egui::RichText::new("F12 — reset menus and overlay to primary monitor (monitor 1)").size(10.0).color(egui::Color32::GRAY));
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Default Snip Source:");
+                        egui::ComboBox::from_id_salt("snip_source_combobox")
+                            .selected_text(match settings.snip_source {
+                                CaptureSource::Desktop => "Desktop",
+                                CaptureSource::Overlay => "Overlay",
+                                CaptureSource::Origin => "Origin (Window)",
+                            })
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_value(&mut settings.snip_source, CaptureSource::Desktop, "Desktop").changed() {
+                                    settings.snip_source_overlay = false;
                                     settings.save();
                                 }
+                                if ui.selectable_value(&mut settings.snip_source, CaptureSource::Overlay, "Overlay").changed() {
+                                    settings.snip_source_overlay = true;
+                                    settings.save();
+                                }
+                                if ui.selectable_value(&mut settings.snip_source, CaptureSource::Origin, "Origin (Window)").changed() {
+                                    settings.save();
+                                }
+                            });
+                    });
+
+                    if settings.snip_source == CaptureSource::Origin {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label("Target Window:");
+                            let windows = crate::winapi_utils::enumerate_visible_windows();
+                            let current_name = windows.iter()
+                                .find(|(hwnd, _)| *hwnd == settings.origin_target_hwnd)
+                                .map(|(_, name)| name.as_str())
+                                .unwrap_or("Select Window...");
+                            
+                            egui::ComboBox::from_id_salt("origin_target_hwnd_combobox")
+                                .selected_text(current_name)
+                                .show_ui(ui, |ui| {
+                                    for (hwnd, name) in windows {
+                                        if ui.selectable_value(&mut settings.origin_target_hwnd, hwnd, &name).changed() {
+                                            settings.save();
+                                        }
+                                    }
+                                });
+                        });
+                    }
+
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Live Snip Capture FPS:");
+                        ui.add(egui::Slider::new(&mut settings.capture_fps, 15.0..=240.0).show_value(true));
+                    });
+                });
+
+            ui.add_space(6.0);
+            ui.add(egui::Separator::default().spacing(6.0));
+
+            // ── Grid & Snapping ──
+            egui::CollapsingHeader::new(egui::RichText::new("Grid & Snapping").color(accent).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.checkbox(&mut settings.show_grid, "Show Alignment Grid");
+                    if settings.show_grid {
+                        ui.horizontal(|ui| {
+                            ui.label("Grid Size:");
+                            if ui.add(egui::Slider::new(&mut settings.grid_size, 10.0..=200.0).show_value(true).suffix(" px")).changed() {
+                                settings.save();
                             }
                         });
+                        ui.checkbox(&mut settings.snap_to_grid, "Snap Objects to Grid");
+                    }
                 });
-            }
 
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("Live Snip Capture FPS:");
-                ui.add(egui::Slider::new(&mut settings.capture_fps, 15.0..=240.0).show_value(true));
-            });
-
-            ui.add_space(12.0);
+            ui.add_space(6.0);
             ui.add(egui::Separator::default().spacing(6.0));
 
             // ── Advanced Hotkeys ──
-            section_heading(ui, "Advanced Hotkeys", accent);
-            ui.label("Custom global shortcuts to switch tools:");
-            ui.add_space(4.0);
+            egui::CollapsingHeader::new(egui::RichText::new("Advanced Hotkeys").color(accent).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.label("Custom global shortcuts to switch tools:");
+                    ui.add_space(4.0);
 
-            let mut keybind_changed = false;
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Move Tool", &mut settings.keybind_move, "rebind_move");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Brush Tool", &mut settings.keybind_brush, "rebind_brush");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Eraser Tool", &mut settings.keybind_eraser, "rebind_eraser");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Paint Bucket", &mut settings.keybind_paint_bucket, "rebind_paint_bucket");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Text Tool", &mut settings.keybind_text, "rebind_text");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Shape Tool", &mut settings.keybind_shape, "rebind_shape");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Snip Tool", &mut settings.keybind_snip, "rebind_snip");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Cut Tool", &mut settings.keybind_cut, "rebind_cut");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Mirror Tool", &mut settings.keybind_mirror, "rebind_mirror");
-            keybind_changed |= render_tool_keybind_field(ui, ctx, "Blur Tool", &mut settings.keybind_blur, "rebind_blur");
-            if keybind_changed {
-                settings.save();
-            }
+                    let mut keybind_changed = false;
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Move Tool", &mut settings.keybind_move, "rebind_move");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Brush Tool", &mut settings.keybind_brush, "rebind_brush");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Eraser Tool", &mut settings.keybind_eraser, "rebind_eraser");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Paint Bucket", &mut settings.keybind_paint_bucket, "rebind_paint_bucket");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Text Tool", &mut settings.keybind_text, "rebind_text");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Shape Tool", &mut settings.keybind_shape, "rebind_shape");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Snip Tool", &mut settings.keybind_snip, "rebind_snip");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Cut Tool", &mut settings.keybind_cut, "rebind_cut");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Mirror Tool", &mut settings.keybind_mirror, "rebind_mirror");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Blur Tool", &mut settings.keybind_blur, "rebind_blur");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Calculator Widget", &mut settings.keybind_calculator, "rebind_calculator");
+                    keybind_changed |= render_tool_keybind_field(ui, ctx, "Volume Mixer Widget", &mut settings.keybind_volume_mixer, "rebind_volume_mixer");
+                    if keybind_changed {
+                        settings.save();
+                    }
+                });
 
-            ui.add_space(12.0);
+            ui.add_space(6.0);
             ui.add(egui::Separator::default().spacing(6.0));
 
             // ── GPU & Rendering ──
-            section_heading(ui, "GPU & Rendering", accent);
-            
-            ui.label(egui::RichText::new("Preferred GPU (Disabled in Glow mode)").size(10.0).color(egui::Color32::GRAY));
-            
-            ui.add_space(4.0);
-            if ui.checkbox(&mut settings.fso_fix, "Fullscreen Optimization Fix").changed() {
-                crate::winapi_utils::setup_overlay_window(settings.fso_fix);
-                crate::winapi_utils::reposition_overlay_to_primary_monitor(settings.fso_fix);
-                crate::winapi_utils::refresh_overlay_composition();
-            }
-            ui.label(egui::RichText::new("Bypasses Windows FSO by offsetting the window by 4px. Turn off if alignment is wrong.").size(10.0).color(egui::Color32::GRAY));
+            egui::CollapsingHeader::new(egui::RichText::new("GPU & Rendering").color(accent).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Preferred GPU (Disabled in Glow mode)").size(10.0).color(egui::Color32::GRAY));
+                    
+                    ui.add_space(4.0);
+                    if ui.checkbox(&mut settings.fso_fix, "Fullscreen Optimization Fix").changed() {
+                        crate::winapi_utils::setup_overlay_window(settings.fso_fix);
+                        crate::winapi_utils::reposition_overlay_to_primary_monitor(settings.fso_fix);
+                        crate::winapi_utils::refresh_overlay_composition();
+                    }
+                    ui.label(egui::RichText::new("Bypasses Windows FSO by offsetting the window by 4px. Turn off if alignment is wrong.").size(10.0).color(egui::Color32::GRAY));
+                });
 
-            ui.add_space(12.0);
+            ui.add_space(6.0);
             ui.add(egui::Separator::default().spacing(6.0));
 
-            // ── Compatibility ──
-            section_heading(ui, "Compatibility & Experimental", accent);
-            ui.checkbox(&mut settings.software_rendering, "Use Software Rendering (Requires Restart)");
-            ui.label(egui::RichText::new("Use this if you experience flickering or transparency issues on some GPUs.").size(10.0).color(egui::Color32::GRAY));
+            // ── Compatibility & Experimental ──
+            egui::CollapsingHeader::new(egui::RichText::new("Compatibility & Experimental").color(accent).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.checkbox(&mut settings.software_rendering, "Use Software Rendering (Requires Restart)");
+                    ui.label(egui::RichText::new("Use this if you experience flickering or transparency issues on some GPUs.").size(10.0).color(egui::Color32::GRAY));
 
-            ui.add_space(4.0);
-            ui.checkbox(&mut settings.multi_monitor, "Multi-Monitor Mode (Requires Restart)");
-            ui.label(egui::RichText::new("Enables drawing and snipping across all monitors.").size(10.0).color(egui::Color32::GRAY));
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut settings.multi_monitor, "Multi-Monitor Mode (Requires Restart)");
+                    ui.label(egui::RichText::new("Enables drawing and snipping across all monitors.").size(10.0).color(egui::Color32::GRAY));
 
-            ui.add_space(4.0);
-            ui.checkbox(&mut settings.experimental_features, "Enable Experimental Features");
-            ui.label(egui::RichText::new("Enables live webpage embedding and advanced effects.").size(10.0).color(egui::Color32::GOLD));
-            
-            ui.add_space(4.0);
-            ui.checkbox(&mut settings.use_absolute_screen_coords, "Use Absolute Screen Coords");
-            ui.label(egui::RichText::new("Fixes OBS capture offset on multi-monitor setups.").size(10.0).color(egui::Color32::GRAY));
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut settings.experimental_features, "Enable Experimental Features");
+                    ui.label(egui::RichText::new("Enables live webpage embedding and advanced effects.").size(10.0).color(egui::Color32::GOLD));
+                    
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut settings.use_absolute_screen_coords, "Use Absolute Screen Coords");
+                    ui.label(egui::RichText::new("Fixes OBS capture offset on multi-monitor setups.").size(10.0).color(egui::Color32::GRAY));
 
-            ui.add_space(4.0);
-            ui.checkbox(&mut settings.show_profiler, "Show Performance Profiler");
-            ui.label(egui::RichText::new("Prints capture pipeline timing to console every second.").size(10.0).color(egui::Color32::GRAY));
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut settings.show_profiler, "Show Performance Profiler");
+                    ui.label(egui::RichText::new("Prints capture pipeline timing to console every second.").size(10.0).color(egui::Color32::GRAY));
+                });
 
-            // ── Accent color ──
-            ui.add_space(8.0);
-            section_heading(ui, "Accent Color", accent);
-            let mut ac = color32(&settings.accent_color);
-            if ui.color_edit_button_srgba(&mut ac).changed() {
-                settings.accent_color = [ac.r(), ac.g(), ac.b(), ac.a()];
-            }
+            // ── Theme / Appearance ──
+            ui.add_space(6.0);
+            ui.add(egui::Separator::default().spacing(6.0));
+            egui::CollapsingHeader::new(egui::RichText::new("Theme & Appearance").color(accent).strong())
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Accent Color:");
+                        let mut ac = color32(&settings.accent_color);
+                        if ui.color_edit_button_srgba(&mut ac).changed() {
+                            settings.accent_color = [ac.r(), ac.g(), ac.b(), ac.a()];
+                        }
+                    });
 
-            ui.add_space(8.0);
-            section_heading(ui, "Toolbar Background", accent);
-            let mut tbg = color32(&settings.toolbar_bg_color);
-            if ui.color_edit_button_srgba(&mut tbg).changed() {
-                settings.toolbar_bg_color = [tbg.r(), tbg.g(), tbg.b(), tbg.a()];
-            }
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Toolbar Background:");
+                        let mut tbg = color32(&settings.toolbar_bg_color);
+                        if ui.color_edit_button_srgba(&mut tbg).changed() {
+                            settings.toolbar_bg_color = [tbg.r(), tbg.g(), tbg.b(), tbg.a()];
+                        }
+                    });
+                });
 
-
+            ui.add_space(10.0);
+            ui.add(egui::Separator::default().spacing(6.0));
 
             // ── Actions ──
             ui.horizontal(|ui| {

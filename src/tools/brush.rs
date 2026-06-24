@@ -425,7 +425,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         }
                                     }
 
-                                    img.texture = None; // Force texture rebuild
+                                    img.clear_texture();
                                     img.thumbnail_dirty = true;
                                 }
                             }
@@ -1331,7 +1331,7 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
             }
         }
     }
-    img.texture = None;
+    img.clear_texture();
     img.thumbnail_dirty = true;
     crop_to_content(img);
 }
@@ -1339,6 +1339,7 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
 pub fn get_content_pixel_bbox(img: &crate::types::PlacedImage) -> Option<egui::Rect> {
     let iw = img.size[0];
     let ih = img.size[1];
+    if iw == 0 || ih == 0 { return None; }
     let mut min_x = iw;
     let mut min_y = ih;
     let mut max_x = 0;
@@ -1347,7 +1348,21 @@ pub fn get_content_pixel_bbox(img: &crate::types::PlacedImage) -> Option<egui::R
     for y in 0..ih {
         for x in 0..iw {
             let idx = (y * iw + x) * 4;
-            if idx + 3 < img.pixels.len() && img.pixels[idx + 3] > 0 {
+            let is_opaque = idx + 3 < img.pixels.len() && img.pixels[idx + 3] > 0;
+            let mask_opaque = if let Some(ref mask) = img.mask {
+                let m_size = img.mask_size.unwrap_or(img.size);
+                if m_size[0] > 0 && m_size[1] > 0 {
+                    let mx = ((x * m_size[0]) / iw).min(m_size[0] - 1);
+                    let my = ((y * m_size[1]) / ih).min(m_size[1] - 1);
+                    let m_idx = my * m_size[0] + mx;
+                    m_idx < mask.len() && mask[m_idx] > 0
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+            if is_opaque && mask_opaque {
                 min_x = min_x.min(x);
                 min_y = min_y.min(y);
                 max_x = max_x.max(x);
@@ -1396,10 +1411,39 @@ pub fn crop_to_content(img: &mut crate::types::PlacedImage) {
                 }
             }
             
+            if let Some(ref mask) = img.mask {
+                let m_size = img.mask_size.unwrap_or([iw, ih]);
+                let mask_min_x = (min_x * m_size[0] as i32) / iw as i32;
+                let mask_min_y = (min_y * m_size[1] as i32) / ih as i32;
+                let mask_max_x = (max_x * m_size[0] as i32) / iw as i32;
+                let mask_max_y = (max_y * m_size[1] as i32) / ih as i32;
+                let new_m_w = (mask_max_x - mask_min_x).max(1) as usize;
+                let new_m_h = (mask_max_y - mask_min_y).max(1) as usize;
+
+                let mut new_mask = vec![255u8; new_m_w * new_m_h];
+                for y in 0..new_m_h {
+                    let old_y = y as i32 + mask_min_y;
+                    if old_y < 0 || old_y >= m_size[1] as i32 { continue; }
+                    for x in 0..new_m_w {
+                        let old_x = x as i32 + mask_min_x;
+                        if old_x < 0 || old_x >= m_size[0] as i32 { continue; }
+                        let old_idx = old_y as usize * m_size[0] + old_x as usize;
+                        let new_idx = y * new_m_w + x;
+                        if old_idx < mask.len() && new_idx < new_mask.len() {
+                            new_mask[new_idx] = mask[old_idx];
+                        }
+                    }
+                }
+                img.mask = Some(new_mask);
+                img.mask_size = Some([new_m_w, new_m_h]);
+                img.mask_dirty = true;
+                img.cached_mask_outline = None;
+            }
+            
             let dw = img.display_size.unwrap_or([iw as f32, ih as f32])[0];
             let dh = img.display_size.unwrap_or([ih as f32, ih as f32])[1];
-            let scale_x = iw as f32 / dw;
-            let scale_y = ih as f32 / dh;
+            let scale_x = if dw > 0.1 { iw as f32 / dw } else { 1.0 };
+            let scale_y = if dh > 0.1 { ih as f32 / dh } else { 1.0 };
             
             let p_local_pts = egui::pos2(
                 img.position.x + min_x as f32 / scale_x,
@@ -1422,6 +1466,26 @@ pub fn crop_to_content(img: &mut crate::types::PlacedImage) {
             img.size = [new_w, new_h];
             img.display_size = Some([new_w as f32 / scale_x, new_h as f32 / scale_y]);
             img.pixels = new_pixels;
+
+            if let Some(ref mut pts) = img.snip_points {
+                let shift_x = min_x as f32 / scale_x;
+                let shift_y = min_y as f32 / scale_y;
+                for p in pts {
+                    if !p.x.is_nan() && !p.y.is_nan() {
+                        p.x -= shift_x;
+                        p.y -= shift_y;
+                    }
+                }
+            }
+            if let Some(mut src) = img.source_rect {
+                src[0] += min_x as f32 / scale_x;
+                src[1] += min_y as f32 / scale_y;
+                src[2] = new_w as f32 / scale_x;
+                src[3] = new_h as f32 / scale_y;
+                img.source_rect = Some(src);
+            }
+            img.clear_texture();
+            img.thumbnail_dirty = true;
         }
     }
 }
@@ -1435,8 +1499,8 @@ pub fn merge_images(dest: &mut crate::types::PlacedImage, src: &crate::types::Pl
 
     let dest_dw = dest.display_size.unwrap_or([dest_iw as f32, dest_ih as f32])[0];
     let dest_dh = dest.display_size.unwrap_or([dest_ih as f32, dest_ih as f32])[1];
-    let dest_scale_x = dest_iw as f32 / dest_dw;
-    let dest_scale_y = dest_ih as f32 / dest_dh;
+    let dest_scale_x = if dest_dw > 0.1 { dest_iw as f32 / dest_dw } else { 1.0 };
+    let dest_scale_y = if dest_dh > 0.1 { dest_ih as f32 / dest_dh } else { 1.0 };
 
     // Relative offset of src from dest in screen points
     let offset_pts = src.position - dest.position;
@@ -1514,6 +1578,38 @@ pub fn merge_images(dest: &mut crate::types::PlacedImage, src: &crate::types::Pl
         }
     }
 
+    if let Some(ref mask) = dest.mask {
+        let m_size = dest.mask_size.unwrap_or([dest_iw, dest_ih]);
+        let scale_mask_x = m_size[0] as f32 / dest_iw as f32;
+        let scale_mask_y = m_size[1] as f32 / dest_ih as f32;
+        
+        let new_m_w = (new_w as f32 * scale_mask_x).round().max(1.0) as usize;
+        let new_m_h = (new_h as f32 * scale_mask_y).round().max(1.0) as usize;
+        
+        let mut new_mask = vec![255u8; new_m_w * new_m_h];
+        
+        let mask_min_x_m = (new_min_x as f32 * scale_mask_x).round() as i32;
+        let mask_min_y_m = (new_min_y as f32 * scale_mask_y).round() as i32;
+        
+        for y in 0..m_size[1] {
+            let new_y = y as i32 - mask_min_y_m;
+            if new_y < 0 || new_y >= new_m_h as i32 { continue; }
+            for x in 0..m_size[0] {
+                let new_x = x as i32 - mask_min_x_m;
+                if new_x < 0 || new_x >= new_m_w as i32 { continue; }
+                let old_idx = y * m_size[0] + x;
+                let new_idx = new_y as usize * new_m_w + new_x as usize;
+                if old_idx < mask.len() && new_idx < new_mask.len() {
+                    new_mask[new_idx] = mask[old_idx];
+                }
+            }
+        }
+        dest.mask = Some(new_mask);
+        dest.mask_size = Some([new_m_w, new_m_h]);
+        dest.mask_dirty = true;
+        dest.cached_mask_outline = None;
+    }
+
     // 3. Update dest image positioning & dimensions
     let p_local_pts = egui::pos2(
         dest.position.x + new_min_x as f32 / dest_scale_x,
@@ -1536,8 +1632,26 @@ pub fn merge_images(dest: &mut crate::types::PlacedImage, src: &crate::types::Pl
     dest.size = [new_w, new_h];
     dest.display_size = Some([new_w as f32 / dest_scale_x, new_h as f32 / dest_scale_y]);
     dest.pixels = new_pixels;
-    dest.texture = None;
+    dest.clear_texture();
     dest.thumbnail_dirty = true;
+
+    if let Some(ref mut pts) = dest.snip_points {
+        let shift_x = new_min_x as f32 / dest_scale_x;
+        let shift_y = new_min_y as f32 / dest_scale_y;
+        for p in pts {
+            if !p.x.is_nan() && !p.y.is_nan() {
+                p.x -= shift_x;
+                p.y -= shift_y;
+            }
+        }
+    }
+    if let Some(mut src) = dest.source_rect {
+        src[0] += new_min_x as f32 / dest_scale_x;
+        src[1] += new_min_y as f32 / dest_scale_y;
+        src[2] = new_w as f32 / dest_scale_x;
+        src[3] = new_h as f32 / dest_scale_y;
+        dest.source_rect = Some(src);
+    }
 
     crop_to_content(dest);
 }

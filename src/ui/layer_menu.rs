@@ -15,10 +15,12 @@ pub fn render_layers_window(
 
     let win_resp = crate::utils::panel_window_pos(
         egui::Window::new(egui::RichText::new("Layers").color(egui::Color32::from_rgb(180, 180, 200)).size(16.0))
+            .id(egui::Id::new("Layers"))
             .open(open)
             .title_bar(false)
             .resizable(true)
-            .default_width(340.0)
+            .default_width(settings.layer_menu_size.x)
+            .default_height(settings.layer_menu_size.y)
             .frame(frame),
         settings.layer_menu_pos,
         settings.ui_reset_frames,
@@ -67,7 +69,7 @@ pub fn render_layers_window(
                     let layer = &mut project.layers[i];
                     
                     let bg_color = if is_active {
-                        egui::Color32::from_rgba_premultiplied(60, 120, 200, 100)
+                        egui::Color32::from_rgba_premultiplied(12, 32, 80, 220)
                     } else {
                         egui::Color32::TRANSPARENT
                     };
@@ -605,6 +607,7 @@ pub fn render_layers_window(
     if let Some(idx) = layer_to_delete {
         let mut close = false;
         egui::Window::new("Confirm Delete Layer")
+            .id(egui::Id::new("Confirm Delete Layer"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -640,10 +643,15 @@ pub fn render_layers_window(
     }
 
     if let Some(resp) = win_resp {
-        if resp.response.dragged() {
-            let layer_id = resp.response.layer_id;
-            if let Some(rect) = ctx.memory(|m| m.area_rect(layer_id.id)) {
+        let layer_id = resp.response.layer_id;
+        if let Some(rect) = ctx.memory(|m| m.area_rect(layer_id.id)) {
+            if resp.response.dragged() {
                 settings.layer_menu_pos = rect.min;
+            }
+            let size = rect.size();
+            if (size.x - settings.layer_menu_size.x).abs() > 0.1 || (size.y - settings.layer_menu_size.y).abs() > 0.1 {
+                settings.layer_menu_size = size;
+                settings.save();
             }
         }
     }
@@ -656,6 +664,7 @@ pub fn render_layers_window(
 
     if *load_picker_open {
         egui::Window::new("Load Project")
+            .id(egui::Id::new("Load Project"))
             .collapsible(false)
             .resizable(true)
             .default_width(200.0)
@@ -671,6 +680,8 @@ pub fn render_layers_window(
                                 if ui.selectable_label(project.name == name, &name).clicked() {
                                     if let Some(p) = crate::project::Project::load(&name) {
                                         *project = p;
+                                        #[cfg(feature = "webengine")]
+                                        crate::web_engine::reinit_web_widgets(project);
                                         *load_picker_open = false;
                                     }
                                 }

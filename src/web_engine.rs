@@ -35,10 +35,12 @@ pub fn init() -> bool {
             return true; // Already initialized
         }
 
-        // Check if resources folder exists
-        if !std::path::Path::new("resources").exists() {
-            eprintln!("[WebEngine] Error: 'resources' folder not found!");
-            eprintln!("[WebEngine] Make sure the 'resources' folder from Ultralight SDK is in the working directory");
+        // Run diagnostics
+        if let Err(errors) = check_diagnostics() {
+            eprintln!("[WebEngine] Diagnostics failed. Missing files:");
+            for err in &errors {
+                eprintln!("  - {:?}", err);
+            }
             return false;
         }
 
@@ -250,4 +252,129 @@ pub fn navigate_widget(widget: &mut WebWidget, url: &str) {
 /// Check if the renderer is available.
 pub fn is_available() -> bool {
     unsafe { UL_RENDERER.is_some() }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebEngineError {
+    MissingDll(String),
+    MissingResourcesDir,
+    MissingResourceFile(String),
+    Other(String),
+}
+
+pub fn check_diagnostics() -> Result<(), Vec<WebEngineError>> {
+    let mut errors = Vec::new();
+    
+    // Check DLLs
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let dlls = vec!["Ultralight.dll", "WebCore.dll", "AppCore.dll"];
+    let mut missing_dlls = Vec::new();
+    
+    for dll in &dlls {
+        let in_cwd = std::path::Path::new(dll).exists();
+        let in_exe_dir = exe_dir.as_ref().map(|d| d.join(dll).exists()).unwrap_or(false);
+        if !in_cwd && !in_exe_dir {
+            missing_dlls.push(dll.to_string());
+        }
+    }
+    
+    if !missing_dlls.is_empty() {
+        for dll in missing_dlls {
+            errors.push(WebEngineError::MissingDll(dll));
+        }
+    }
+    
+    // Check resources directory
+    let res_dir_cwd = std::path::Path::new("resources");
+    let res_dir_exe = exe_dir.as_ref().map(|d| d.join("resources"));
+    
+    let res_dir = if res_dir_cwd.exists() && res_dir_cwd.is_dir() {
+        Some(res_dir_cwd.to_path_buf())
+    } else if res_dir_exe.as_ref().map(|d| d.exists() && d.is_dir()).unwrap_or(false) {
+        res_dir_exe
+    } else {
+        None
+    };
+    
+    if let Some(dir) = res_dir {
+        // Check files in resources folder
+        let mut has_icu = false;
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.starts_with("icudt") && name.ends_with(".dat") {
+                        has_icu = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !has_icu {
+            errors.push(WebEngineError::MissingResourceFile("icudt67l.dat (Unicode data file)".to_string()));
+        }
+        
+        let cacert_path = dir.join("cacert.pem");
+        if !cacert_path.exists() {
+            errors.push(WebEngineError::MissingResourceFile("cacert.pem (certificate bundle)".to_string()));
+        }
+    } else {
+        errors.push(WebEngineError::MissingResourcesDir);
+    }
+    
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+pub fn get_status_string() -> String {
+    if is_available() {
+        return "Web Engine: Initialized & Ready".to_string();
+    }
+    match check_diagnostics() {
+        Ok(_) => "Web Engine: Ready to initialize. Click 'Try Initialize'.".to_string(),
+        Err(errors) => {
+            let mut msg = String::new();
+            for err in errors {
+                match err {
+                    WebEngineError::MissingDll(dll) => {
+                        msg.push_str(&format!("• Missing DLL: {} (must be in root folder next to owerlayer.exe)\n", dll));
+                    }
+                    WebEngineError::MissingResourcesDir => {
+                        msg.push_str("• Missing 'resources' directory in root folder.\n");
+                    }
+                    WebEngineError::MissingResourceFile(file) => {
+                        msg.push_str(&format!("• Missing file inside 'resources/': {}\n", file));
+                    }
+                    WebEngineError::Other(e) => {
+                        msg.push_str(&format!("• Error: {}\n", e));
+                    }
+                }
+            }
+            msg
+        }
+    }
+}
+
+pub fn reinit_web_widgets(project: &mut crate::project::Project) {
+    if !is_available() {
+        init();
+    }
+    if is_available() {
+        for layer in &mut project.layers {
+            for img in &mut layer.placed_images {
+                if img.is_live && img.web_widget.is_none() {
+                    if let Some(ref url) = img.url {
+                        if url.starts_with("http") || url.starts_with("about:") {
+                            if let Some(widget) = create_widget(url, img.size[0] as u32, img.size[1] as u32) {
+                                img.web_widget = Some(std::sync::Arc::new(std::sync::Mutex::new(widget)));
+                                println!("[WebEngine] Re-initialized web widget for URL: {}", url);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

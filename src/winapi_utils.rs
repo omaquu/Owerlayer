@@ -753,8 +753,42 @@ pub fn capture_window(hwnd: usize) -> Option<(Vec<u8>, usize, usize)> {
     }
 }
 
+#[cfg(windows)]
+pub fn capture_window_rect(hwnd: usize, x: i32, y: i32, width: i32, height: i32) -> Option<Vec<u8>> {
+    let (p, w, h) = capture_window(hwnd)?;
+    unsafe {
+        let hwnd_ptr = hwnd as *mut std::ffi::c_void;
+        let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(hwnd_ptr, &mut r);
+        
+        let rx = x - r.left;
+        let ry = y - r.top;
+        
+        let mut cropped = vec![0u8; (width * height * 4) as usize];
+        for dy in 0..height {
+            let src_y = ry + dy;
+            if src_y >= 0 && src_y < h as i32 {
+                for dx in 0..width {
+                    let src_x = rx + dx;
+                    if src_x >= 0 && src_x < w as i32 {
+                        let src_idx = (src_y as usize * w + src_x as usize) * 4;
+                        let dst_idx = (dy as usize * width as usize + dx as usize) * 4;
+                        if src_idx + 3 < p.len() && dst_idx + 3 < cropped.len() {
+                            cropped[dst_idx..dst_idx+4].copy_from_slice(&p[src_idx..src_idx+4]);
+                        }
+                    }
+                }
+            }
+        }
+        Some(cropped)
+    }
+}
+
 #[cfg(not(windows))]
 pub fn capture_window(_hwnd: usize) -> Option<(Vec<u8>, usize, usize)> { None }
+
+#[cfg(not(windows))]
+pub fn capture_window_rect(_hwnd: usize, _x: i32, _y: i32, _width: i32, _height: i32) -> Option<Vec<u8>> { None }
 
 #[cfg(windows)]
 pub fn get_window_screen_pos() -> (i32, i32) {

@@ -706,31 +706,8 @@ pub fn update(ctx: &mut ToolContext) {
                                                 }
                                                 _ => {
                                                     // Move/Translate
-                                                    let mut delta = hover_pos - start;
+                                                    let delta = hover_pos - start;
                                                     let ib = initial_bounds.unwrap();
-                                                    {
-                                                        let (sw, sh) = crate::winapi_utils::get_screen_size(false);
-                                                        let monitor_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(sw, sh));
-                                                        let new_rect = ib.translate(delta);
-                                                        
-                                                        let min_overlap = 20.0f32;
-                                                        let mut shift_x = 0.0f32;
-                                                        if new_rect.max.x < monitor_rect.min.x + min_overlap {
-                                                            shift_x = (monitor_rect.min.x + min_overlap) - new_rect.max.x;
-                                                        } else if new_rect.min.x > monitor_rect.max.x - min_overlap {
-                                                            shift_x = (monitor_rect.max.x - min_overlap) - new_rect.min.x;
-                                                        }
-                                                        
-                                                        let mut shift_y = 0.0f32;
-                                                        if new_rect.max.y < monitor_rect.min.y + min_overlap {
-                                                            shift_y = (monitor_rect.min.y + min_overlap) - new_rect.max.y;
-                                                        } else if new_rect.min.y > monitor_rect.max.y - min_overlap {
-                                                            shift_y = (monitor_rect.max.y - min_overlap) - new_rect.min.y;
-                                                        }
-                                                        
-                                                        delta.x += shift_x;
-                                                        delta.y += shift_y;
-                                                    }
                                                     img.source_rect = Some([ib.min.x + delta.x, ib.min.y + delta.y, ib.width(), ib.height()]);
                                                 }
                                             }
@@ -788,7 +765,6 @@ pub fn update(ctx: &mut ToolContext) {
                                                                     }
                                                                 }
                                                                 img.mask_dirty = true;
-                                                                img.texture = None;
                                                             }
                                                         }
                                                     }
@@ -846,41 +822,69 @@ pub fn update(ctx: &mut ToolContext) {
                                 let new_vec = world_pos - anchor;
                                 if old_vec.x.abs() > 1.0 && old_vec.y.abs() > 1.0 {
                                     let scale = egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y);
-                                    if let Some(sel) = project.selected_object {
-                                        match sel.object_type {
-                                            ObjectType::Image => {
-                                                let img = &mut layer.placed_images[sel.object_idx];
-                                                let mut ds = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32]);
-                                                ds[0] *= scale.x; ds[1] *= scale.y;
-                                                img.display_size = Some(ds);
-                                                let rel = img.position - anchor;
-                                                img.position = anchor + egui::vec2(rel.x * scale.x, rel.y * scale.y);
-                                            }
-                                            ObjectType::Stroke => {
-                                                let s = &mut layer.strokes[sel.object_idx];
-                                                s.scale.x *= scale.x;
-                                                s.scale.y *= scale.y;
-                                                let initial_c = initial_center.unwrap();
-                                                let diff = (anchor + (initial_c - anchor) * scale) - initial_c;
-                                                for p in &mut s.points { *p += diff; }
-                                            }
-                                            ObjectType::Text => {
-                                                let t = &mut layer.text_annotations[sel.object_idx];
-                                                let uniform_scale = (scale.x.abs() + scale.y.abs()) * 0.5;
-                                                if uniform_scale > 0.001 {
-                                                    t.font_size = (t.font_size * uniform_scale).max(4.0);
-                                                    t.scale.x *= scale.x / uniform_scale;
-                                                    t.scale.y *= scale.y / uniform_scale;
-                                                    t.exact_size[0] *= uniform_scale;
-                                                    t.exact_size[1] *= uniform_scale;
+                                    if scale.x.is_finite() && scale.y.is_finite() {
+                                        if let Some(sel) = project.selected_object {
+                                            match sel.object_type {
+                                                ObjectType::Image => {
+                                                    let img = &mut layer.placed_images[sel.object_idx];
+                                                    let base_ds = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32]);
+                                                    let mut target_w = base_ds[0] * scale.x;
+                                                    let mut target_h = base_ds[1] * scale.y;
+                                                    
+                                                    let is_web = false;
+                                                    #[cfg(feature = "webengine")]
+                                                    let is_web = img.web_widget.is_some();
+                                                    
+                                                    let (min_w, min_h) = if is_web {
+                                                        (100.0, 100.0)
+                                                    } else if let Some(ref w_type) = img.widget_type {
+                                                        match w_type {
+                                                            crate::types::WidgetType::Calculator => (60.0, 80.0),
+                                                            crate::types::WidgetType::VolumeMixer => (60.0, 60.0),
+                                                        }
+                                                    } else {
+                                                        (10.0, 10.0)
+                                                    };
+                                                     
+                                                    let sign_x = scale.x.signum();
+                                                    let sign_y = scale.y.signum();
+                                                    
+                                                    target_w = sign_x * target_w.abs().max(min_w);
+                                                    target_h = sign_y * target_h.abs().max(min_h);
+                                                    
+                                                    let eff_scale_x = if base_ds[0] != 0.0 { target_w / base_ds[0] } else { 1.0 };
+                                                    let eff_scale_y = if base_ds[1] != 0.0 { target_h / base_ds[1] } else { 1.0 };
+                                                    
+                                                    img.display_size = Some([target_w, target_h]);
+                                                    let rel = img.position - anchor;
+                                                    img.position = anchor + egui::vec2(rel.x * eff_scale_x, rel.y * eff_scale_y);
                                                 }
-                                                let initial_c = initial_center.unwrap();
-                                                let diff = (anchor + (initial_c - anchor) * scale) - initial_c;
-                                                t.position += diff;
+                                                ObjectType::Stroke => {
+                                                    let s = &mut layer.strokes[sel.object_idx];
+                                                    s.scale.x *= scale.x;
+                                                    s.scale.y *= scale.y;
+                                                    let initial_c = initial_center.unwrap();
+                                                    let diff = (anchor + (initial_c - anchor) * scale) - initial_c;
+                                                    for p in &mut s.points { *p += diff; }
+                                                }
+                                                ObjectType::Text => {
+                                                    let t = &mut layer.text_annotations[sel.object_idx];
+                                                    let uniform_scale = (scale.x.abs() + scale.y.abs()) * 0.5;
+                                                    if uniform_scale > 0.001 {
+                                                        t.font_size = (t.font_size * uniform_scale).max(4.0);
+                                                        t.scale.x *= scale.x / uniform_scale;
+                                                        t.scale.y *= scale.y / uniform_scale;
+                                                        t.exact_size[0] *= uniform_scale;
+                                                        t.exact_size[1] *= uniform_scale;
+                                                    }
+                                                    let initial_c = initial_center.unwrap();
+                                                    let diff = (anchor + (initial_c - anchor) * scale) - initial_c;
+                                                    t.position += diff;
+                                                }
                                             }
+                                        } else {
+                                            scale_layer(layer, anchor, scale);
                                         }
-                                    } else {
-                                        scale_layer(layer, anchor, scale);
                                     }
                                 }
                             } else if *drag_state >= 2 && *drag_state <= 5 {
@@ -904,32 +908,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 }
                             } else {
                                 // Translate
-                                let mut delta = pos - start;
-                                if !settings.multi_monitor {
-                                    if let Some(ib) = *initial_bounds {
-                                        let (sw, sh) = crate::winapi_utils::get_screen_size(false);
-                                        let monitor_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(sw, sh));
-                                        let new_bounds = ib.translate(delta);
-                                        
-                                        let min_overlap = 20.0f32;
-                                        let mut shift_x = 0.0f32;
-                                        if new_bounds.max.x < monitor_rect.min.x + min_overlap {
-                                            shift_x = (monitor_rect.min.x + min_overlap) - new_bounds.max.x;
-                                        } else if new_bounds.min.x > monitor_rect.max.x - min_overlap {
-                                            shift_x = (monitor_rect.max.x - min_overlap) - new_bounds.min.x;
-                                        }
-                                        
-                                        let mut shift_y = 0.0f32;
-                                        if new_bounds.max.y < monitor_rect.min.y + min_overlap {
-                                            shift_y = (monitor_rect.min.y + min_overlap) - new_bounds.max.y;
-                                        } else if new_bounds.min.y > monitor_rect.max.y - min_overlap {
-                                            shift_y = (monitor_rect.max.y - min_overlap) - new_bounds.min.y;
-                                        }
-                                        
-                                        delta.x += shift_x;
-                                        delta.y += shift_y;
-                                    }
-                                }
+                                let delta = pos - start;
                                 if let Some(sel) = project.selected_object {
                                     match sel.object_type {
                                         ObjectType::Stroke => {
@@ -946,7 +925,6 @@ pub fn update(ctx: &mut ToolContext) {
                                             if let Some(img) = layer.placed_images.get_mut(sel.object_idx) {
                                                 img.position += delta;
                                                 // source_rect intentionally NOT moved — stays fixed so snip can be placed independently
-                                                img.thumbnail_dirty = true;
                                             }
                                         }
                                     }
@@ -1070,7 +1048,16 @@ pub fn update(ctx: &mut ToolContext) {
                                         let sw = (src[2] * ppp).round() as i32;
                                         let sh = (src[3] * ppp).round() as i32;
                                         if sw > 0 && sh > 0 {
-                                            if let Some(mut pixels) = crate::tools::snip::capture_screen_rect_safe(settings, sx, sy, sw, sh) {
+                                            if let Some(mut pixels) = crate::tools::snip::capture_static_image(
+                                                settings,
+                                                img.capture_source,
+                                                img.target_hwnd,
+                                                img.hwnd,
+                                                sx,
+                                                sy,
+                                                sw,
+                                                sh,
+                                            ) {
                                                 // Apply mask if present
                                                 if let Some(ref mask) = img.mask {
                                                     for (i, &m) in mask.iter().enumerate() {

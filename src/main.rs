@@ -13,6 +13,7 @@ mod wgc_capture;
 mod gl_renderer;
 mod rasterize;
 mod history;
+mod volume_mixer;
 #[cfg(feature = "webengine")]
 mod web_engine;
 
@@ -166,6 +167,7 @@ struct MarqueeCaptureRequest {
     marquee_selection: crate::types::MarqueeSelection,
 }
 
+
 struct OwerlayerApp {
     pub edit_mode: bool,
     marquee_capture_request: Option<MarqueeCaptureRequest>,
@@ -228,6 +230,13 @@ struct OwerlayerApp {
     last_perf_print_time: std::time::Instant,
     perf_stats: crate::types::AppPerfStats,
     perf_display: Option<crate::types::PerfDisplayAverages>,
+
+    prev_calc_hotkey_held: bool,
+    prev_vol_hotkey_held: bool,
+    volume_sessions: Vec<crate::volume_mixer::AudioSessionInfo>,
+    volume_sessions_shared: std::sync::Arc<std::sync::Mutex<Vec<crate::volume_mixer::AudioSessionInfo>>>,
+    volume_mixer_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    volume_mixer_cmd_tx: std::sync::mpsc::Sender<crate::volume_mixer::MixerCommand>,
 }
 
 impl OwerlayerApp {
@@ -241,7 +250,62 @@ impl OwerlayerApp {
         cc.egui_ctx.set_visuals(v);
         cc.egui_ctx.set_pixels_per_point(1.0);
 
-        Self {
+        let volume_sessions_shared = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let volume_mixer_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::channel::<crate::volume_mixer::MixerCommand>();
+        
+        {
+            let vs_clone = std::sync::Arc::clone(&volume_sessions_shared);
+            let active_clone = std::sync::Arc::clone(&volume_mixer_active);
+            std::thread::spawn(move || {
+                #[cfg(windows)]
+                unsafe {
+                    let _ = windows::Win32::System::Com::CoInitializeEx(
+                        None,
+                        windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+                    );
+                }
+                
+                let mut last_poll = std::time::Instant::now() - std::time::Duration::from_secs(2);
+                loop {
+                    let mut processed_any = false;
+                    while let Ok(cmd) = rx.try_recv() {
+                        processed_any = true;
+                        match cmd {
+                            crate::volume_mixer::MixerCommand::SetVolume { pid, volume } => {
+                                crate::volume_mixer::set_session_volume(pid, volume);
+                            }
+                            crate::volume_mixer::MixerCommand::SetMute { pid, mute } => {
+                                crate::volume_mixer::set_session_mute(pid, mute);
+                            }
+                        }
+                    }
+                    
+                    if active_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                        if last_poll.elapsed() >= std::time::Duration::from_millis(1500) && !processed_any {
+                            let sessions = crate::volume_mixer::get_active_sessions();
+                            if let Ok(mut lock) = vs_clone.lock() {
+                                *lock = sessions;
+                            }
+                            last_poll = std::time::Instant::now();
+                        }
+                    }
+                    
+                    if let Ok(cmd) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                        match cmd {
+                            crate::volume_mixer::MixerCommand::SetVolume { pid, volume } => {
+                                crate::volume_mixer::set_session_volume(pid, volume);
+                            }
+                            crate::volume_mixer::MixerCommand::SetMute { pid, mute } => {
+                                crate::volume_mixer::set_session_mute(pid, mute);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        let mut app = Self {
             edit_mode: true,
             marquee_capture_request: None,
             embed_url: String::new(),
@@ -304,7 +368,18 @@ impl OwerlayerApp {
             last_perf_print_time: std::time::Instant::now(),
             perf_stats: crate::types::AppPerfStats::default(),
             perf_display: None,
+            prev_calc_hotkey_held: false,
+            prev_vol_hotkey_held: false,
+            volume_sessions: Vec::new(),
+            volume_sessions_shared,
+            volume_mixer_active,
+            volume_mixer_cmd_tx: tx,
+        };
+        #[cfg(feature = "webengine")]
+        {
+            web_engine::reinit_web_widgets(&mut app.project);
         }
+        app
     }
 
     fn finalize_marquee_capture(&mut self, frame: crate::rasterize::CapturedFrame, m_req: MarqueeCaptureRequest, ctx: &egui::Context) {
@@ -433,6 +508,47 @@ impl OwerlayerApp {
                 self.project.save();
             }
         }
+    }
+
+    fn is_window_open(&self, id: egui::Id, ctx: &egui::Context) -> bool {
+        if id == egui::Id::new("photoshop_panel") {
+            return self.edit_mode && !self.settings.hide_all;
+        }
+        if id == egui::Id::new("Settings") {
+            return self.edit_mode && !self.settings.hide_all && self.show_settings_panel;
+        }
+        if id == egui::Id::new("Layers") {
+            return self.edit_mode && !self.settings.hide_all && self.show_layers_panel;
+        }
+        if id == egui::Id::new("History") {
+            return self.edit_mode && !self.settings.hide_all && self.show_history_panel;
+        }
+        if id == egui::Id::new("exit_dialog") {
+            return self.show_exit_dialog;
+        }
+        if id == egui::Id::new("Performance Profiler") {
+            return self.perf_display.is_some();
+        }
+        if id == egui::Id::new("Debug Overlay") {
+            return self.show_debug_window;
+        }
+        if id == egui::Id::new("creation_prompt") {
+            return self.layer_prompt_open && self.edit_mode;
+        }
+        if id == egui::Id::new("Confirm Delete Layer") {
+            let layer_to_delete: Option<usize> = ctx.memory(|m| m.data.get_temp(egui::Id::new("layer_to_delete")));
+            return self.edit_mode && !self.settings.hide_all && layer_to_delete.is_some();
+        }
+        if id == egui::Id::new("Load Project") {
+            return self.edit_mode && !self.settings.hide_all && self.load_picker_open;
+        }
+        if id == egui::Id::new("Object Effects") {
+            return self.edit_mode && !self.settings.hide_all && self.settings.fx_open.is_some();
+        }
+        if id == egui::Id::new("layer_filters") {
+            return self.edit_mode && !self.settings.hide_all && self.filters_open.is_some();
+        }
+        false
     }
 
     fn handle_embed_trigger(&mut self) {
@@ -570,17 +686,13 @@ impl OwerlayerApp {
 
                     if self.web_engine_initialized {
                         if let Some(widget) = web_engine::create_widget(&url, 800, 600) {
-                            let widget_idx = self.web_widgets.len();
-                            let pixels = widget.pixels.clone();
-                            self.web_widgets.push(widget);
-
                             if let Some(layer) = self.project.get_active_layer_mut() {
                                 let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
-                                let mut p_img = overlay::PlacedImage::new(id, egui::pos2(100.0, 100.0), [800, 600], pixels);
+                                let mut p_img = overlay::PlacedImage::new(id, egui::pos2(100.0, 100.0), [800, 600], widget.pixels.clone());
                                 p_img.display_size = Some([800.0, 600.0]);
                                 p_img.is_live = true;
-                                p_img.hwnd = widget_idx;
                                 p_img.url = Some(url.clone());
+                                p_img.web_widget = Some(std::sync::Arc::new(std::sync::Mutex::new(widget)));
                                 layer.placed_images.push(p_img);
                             }
                             println!("[WebEngine] Embedded webpage: {}", url);
@@ -616,10 +728,6 @@ impl OwerlayerApp {
                 
                 layer.text_annotations.push(overlay::TextAnnotation::new(egui::pos2(110.0, 110.0), label, [255, 180, 180, 255], 14.0));
             }
-        }
-        
-        if self.frame_count > 60 {
-            std::process::exit(0);
         }
     }
 }
@@ -657,6 +765,17 @@ impl eframe::App for OwerlayerApp {
             self.history.push(&self.project, "Initial State");
         }
         self.frame_count += 1;
+        
+        // Poll active volume sessions if a Volume Mixer is placed
+        let has_volume_mixer = self.project.layers.iter().any(|l| {
+            l.placed_images.iter().any(|img| img.widget_type == Some(crate::types::WidgetType::VolumeMixer))
+        });
+        self.volume_mixer_active.store(has_volume_mixer, std::sync::atomic::Ordering::Relaxed);
+        if has_volume_mixer {
+            if let Ok(lock) = self.volume_sessions_shared.lock() {
+                self.volume_sessions = lock.clone();
+            }
+        }
         
         // Sanitizing selected_object bounds to prevent panics and crashes from deleted layers or objects
         if let Some(sel) = self.project.selected_object {
@@ -717,6 +836,34 @@ impl eframe::App for OwerlayerApp {
                     }
                 }
             }
+
+            // Calculator widget hotkey
+            let calc_held = hotkey::is_hotkey_held(&self.settings.keybind_calculator);
+            if calc_held && !self.prev_calc_hotkey_held {
+                for layer in &mut self.project.layers {
+                    for img in &mut layer.placed_images {
+                        if img.widget_type == Some(crate::types::WidgetType::Calculator) {
+                            img.visible = !img.visible;
+                        }
+                    }
+                }
+                self.project.save();
+            }
+            self.prev_calc_hotkey_held = calc_held;
+            
+            // Volume mixer widget hotkey
+            let vol_held = hotkey::is_hotkey_held(&self.settings.keybind_volume_mixer);
+            if vol_held && !self.prev_vol_hotkey_held {
+                for layer in &mut self.project.layers {
+                    for img in &mut layer.placed_images {
+                        if img.widget_type == Some(crate::types::WidgetType::VolumeMixer) {
+                            img.visible = !img.visible;
+                        }
+                    }
+                }
+                self.project.save();
+            }
+            self.prev_vol_hotkey_held = vol_held;
         }
 
         // ---- 2. Hotkey / toggle ----
@@ -788,6 +935,7 @@ impl eframe::App for OwerlayerApp {
         let is_over_ui = ctx.memory(|mem| {
             mem.layer_ids().any(|layer| {
                 if layer.order == egui::Order::Background { return false; }
+                if !self.is_window_open(layer.id, ctx) { return false; }
                 if let Some(rect) = mem.area_rect(layer.id) {
                     rect.contains(mouse.pos)
                 } else {
@@ -797,7 +945,8 @@ impl eframe::App for OwerlayerApp {
         });
 
         // Force interactive for the first few frames to ensure focus and layout calculation
-        let should_be_interactive = self.frame_count < 10 || self.edit_mode || (self.settings.keep_ui_visible && is_over_ui);
+        let widgets_visible = self.settings.show_calculator || self.settings.show_volume_mixer;
+        let should_be_interactive = self.frame_count < 10 || self.edit_mode || (self.settings.keep_ui_visible && is_over_ui) || (widgets_visible && is_over_ui);
         let passthrough = !should_be_interactive;
 
         if passthrough != self.prev_passthrough {
@@ -1276,7 +1425,7 @@ impl eframe::App for OwerlayerApp {
             // println!("DEBUG: Frame {} | show_ui=true | edit_mode={} | rasterize_phase={} | req={:?}", self.frame_count, self.edit_mode, self.rasterize_phase, self.project.rasterize_request.is_some());
             overlay::render_mode_indicator(ctx, self.edit_mode, self.settings.hotkey.display_name(), self.settings.toggle_mode, &self.settings, &self.owl_icon);
             let mut embed_trigger = false;
-            render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger, &mut self.show_history_panel, &mut self.request_history_push, &mut self.filters_open);
+            render_toolbar(ctx, &mut self.active_tool, &mut self.settings, &mut self.show_settings_panel, &mut self.show_layers_panel, &mut self.show_exit_dialog, &mut self.project, &mut self.embed_url, &mut embed_trigger, &mut self.show_history_panel, &mut self.request_history_push, &mut self.filters_open, &self.volume_sessions);
             if embed_trigger { self.handle_embed_trigger(); }
             
             render_filter_menu(ctx, &mut self.project, &mut self.settings, &mut self.filters_open);
@@ -1284,6 +1433,7 @@ impl eframe::App for OwerlayerApp {
             if self.show_exit_dialog {
                 let mut close = false;
                 egui::Window::new(egui::RichText::new("Exit Owerlayer?").color(egui::Color32::from_rgb(255, 100, 100)))
+                    .id(egui::Id::new("exit_dialog"))
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -1893,7 +2043,7 @@ impl eframe::App for OwerlayerApp {
         }
 
         if self.show_debug_window {
-            egui::Window::new("Debug Overlay").open(&mut self.show_debug_window).show(ctx, |ui| {
+            egui::Window::new("Debug Overlay").id(egui::Id::new("Debug Overlay")).open(&mut self.show_debug_window).show(ctx, |ui| {
                 ui.label(format!("Edit Mode: {}", self.edit_mode));
                 ui.label(format!("Frame Count: {}", self.frame_count));
                 ui.label(format!("Mouse Pos: {:.1}, {:.1}", mouse.pos.x, mouse.pos.y));
@@ -1984,6 +2134,8 @@ impl eframe::App for OwerlayerApp {
                     self.rasterize_bbox,
                     self.rasterize_capture.clone(),
                     &mut self.perf_stats,
+                    &self.volume_sessions,
+                    &self.volume_mixer_cmd_tx,
                 );
 
                 // Advance rasterize phase after render
@@ -2007,28 +2159,7 @@ impl eframe::App for OwerlayerApp {
                     }
                 }
             });
-        // ---- 6b. Update web widgets (Ultralight) ----
-        #[cfg(feature = "webengine")]
-        {
-            if !self.web_widgets.is_empty() {
-                web_engine::update_widgets(&mut self.web_widgets);
-                
-                // Sync pixels from web widgets into PlacedImages
-                for layer in &mut self.project.layers {
-                    for img in &mut layer.placed_images {
-                        if img.is_live && img.url.is_some() {
-                            let idx = img.hwnd;
-                            if idx < self.web_widgets.len() && self.web_widgets[idx].dirty {
-                                img.pixels = self.web_widgets[idx].pixels.clone();
-                                img.size = [self.web_widgets[idx].width as usize, self.web_widgets[idx].height as usize];
-                                img.texture = None; img.thumbnail_dirty = true; // force texture rebuild
-                                self.web_widgets[idx].dirty = false;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // Web engine updates are now handled in the main render/canvas loop directly via PlacedImage::web_widget
         // Print performance stats every 1 second if profiler enabled and frame_count > 0
         if self.settings.show_profiler && self.last_perf_print_time.elapsed() >= std::time::Duration::from_millis(1000) {
             if self.perf_stats.frame_count > 0 {

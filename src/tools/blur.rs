@@ -69,12 +69,13 @@ pub fn update(ctx: &mut ToolContext) {
                 img.mask_dirty = img.mask.is_some();
                 img.snip_points = Some(poly);
                 
-                // Set source_rect so capture thread knows what region to capture
                 let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                 let window_origin = egui::vec2(wx as f32 / ppp, wy as f32 / ppp);
                 let screen_rect = bounds.translate(window_origin);
                 img.source_rect = Some([screen_rect.min.x, screen_rect.min.y, screen_rect.width(), screen_rect.height()]);
                 img.snip_source_overlay = settings.snip_source_overlay;
+                img.capture_source = settings.snip_source;
+                img.target_hwnd = settings.origin_target_hwnd;
                 
                 target_layer.placed_images.push(img);
                 target_layer.expanded = true;
@@ -212,6 +213,8 @@ pub fn update(ctx: &mut ToolContext) {
                 let screen_rect = rect.translate(window_origin);
                 img.source_rect = Some([screen_rect.min.x, screen_rect.min.y, screen_rect.width(), screen_rect.height()]);
                 img.snip_source_overlay = settings.snip_source_overlay;
+                img.capture_source = settings.snip_source;
+                img.target_hwnd = settings.origin_target_hwnd;
                 
                 target_layer.placed_images.push(img);
                 target_layer.expanded = true;

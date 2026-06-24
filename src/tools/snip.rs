@@ -5,17 +5,51 @@ use crate::overlay::*;
 use crate::tools::ToolContext;
 
 pub fn capture_screen_rect_safe(settings: &crate::types::Settings, sx: i32, sy: i32, w: i32, h: i32) -> Option<Vec<u8>> {
-    let should_hide = !settings.snip_source_overlay;
-    if should_hide {
-        crate::winapi_utils::set_window_visibility(false);
-        std::thread::sleep(std::time::Duration::from_millis(40));
-    }
+    // ALWAYS hide the window during static snip captures to prevent the marching ants and other Owerlayer UI elements from being baked into the static snip!
+    crate::winapi_utils::set_window_visibility(false);
+    std::thread::sleep(std::time::Duration::from_millis(40));
     let res = crate::winapi_utils::capture_screen_rect(sx, sy, w, h);
-    if should_hide {
-        crate::winapi_utils::set_window_visibility(true);
-        crate::winapi_utils::force_focus();
-    }
+    crate::winapi_utils::set_window_visibility(true);
+    crate::winapi_utils::force_focus();
     res
+}
+
+pub fn capture_static_image(
+    settings: &crate::types::Settings,
+    capture_source: crate::types::CaptureSource,
+    target_hwnd: isize,
+    img_hwnd: usize,
+    sx: i32,
+    sy: i32,
+    sw: i32,
+    sh: i32,
+) -> Option<Vec<u8>> {
+    match capture_source {
+        crate::types::CaptureSource::Origin => {
+            let hwnd_to_capture = if target_hwnd != 0 {
+                target_hwnd as usize
+            } else {
+                settings.origin_target_hwnd as usize
+            };
+            if hwnd_to_capture != 0 {
+                if let Some(p) = crate::winapi_utils::capture_window_rect(hwnd_to_capture, sx, sy, sw, sh) {
+                    return Some(p);
+                }
+            }
+            capture_screen_rect_safe(settings, sx, sy, sw, sh)
+        }
+        crate::types::CaptureSource::Overlay => {
+            if img_hwnd != 0 {
+                if let Some(p) = crate::winapi_utils::capture_window_rect(img_hwnd, sx, sy, sw, sh) {
+                    return Some(p);
+                }
+            }
+            crate::winapi_utils::capture_screen_rect(sx, sy, sw, sh)
+        }
+        crate::types::CaptureSource::Desktop => {
+            capture_screen_rect_safe(settings, sx, sy, sw, sh)
+        }
+    }
 }
 
 pub fn update(ctx: &mut ToolContext) {
@@ -43,6 +77,8 @@ pub fn update(ctx: &mut ToolContext) {
     if active_layer_idx >= project.layers.len() { return; }
 
     let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+    let offset_x = if settings.use_absolute_screen_coords { 0.0 } else { wx as f32 / ppp };
+    let offset_y = if settings.use_absolute_screen_coords { 0.0 } else { wy as f32 / ppp };
     let layer = &mut project.layers[active_layer_idx];
                 let mode = settings.snip_mode;
             if mode == SnipMode::Rect {
@@ -64,7 +100,7 @@ pub fn update(ctx: &mut ToolContext) {
                                  img.snip_source_overlay = settings.snip_source_overlay;
                                  img.display_size = Some([w, h]);
                                  img.is_live = true;
-                                 img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
+                                 img.source_rect = Some([rect.min.x + offset_x, rect.min.y + offset_y, w, h]);
                                  img.blur = settings.blur_strength;
                                  img.blur_effect = settings.blur_effect;
                                  img.show_source_rect = settings.show_source_rect;
@@ -89,7 +125,7 @@ pub fn update(ctx: &mut ToolContext) {
                                      img.name = "Snip".to_string();
                                      img.snip_source_overlay = settings.snip_source_overlay;
                                      img.display_size = Some([w, h]);
-                                     img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
+                                     img.source_rect = Some([rect.min.x + offset_x, rect.min.y + offset_y, w, h]);
                                      img.show_source_rect = settings.show_source_rect;
                                      img.shadow = settings.snip_shadow;
                                      img.snip_points = Some(vec![
@@ -151,7 +187,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([w, h]);
                                 img.is_live = true;
-                                img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
+                                img.source_rect = Some([rect.min.x + offset_x, rect.min.y + offset_y, w, h]);
                                 img.mask = Some(mask);
                                 img.mask_size = Some([pw, ph]);
                                 img.blur = settings.blur_strength;
@@ -171,7 +207,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     img.name = "Snip".to_string();
                                     img.snip_source_overlay = settings.snip_source_overlay;
                                     img.display_size = Some([w, h]);
-                                    img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
+                                    img.source_rect = Some([rect.min.x + offset_x, rect.min.y + offset_y, w, h]);
                                     img.show_source_rect = settings.show_source_rect;
                                     img.mask = Some(mask);
                                     img.mask_size = Some([pw, ph]);
@@ -219,7 +255,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([bounds.width(), bounds.height()]);
                             img.is_live = true;
-                            img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
+                            img.source_rect = Some([bounds.min.x + offset_x, bounds.min.y + offset_y, bounds.width(), bounds.height()]);
                             img.mask = Some(mask);
                             img.mask_size = Some([sw, sh]);
                             img.blur = settings.blur_strength;
@@ -239,7 +275,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.name = "Snip".to_string();
                                 img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([bounds.width(), bounds.height()]);
-                                img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
+                                img.source_rect = Some([bounds.min.x + offset_x, bounds.min.y + offset_y, bounds.width(), bounds.height()]);
                                 img.show_source_rect = settings.show_source_rect;
                                 img.mask = Some(mask);
                                 img.mask_size = Some([sw, sh]);
@@ -285,7 +321,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([bounds.width(), bounds.height()]);
                             img.is_live = true;
-                            img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
+                            img.source_rect = Some([bounds.min.x + offset_x, bounds.min.y + offset_y, bounds.width(), bounds.height()]);
                             img.mask = Some(mask);
                             img.mask_size = Some([sw, sh]);
                             img.blur = settings.blur_strength;
@@ -305,7 +341,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 img.name = "Snip".to_string();
                                 img.snip_source_overlay = settings.snip_source_overlay;
                                 img.display_size = Some([bounds.width(), bounds.height()]);
-                                img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
+                                img.source_rect = Some([bounds.min.x + offset_x, bounds.min.y + offset_y, bounds.width(), bounds.height()]);
                                 img.show_source_rect = settings.show_source_rect;
                                 img.mask = Some(mask);
                                 img.mask_size = Some([sw, sh]);
@@ -357,7 +393,7 @@ pub fn update(ctx: &mut ToolContext) {
                                     img.snip_source_overlay = settings.snip_source_overlay;
                                     img.display_size = Some([bounds.width(), bounds.height()]);
                                     img.is_live = true;
-                                    img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
+                                    img.source_rect = Some([bounds.min.x + offset_x, bounds.min.y + offset_y, bounds.width(), bounds.height()]);
                                     img.mask = Some(mask);
                                     img.mask_size = Some([sw, sh]);
                                     img.show_source_rect = settings.show_source_rect;
@@ -375,7 +411,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         img.name = "Snip".to_string();
                                         img.snip_source_overlay = settings.snip_source_overlay;
                                         img.display_size = Some([bounds.width(), bounds.height()]);
-                                        img.source_rect = Some([bounds.min.x + wx as f32 / ppp, bounds.min.y + wy as f32 / ppp, bounds.width(), bounds.height()]);
+                                        img.source_rect = Some([bounds.min.x + offset_x, bounds.min.y + offset_y, bounds.width(), bounds.height()]);
                                         img.show_source_rect = settings.show_source_rect;
                                         img.mask = Some(mask);
                                         img.mask_size = Some([sw, sh]);
@@ -410,7 +446,7 @@ pub fn update(ctx: &mut ToolContext) {
                             img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([w, h]);
                             img.is_live = true;
-                            img.source_rect = Some([rect.min.x + wx as f32 / ppp, rect.min.y + wy as f32 / ppp, w, h]);
+                            img.source_rect = Some([rect.min.x + offset_x, rect.min.y + offset_y, w, h]);
                             img.show_source_rect = settings.show_source_rect;
                             img.shadow = settings.snip_shadow;
                             layer.placed_images.push(img);
@@ -420,6 +456,12 @@ pub fn update(ctx: &mut ToolContext) {
             }
 
             if *snip_created {
+                if let Some(layer) = project.get_active_layer_mut() {
+                    if let Some(img) = layer.placed_images.last_mut() {
+                        img.capture_source = settings.snip_source;
+                        img.target_hwnd = settings.origin_target_hwnd;
+                    }
+                }
                 match settings.auto_new_layer {
                     Some(true) => {
                         project.layers.push(crate::project::Layer::new(&format!("Snip {}", project.layers.len() + 1)));

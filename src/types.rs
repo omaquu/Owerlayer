@@ -474,6 +474,173 @@ pub enum TextFont { Sans, Serif, Mono, Handwriting, Heading, Custom }
 
 impl Default for TextFont { fn default() -> Self { Self::Sans } }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WidgetType {
+    Calculator,
+    VolumeMixer,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WidgetPlaceType {
+    Browser,
+    Calculator,
+    VolumeMixer,
+}
+
+impl Default for WidgetPlaceType {
+    fn default() -> Self {
+        WidgetPlaceType::Browser
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalcState {
+    pub display: String,
+    pub prev_val: Option<f64>,
+    pub op: Option<char>,
+    pub clear_on_next: bool,
+}
+
+impl Default for CalcState {
+    fn default() -> Self {
+        Self {
+            display: "0".to_string(),
+            prev_val: None,
+            op: None,
+            clear_on_next: false,
+        }
+    }
+}
+
+impl CalcState {
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+    
+    pub fn push_char(&mut self, c: char) {
+        if self.clear_on_next {
+            self.display.clear();
+            self.clear_on_next = false;
+        }
+        if self.display == "0" && c != '.' {
+            self.display.clear();
+        }
+        if c == '.' && self.display.contains('.') {
+            return;
+        }
+        self.display.push(c);
+    }
+    
+    pub fn negate(&mut self) {
+        if self.display.starts_with('-') {
+            self.display.remove(0);
+        } else if self.display != "0" && !self.display.is_empty() {
+            self.display.insert(0, '-');
+        }
+    }
+    
+    pub fn percent(&mut self) {
+        if let Ok(val) = self.display.parse::<f64>() {
+            let res = val / 100.0;
+            self.display = res.to_string();
+        }
+    }
+    
+    pub fn backspace(&mut self) {
+        if self.clear_on_next {
+            self.clear_on_next = false;
+            self.display = "0".to_string();
+            return;
+        }
+        self.display.pop();
+        if self.display.is_empty() || self.display == "-" {
+            self.display = "0".to_string();
+        }
+    }
+    
+    pub fn set_op(&mut self, op: char) {
+        if let Ok(val) = self.display.parse::<f64>() {
+            if let Some(prev) = self.prev_val {
+                if let Some(prev_op) = self.op {
+                    let res = match prev_op {
+                        '+' => prev + val,
+                        '-' => prev - val,
+                        '*' => prev * val,
+                        '/' => if val != 0.0 { prev / val } else { f64::NAN },
+                        _ => val,
+                    };
+                    self.prev_val = Some(res);
+                    self.display = res.to_string();
+                }
+            } else {
+                self.prev_val = Some(val);
+            }
+            self.op = Some(op);
+            self.clear_on_next = true;
+        }
+    }
+    
+    pub fn calculate(&mut self) {
+        if let Some(prev) = self.prev_val {
+            if let Some(op) = self.op {
+                if let Ok(val) = self.display.parse::<f64>() {
+                    let res = match op {
+                        '+' => prev + val,
+                        '-' => prev - val,
+                        '*' => prev * val,
+                        '/' => if val != 0.0 { prev / val } else { f64::NAN },
+                        _ => val,
+                    };
+                    self.display = res.to_string();
+                    self.prev_val = None;
+                    self.op = None;
+                    self.clear_on_next = true;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MixerMode {
+    Full,
+    Single,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SliderOrientation {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SliderStyle {
+    SleekPill,
+    ThinMetal,
+    ThickTicks,
+    GradientBar,
+    Knob,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VolumeMixerState {
+    pub mode: MixerMode,
+    pub target_session: String,
+    pub orientation: SliderOrientation,
+    pub style: SliderStyle,
+}
+
+impl Default for VolumeMixerState {
+    fn default() -> Self {
+        Self {
+            mode: MixerMode::Full,
+            target_session: "Master".to_string(),
+            orientation: SliderOrientation::Horizontal,
+            style: SliderStyle::SleekPill,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct PlacedImage {
     #[serde(default = "default_image_name")]
@@ -576,6 +743,14 @@ pub struct PlacedImage {
     pub cached_texture: Option<egui::TextureHandle>,
     #[serde(skip)]
     pub cached_rect: Option<egui::Rect>,
+    #[serde(skip)]
+    pub texture_version: usize,
+    #[serde(default)]
+    pub widget_type: Option<WidgetType>,
+    #[serde(default)]
+    pub calculator_state: Option<CalcState>,
+    #[serde(default)]
+    pub volume_mixer_state: Option<VolumeMixerState>,
     #[serde(default)]
     pub chromatic_aberration: f32,
     #[serde(default)]
@@ -594,6 +769,8 @@ pub struct PlacedImage {
     pub capture_source: CaptureSource,
     #[serde(default = "default_target_hwnd")]
     pub target_hwnd: isize,
+    #[serde(default)]
+    pub transparent_bg: bool,
 }
 
 impl Clone for PlacedImage {
@@ -656,6 +833,7 @@ impl Clone for PlacedImage {
             snip_points: self.snip_points.clone(),
             cached_texture: None,
             cached_rect: None,
+            texture_version: self.texture_version,
             chromatic_aberration: self.chromatic_aberration,
             antialias: self.antialias,
             eraser_apply_to_source: self.eraser_apply_to_source,
@@ -665,6 +843,10 @@ impl Clone for PlacedImage {
             source_scale: self.source_scale,
             capture_source: self.capture_source,
             target_hwnd: self.target_hwnd,
+            widget_type: self.widget_type,
+            calculator_state: self.calculator_state.clone(),
+            volume_mixer_state: self.volume_mixer_state.clone(),
+            transparent_bg: self.transparent_bg,
         }
     }
 }
@@ -706,6 +888,9 @@ impl PlacedImage {
             hwnd: 0,
             #[cfg(feature = "webengine")]
             web_widget: None,
+            widget_type: None,
+            calculator_state: None,
+            volume_mixer_state: None,
             tight_bounds: None,
             tight_bounds_dirty: true,
             thumbnail_texture: None,
@@ -723,6 +908,7 @@ impl PlacedImage {
             snip_points: None,
             cached_texture: None,
             cached_rect: None,
+            texture_version: 0,
             chromatic_aberration: 0.0,
             antialias: false,
             eraser_apply_to_source: None,
@@ -732,7 +918,14 @@ impl PlacedImage {
             source_scale: egui::vec2(1.0, 1.0),
             capture_source: CaptureSource::Desktop,
             target_hwnd: 0,
+            transparent_bg: false,
         }
+    }
+
+    pub fn clear_texture(&mut self) {
+        self.texture = None;
+        self.thumbnail_texture = None;
+        self.texture_version += 1;
     }
 }
 
@@ -992,6 +1185,30 @@ pub struct Settings {
     pub use_original_capture: bool,
     #[serde(skip)]
     pub ui_reset_frames: u8,
+    #[serde(default)]
+    pub show_grid: bool,
+    #[serde(default = "default_grid_size")]
+    pub grid_size: f32,
+    #[serde(default = "default_snap_to_grid")]
+    pub snap_to_grid: bool,
+    #[serde(default)]
+    pub show_calculator: bool,
+    #[serde(default)]
+    pub show_volume_mixer: bool,
+    #[serde(default = "default_keybind_calculator")]
+    pub keybind_calculator: HotkeyBinding,
+    #[serde(default = "default_keybind_volume_mixer")]
+    pub keybind_volume_mixer: HotkeyBinding,
+    #[serde(default)]
+    pub selected_mixer_apps: Vec<String>,
+    #[serde(default = "default_calculator_pos")]
+    pub calculator_pos: egui::Pos2,
+    #[serde(default = "default_volume_mixer_pos")]
+    pub volume_mixer_pos: egui::Pos2,
+    #[serde(default)]
+    pub widget_place_type: WidgetPlaceType,
+    #[serde(default = "default_layer_menu_size")]
+    pub layer_menu_size: egui::Vec2,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -1007,6 +1224,7 @@ fn default_fso_fix() -> bool { true }
 fn default_polygon_sides() -> u32 { 5 }
 fn default_toolbar_pos() -> egui::Pos2 { egui::pos2(40.0, 60.0) }
 fn default_layer_menu_pos() -> egui::Pos2 { egui::pos2(200.0, 60.0) }
+fn default_layer_menu_size() -> egui::Vec2 { egui::vec2(340.0, 500.0) }
 fn default_prompt_delete() -> bool { true }
 fn default_settings_menu_pos() -> egui::Pos2 { egui::pos2(360.0, 60.0) }
 fn default_filter_menu_pos() -> egui::Pos2 { egui::pos2(520.0, 60.0) }
@@ -1033,6 +1251,12 @@ fn default_keybind_cut() -> HotkeyBinding { HotkeyBinding { vk_code: 0x43, name:
 fn default_keybind_mirror() -> HotkeyBinding { HotkeyBinding { vk_code: 0x4D, name: "Ctrl + M".to_string(), ctrl: true, alt: false, shift: false } }
 fn default_keybind_blur() -> HotkeyBinding { HotkeyBinding { vk_code: 0x4B, name: "Ctrl + K".to_string(), ctrl: true, alt: false, shift: false } }
 fn default_keybind_paint_bucket() -> HotkeyBinding { HotkeyBinding { vk_code: 0x47, name: "Ctrl + G".to_string(), ctrl: true, alt: false, shift: false } }
+fn default_grid_size() -> f32 { 50.0 }
+fn default_snap_to_grid() -> bool { true }
+fn default_keybind_calculator() -> HotkeyBinding { HotkeyBinding { vk_code: 0x43, name: "Ctrl + Alt + C".to_string(), ctrl: true, alt: true, shift: false } }
+fn default_keybind_volume_mixer() -> HotkeyBinding { HotkeyBinding { vk_code: 0x56, name: "Ctrl + Alt + V".to_string(), ctrl: true, alt: true, shift: false } }
+fn default_calculator_pos() -> egui::Pos2 { egui::pos2(150.0, 150.0) }
+fn default_volume_mixer_pos() -> egui::Pos2 { egui::pos2(400.0, 150.0) }
 
 impl Default for SnipMode { fn default() -> Self { Self::Rect } }
 
@@ -1147,6 +1371,18 @@ impl Default for Settings {
             eraser_source_prompt_remember: false,
             use_original_capture: false,
             ui_reset_frames: 0,
+            show_grid: false,
+            grid_size: default_grid_size(),
+            snap_to_grid: default_snap_to_grid(),
+            show_calculator: false,
+            show_volume_mixer: false,
+            keybind_calculator: default_keybind_calculator(),
+            keybind_volume_mixer: default_keybind_volume_mixer(),
+            selected_mixer_apps: Vec::new(),
+            calculator_pos: default_calculator_pos(),
+            volume_mixer_pos: default_volume_mixer_pos(),
+            widget_place_type: WidgetPlaceType::Browser,
+            layer_menu_size: default_layer_menu_size(),
         }
     }
 }

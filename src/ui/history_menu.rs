@@ -21,6 +21,7 @@ pub fn render_history_window(
 
     let win_resp = crate::utils::panel_window_pos(
         egui::Window::new("History")
+            .id(egui::Id::new("History"))
             .open(open)
             .title_bar(false)
             .resizable(true)
