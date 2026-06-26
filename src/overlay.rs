@@ -1420,50 +1420,7 @@ pub fn render_canvas(
         }
     }
 
-    // ── Pending text cursor ──
-    if let Some(pending) = pending_text.as_ref() {
-        let time  = ui.input(|i| i.time);
-        let blink = (time * 3.0).sin() > 0.0;
-        let font  = crate::tools::text::resolve_font(settings.text_font, settings.font_size);
 
-        let mut display_text = pending.buffer.clone();
-        if blink { display_text.push('|'); }
-
-        let pen_c = color32(&settings.pen_color);
-        let draw_pos = pending.position - render_offset;
-
-        if settings.text_wave_warp {
-            let wave_amplitude = settings.font_size * 0.25;
-            let wave_frequency = std::f32::consts::TAU / (settings.font_size * 3.5);
-            let char_w = settings.font_size * 0.6;
-            
-            for (i, ch) in display_text.chars().enumerate() {
-                let x = draw_pos.x + i as f32 * char_w;
-                let wave_y = draw_pos.y + wave_amplitude * (wave_frequency * x - time as f32 * 5.0).sin();
-                let char_str: String = std::iter::once(ch).collect();
-                painter.text(egui::pos2(x, wave_y), egui::Align2::LEFT_TOP, &char_str, font.clone(), pen_c);
-            }
-        } else {
-            if settings.text_outline {
-                let c = pen_c;
-                let outline_col = if c.r() as u32 + c.g() as u32 + c.b() as u32 > 382 {
-                    egui::Color32::BLACK
-                } else {
-                    egui::Color32::WHITE
-                };
-                for off in [
-                    egui::vec2(1.0, 1.0), egui::vec2(-1.0, -1.0),
-                    egui::vec2(1.0, -1.0), egui::vec2(-1.0, 1.0),
-                ] {
-                    painter.text(draw_pos + off, egui::Align2::LEFT_TOP, &display_text, font.clone(), outline_col);
-                }
-            } else if settings.text_shadow {
-                painter.text(draw_pos + egui::vec2(2.0, 2.0), egui::Align2::LEFT_TOP, &display_text, font.clone(), egui::Color32::from_black_alpha(150));
-            }
-            painter.text(draw_pos, egui::Align2::LEFT_TOP, &display_text, font, pen_c);
-        }
-        ui.ctx().request_repaint();
-    }
 
     let mut remove_active_layer = false;
     let mut snip_created = false;
@@ -1757,7 +1714,7 @@ pub fn render_canvas(
                     } else {
                         false
                     };
-                    if img.show_source_rect && img.source_rect.is_some() {
+                    if is_selected && img.show_source_rect && img.source_rect.is_some() {
                         has_show_source = true;
                         let src = img.source_rect.unwrap();
                         let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
@@ -1806,7 +1763,12 @@ pub fn render_canvas(
                                         if current_path.len() >= 2 && current_path.first() != current_path.last() {
                                             current_path.push(*current_path.first().unwrap());
                                         }
-                                        crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
+                                        let simplified = crate::utils::simplify_path(&current_path, 2.0);
+                                        let mut closed = simplified;
+                                        if closed.len() >= 2 && closed.first() != closed.last() {
+                                            closed.push(*closed.first().unwrap());
+                                        }
+                                        crate::utils::draw_dashed_path_color(&painter, &closed, time, stroke_color, stroke_width);
                                         current_path.clear();
                                     }
                                 } else {
@@ -1819,7 +1781,12 @@ pub fn render_canvas(
                                 if current_path.len() >= 2 && current_path.first() != current_path.last() {
                                     current_path.push(*current_path.first().unwrap());
                                 }
-                                crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
+                                let simplified = crate::utils::simplify_path(&current_path, 2.0);
+                                let mut closed = simplified;
+                                if closed.len() >= 2 && closed.first() != closed.last() {
+                                    closed.push(*closed.first().unwrap());
+                                }
+                                crate::utils::draw_dashed_path_color(&painter, &closed, time, stroke_color, stroke_width);
                             }
                         } else {
                             let r = src_rect.translate(-ctx.render_offset);

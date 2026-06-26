@@ -822,4 +822,47 @@ pub fn panel_window_pos<'a>(
     }
 }
 
+pub fn simplify_path(points: &[egui::Pos2], epsilon: f32) -> Vec<egui::Pos2> {
+    if points.len() < 3 {
+        return points.to_vec();
+    }
+    
+    let mut dmax = 0.0;
+    let mut index = 0;
+    let end = points.len() - 1;
+    
+    let p_start = points[0];
+    let p_end = points[end];
+    let line_vec = p_end - p_start;
+    let line_len_sq = line_vec.length_sq();
+    
+    for i in 1..end {
+        let p = points[i];
+        let dist = if line_len_sq < 1e-6 {
+            (p - p_start).length()
+        } else {
+            let t = ((p - p_start).dot(line_vec) / line_len_sq).clamp(0.0, 1.0);
+            let projection = p_start + line_vec * t;
+            (p - projection).length()
+        };
+        
+        if dist > dmax {
+            index = i;
+            dmax = dist;
+        }
+    }
+    
+    if dmax > epsilon {
+        let mut rec_results1 = simplify_path(&points[..=index], epsilon);
+        let rec_results2 = simplify_path(&points[index..], epsilon);
+        if !rec_results1.is_empty() {
+            rec_results1.pop();
+        }
+        rec_results1.extend(rec_results2);
+        rec_results1
+    } else {
+        vec![p_start, p_end]
+    }
+}
+
 

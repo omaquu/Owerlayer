@@ -27,6 +27,12 @@ pub fn update(ctx: &mut ToolContext) {
     
     let is_locked = ctx.project.get_active_layer().map_or(false, |l| l.locked);
     if ctx.mouse.left_just_pressed && is_locked {
+        *ctx.pending_text = Some(PendingText {
+            position: ctx.mouse.pos,
+            buffer: String::new(),
+            original: None,
+            layer_idx: None,
+        });
         *ctx.layer_prompt_open = true;
         return;
     }

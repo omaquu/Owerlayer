@@ -465,7 +465,6 @@ pub fn render_photoshop_panel(
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.set_height(24.0);
-                    ui.set_max_width(780.0);
                     render_tool_options(ui, active_tool, settings, project, false, embed_url, embed_trigger, request_history_push, filters_open, volume_sessions);
                 });
             });
@@ -972,8 +971,10 @@ pub fn render_tool_options(
                                     if img.capture_source == CaptureSource::Origin && img.target_hwnd == 0 {
                                         // Auto-detect window behind source rect center
                                         if let Some(src) = img.source_rect {
-                                            let center_x = (src[0] + src[2] / 2.0) as i32;
-                                            let center_y = (src[1] + src[3] / 2.0) as i32;
+                                            let logical_cx = src[0] + src[2] / 2.0;
+                                            let logical_cy = src[1] + src[3] / 2.0;
+                                            let center_x = (logical_cx * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                                            let center_y = (logical_cy * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                                             if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
                                                 img.target_hwnd = hwnd as isize;
                                                 img_source_changed = true;
@@ -989,8 +990,8 @@ pub fn render_tool_options(
                                     
                                     if !img.is_live {
                                         if let Some(src) = img.source_rect {
-                                            let sx = (src[0] * ppp).round() as i32;
-                                            let sy = (src[1] * ppp).round() as i32;
+                                            let sx = (src[0] * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                                            let sy = (src[1] * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                                             let pw = (src[2] * ppp).round() as i32;
                                             let ph = (src[3] * ppp).round() as i32;
                                             let captured_pixels = crate::tools::snip::capture_static_image(
@@ -1037,17 +1038,6 @@ pub fn render_tool_options(
                                 }
                             }
                             
-                            let mut transparent_changed = false;
-                            {
-                                let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
-                                ui.separator();
-                                if ui.checkbox(&mut img.transparent_bg, "Transparent BG").on_hover_text("Make the background transparent for this widget/image").changed() {
-                                    transparent_changed = true;
-                                }
-                            }
-                            if transparent_changed {
-                                project.save();
-                            }
                             let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
                             let accent = crate::utils::color32(&settings.accent_color);
                             if img.widget_type == Some(crate::types::WidgetType::VolumeMixer) {
@@ -1136,6 +1126,16 @@ pub fn render_tool_options(
                     });
 
                     ui.horizontal(|ui| {
+                        if let ObjectType::Image = sel.object_type {
+                            let is_widget = project.layers[sel.layer_idx].placed_images[sel.object_idx].widget_type.is_some();
+                            if is_widget {
+                                let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                ui.separator();
+                                if ui.checkbox(&mut img.transparent_bg, "Transparent BG").on_hover_text("Make the background transparent for this widget/image").changed() {
+                                    project.save();
+                                }
+                            }
+                        }
                         // Quick FX button
                         let has_fx = match sel.object_type {
                             ObjectType::Image => {
@@ -1523,8 +1523,8 @@ fn update_snip_source_overlay(ui: &mut egui::Ui, project: &mut crate::project::P
                 img.texture = None;
                 if !img.is_live {
                     if let Some(src) = img.source_rect {
-                        let sx = (src[0] * ppp).round() as i32;
-                        let sy = (src[1] * ppp).round() as i32;
+                        let sx = (src[0] * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                        let sy = (src[1] * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                         let pw = (src[2] * ppp).round() as i32;
                         let ph = (src[3] * ppp).round() as i32;
                         let captured_pixels = crate::tools::snip::capture_static_image(

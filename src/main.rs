@@ -398,8 +398,10 @@ impl OwerlayerApp {
         let mut pixels = frame.pixels;
         
         if self.settings.snip_source == CaptureSource::Origin {
-            let center_x = (screen_bounds.min.x + screen_bounds.width() / 2.0) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
-            let center_y = (screen_bounds.min.y + screen_bounds.height() / 2.0) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
+            let logical_center_x = screen_bounds.min.x + screen_bounds.width() / 2.0;
+            let logical_center_y = screen_bounds.min.y + screen_bounds.height() / 2.0;
+            let center_x = (logical_center_x * ppp).round() as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
+            let center_y = (logical_center_y * ppp).round() as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
             if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
                 self.settings.origin_target_hwnd = hwnd as isize;
                 self.settings.save();
@@ -1100,6 +1102,12 @@ impl eframe::App for OwerlayerApp {
                             if is_edit {
                                 if target_layer_idx < self.project.layers.len() {
                                     self.project.layers[target_layer_idx].text_annotations.push(ann);
+                                    let new_idx = self.project.layers[target_layer_idx].text_annotations.len() - 1;
+                                    self.project.selected_object = Some(SelectedObject {
+                                        layer_idx: target_layer_idx,
+                                        object_type: crate::overlay::ObjectType::Text,
+                                        object_idx: new_idx,
+                                    });
                                     self.project.layers[target_layer_idx].expanded = true;
                                 }
                                 self.history.push(&self.project, format!("Text: {}", text_str));
@@ -1110,6 +1118,12 @@ impl eframe::App for OwerlayerApp {
                             } else {
                                 if target_layer_idx < self.project.layers.len() {
                                     self.project.layers[target_layer_idx].text_annotations.push(ann);
+                                    let new_idx = self.project.layers[target_layer_idx].text_annotations.len() - 1;
+                                    self.project.selected_object = Some(SelectedObject {
+                                        layer_idx: target_layer_idx,
+                                        object_type: crate::overlay::ObjectType::Text,
+                                        object_idx: new_idx,
+                                    });
                                     self.project.layers[target_layer_idx].expanded = true;
                                 }
                                 self.history.push(&self.project, format!("Text: {}", text_str));
@@ -1184,8 +1198,10 @@ impl eframe::App for OwerlayerApp {
                             let sy = (screen_bounds.min.y * ppp) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
                             
                             if self.settings.snip_source == CaptureSource::Origin {
-                                let center_x = (screen_bounds.min.x + screen_bounds.width() / 2.0) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
-                                let center_y = (screen_bounds.min.y + screen_bounds.height() / 2.0) as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
+                                let logical_center_x = screen_bounds.min.x + screen_bounds.width() / 2.0;
+                                let logical_center_y = screen_bounds.min.y + screen_bounds.height() / 2.0;
+                                let center_x = (logical_center_x * ppp).round() as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wx };
+                                let center_y = (logical_center_y * ppp).round() as i32 + if self.settings.use_absolute_screen_coords { 0 } else { wy };
                                 if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
                                     self.settings.origin_target_hwnd = hwnd as isize;
                                     self.settings.save();
@@ -1587,11 +1603,18 @@ impl eframe::App for OwerlayerApp {
                         ("New Content Options", "You are creating new content. What would you like to do?")
                     };
 
+                    let is_vector = self.active_tool == crate::overlay::Tool::Shape || (self.active_tool == crate::overlay::Tool::Brush && self.settings.brush_arrow);
                     let new_content_is_in_placed_images = self.pending_stroke.is_none();
                     let has_merge_target = if self.pending_stroke.is_some() {
-                        self.project.layers.get(layer_idx).map_or(false, |l| {
-                            l.strokes.iter().any(|st| st.kind == crate::types::StrokeKind::Freehand)
-                        })
+                        if is_vector {
+                            self.project.layers.get(layer_idx).map_or(false, |l| {
+                                l.strokes.iter().any(|st| st.kind == crate::types::StrokeKind::Freehand)
+                            })
+                        } else {
+                            self.project.layers.get(layer_idx).map_or(false, |l| {
+                                l.placed_images.iter().any(|img| !img.locked)
+                            })
+                        }
                     } else if let Some(sel) = self.project.selected_object {
                         let limit = if new_content_is_in_placed_images {
                             self.project.layers.get(layer_idx).map_or(0, |l| l.placed_images.len()).saturating_sub(1)
@@ -1687,7 +1710,7 @@ impl eframe::App for OwerlayerApp {
 
                 if let Some(act) = action {
                     if let Some(s) = self.pending_stroke.take() {
-                        let is_vector = true;
+                        let is_vector = self.active_tool == crate::overlay::Tool::Shape || (self.active_tool == crate::overlay::Tool::Brush && self.settings.brush_arrow);
                         
                         match act {
                             1 => {
@@ -2002,12 +2025,24 @@ impl eframe::App for OwerlayerApp {
                                 if layer_idx < self.project.layers.len() {
                                     self.project.layers[layer_idx].locked = false;
                                     self.project.layers[layer_idx].text_annotations.push(ann);
+                                    let new_idx = self.project.layers[layer_idx].text_annotations.len() - 1;
+                                    self.project.selected_object = Some(SelectedObject {
+                                        layer_idx,
+                                        object_type: crate::overlay::ObjectType::Text,
+                                        object_idx: new_idx,
+                                    });
                                     self.project.layers[layer_idx].expanded = true;
                                 }
                             }
                             2 => {
                                 if layer_idx < self.project.layers.len() {
                                     self.project.layers[layer_idx].text_annotations.push(ann);
+                                    let new_idx = self.project.layers[layer_idx].text_annotations.len() - 1;
+                                    self.project.selected_object = Some(SelectedObject {
+                                        layer_idx,
+                                        object_type: crate::overlay::ObjectType::Text,
+                                        object_idx: new_idx,
+                                    });
                                     self.project.layers[layer_idx].expanded = true;
                                 }
                             }
@@ -2016,6 +2051,11 @@ impl eframe::App for OwerlayerApp {
                                 let new_layer_idx = self.project.layers.len() - 1;
                                 self.project.active_layer = new_layer_idx;
                                 self.project.layers[new_layer_idx].text_annotations.push(ann);
+                                self.project.selected_object = Some(SelectedObject {
+                                    layer_idx: new_layer_idx,
+                                    object_type: crate::overlay::ObjectType::Text,
+                                    object_idx: 0,
+                                });
                                 self.project.layers[new_layer_idx].expanded = true;
                             }
                             _ => {}
@@ -2026,6 +2066,7 @@ impl eframe::App for OwerlayerApp {
                 } else if close_prompt {
                     self.pending_stroke = None;
                     self.pending_text_to_add = None;
+                    self.pending_text = None;
                     if self.active_tool == overlay::Tool::Snip || self.active_tool == overlay::Tool::Blur || self.active_tool == overlay::Tool::Embed || self.active_tool == overlay::Tool::Cut {
                         let layer_idx = self.project.active_layer;
                         if layer_idx < self.project.layers.len() {

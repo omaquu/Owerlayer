@@ -558,6 +558,7 @@ pub fn update(ctx: &mut ToolContext) {
                             if pc.distance(pos) < 16.0 {
                                 *line_start = Some(pos);
                                 *drag_state = 20 + idx;
+                                *initial_bounds = Some(raw_bounds);
                                 *initial_center = Some(raw_bounds.center());
                                 *initial_layer = Some(layer.clone());
                                 hit = true; break;
@@ -702,7 +703,17 @@ pub fn update(ctx: &mut ToolContext) {
                                                     // Perspective
                                                     let p_idx = *drag_state - 20;
                                                     let delta = hover_pos - start;
-                                                    img.source_perspective[p_idx] = init_img.source_perspective[p_idx] + delta;
+                                                    let new_val = init_img.source_perspective[p_idx] + delta;
+                                                    if let Some(src) = init_img.source_rect {
+                                                        let w_clamp = src[2] * 0.5;
+                                                        let h_clamp = src[3] * 0.5;
+                                                        img.source_perspective[p_idx] = egui::vec2(
+                                                            new_val.x.clamp(-w_clamp, w_clamp),
+                                                            new_val.y.clamp(-h_clamp, h_clamp),
+                                                        );
+                                                    } else {
+                                                        img.source_perspective[p_idx] = new_val;
+                                                    }
                                                 }
                                                 _ => {
                                                     // Move/Translate
@@ -804,10 +815,36 @@ pub fn update(ctx: &mut ToolContext) {
                                 let p_idx = *drag_state - 20;
                                 let delta = pos - start;
                                 if let Some(sel) = project.selected_object {
+                                    let clamp_limit = if let Some(ib) = *initial_bounds {
+                                        egui::vec2(ib.width() * 0.5, ib.height() * 0.5)
+                                    } else {
+                                        egui::vec2(f32::MAX, f32::MAX)
+                                    };
                                     match sel.object_type {
-                                        ObjectType::Image => { layer.placed_images[sel.object_idx].perspective[p_idx] += delta; }
-                                        ObjectType::Stroke => { layer.strokes[sel.object_idx].perspective[p_idx] += delta; }
-                                        ObjectType::Text => { layer.text_annotations[sel.object_idx].perspective[p_idx] += delta; }
+                                        ObjectType::Image => {
+                                            let base_val = base_layer.placed_images[sel.object_idx].perspective[p_idx];
+                                            let new_val = base_val + delta;
+                                            layer.placed_images[sel.object_idx].perspective[p_idx] = egui::vec2(
+                                                new_val.x.clamp(-clamp_limit.x, clamp_limit.x),
+                                                new_val.y.clamp(-clamp_limit.y, clamp_limit.y),
+                                            );
+                                        }
+                                        ObjectType::Stroke => {
+                                            let base_val = base_layer.strokes[sel.object_idx].perspective[p_idx];
+                                            let new_val = base_val + delta;
+                                            layer.strokes[sel.object_idx].perspective[p_idx] = egui::vec2(
+                                                new_val.x.clamp(-clamp_limit.x, clamp_limit.x),
+                                                new_val.y.clamp(-clamp_limit.y, clamp_limit.y),
+                                            );
+                                        }
+                                        ObjectType::Text => {
+                                            let base_val = base_layer.text_annotations[sel.object_idx].perspective[p_idx];
+                                            let new_val = base_val + delta;
+                                            layer.text_annotations[sel.object_idx].perspective[p_idx] = egui::vec2(
+                                                new_val.x.clamp(-clamp_limit.x, clamp_limit.x),
+                                                new_val.y.clamp(-clamp_limit.y, clamp_limit.y),
+                                            );
+                                        }
                                     }
                                 } else {
                                     crate::utils::perspective_layer(layer, p_idx, delta);

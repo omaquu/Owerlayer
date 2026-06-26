@@ -64,3 +64,13 @@ Ensure you have [Rust and Cargo](https://rustup.rs/) installed on your system.
 This repository has a built-in **GitHub Actions Release Pipeline** (`.github/workflows/release.yml`) that triggers automatically:
 - On every **push to `main`**: Compiles the code and uploads the Windows executable as a build artifact.
 - On **pushing tags** (e.g. `v0.17.0`): Compiles the binary, packages it, and automatically publishes a GitHub Release containing the standalone `owerlayer.exe` binary.
+
+---
+
+## Known Issues ⚠️
+
+- **Widget Resizing**: Resizing widgets is currently buggy.
+- **Deleting Widgets**: Deleting a widget crashes the application.
+- **Lasso Marching Ants**: Marching ants outline for the Lasso tool is not fully connected.
+- **Source Perspective Resizing**: When changing the perspective of the source, the object is not being resized to fit the new perspective.
+
