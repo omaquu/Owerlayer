@@ -379,4 +379,5 @@ pub fn set_session_mute(_pid: u32, _mute: bool) {}
 pub enum MixerCommand {
     SetVolume { pid: u32, volume: f32 },
     SetMute { pid: u32, mute: bool },
+    ForcePoll,
 }

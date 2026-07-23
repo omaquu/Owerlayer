@@ -499,22 +499,33 @@ pub fn render_layers_window(
                     }
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_delete {
-                    match obj_type {
-                        ObjectType::Stroke => {
-                            if o_idx == usize::MAX {
-                                project.layers[l_idx].strokes.retain(|s| s.kind != crate::overlay::StrokeKind::Freehand);
-                            } else {
-                                let is_freehand = project.layers[l_idx].strokes.get(o_idx).map_or(false, |s| s.kind == crate::overlay::StrokeKind::Freehand);
-                                if is_freehand {
-                                    let name = project.layers[l_idx].strokes[o_idx].name.clone();
-                                    project.layers[l_idx].strokes.retain(|s| s.name != name);
-                                } else {
-                                    project.layers[l_idx].strokes.remove(o_idx);
+                    if l_idx < project.layers.len() {
+                        let layer = &mut project.layers[l_idx];
+                        match obj_type {
+                            ObjectType::Stroke => {
+                                if o_idx == usize::MAX {
+                                    layer.strokes.retain(|s| s.kind != crate::overlay::StrokeKind::Freehand);
+                                } else if o_idx < layer.strokes.len() {
+                                    let is_freehand = layer.strokes[o_idx].kind == crate::overlay::StrokeKind::Freehand;
+                                    if is_freehand {
+                                        let name = layer.strokes[o_idx].name.clone();
+                                        layer.strokes.retain(|s| s.name != name);
+                                    } else {
+                                        layer.strokes.remove(o_idx);
+                                    }
+                                }
+                            }
+                            ObjectType::Text => {
+                                if o_idx < layer.text_annotations.len() {
+                                    layer.text_annotations.remove(o_idx);
+                                }
+                            }
+                            ObjectType::Image => {
+                                if o_idx < layer.placed_images.len() {
+                                    layer.placed_images.remove(o_idx);
                                 }
                             }
                         }
-                        ObjectType::Text => { project.layers[l_idx].text_annotations.remove(o_idx); }
-                        ObjectType::Image => { project.layers[l_idx].placed_images.remove(o_idx); }
                     }
                     project.selected_object = None;
                     project.save();

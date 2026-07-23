@@ -284,7 +284,9 @@ impl CaptureThread {
         sh: usize,
         mask_cache: &mut HashMap<usize, MaskCacheEntry>,
     ) {
-        if let Some(mask) = &req.mask {
+        let mask_valid = req.mask.is_some() && req.mask_size[0] > 0 && req.mask_size[1] > 0;
+        if mask_valid {
+            let mask = req.mask.as_ref().unwrap();
             let matches = match mask_cache.get(&req.id) {
                 Some(MaskCacheEntry::Mask { original, size, .. }) => {
                     *size == [sw, sh] && original == mask
@@ -496,7 +498,9 @@ impl CaptureThread {
             mask_cache.remove(&req.id);
         }
 
-        let final_mask = if let Some(mask) = &req.mask {
+        let mask_valid = req.mask.is_some() && req.mask_size[0] > 0 && req.mask_size[1] > 0;
+        let final_mask = if mask_valid {
+            let mask = req.mask.as_ref().unwrap();
             let matches = match mask_cache.get(&req.id) {
                 Some(MaskCacheEntry::Mask { original, size, .. }) => {
                     *size == [sw as usize, sh as usize] && original == mask

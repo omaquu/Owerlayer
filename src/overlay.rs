@@ -110,7 +110,7 @@ pub fn render_canvas(
     rasterize_bbox: Option<[f32; 4]>,
     rasterize_capture: crate::rasterize::CaptureBuffer,
     perf_stats: &mut crate::types::AppPerfStats,
-    volume_sessions: &[crate::volume_mixer::AudioSessionInfo],
+    volume_sessions: &mut [crate::volume_mixer::AudioSessionInfo],
     volume_mixer_cmd_tx: &std::sync::mpsc::Sender<crate::volume_mixer::MixerCommand>,
 ) {
     let rect = ui.available_rect_before_wrap();
@@ -248,6 +248,7 @@ pub fn render_canvas(
                 let active_accent = adjust_brightness(accent_color, 0.2);
 
                 let mut frame = egui::Frame::window(ui.style())
+                    .inner_margin(egui::Margin::same(if img.widget_type == Some(crate::types::WidgetType::Calculator) { 4 } else { 8 }))
                     .fill(if img.transparent_bg { egui::Color32::TRANSPARENT } else { bg_color })
                     .stroke(if img.transparent_bg && !img.outline { egui::Stroke::NONE } else { egui::Stroke::new(1.0, accent_color) });
 
@@ -344,6 +345,8 @@ pub fn render_canvas(
                                     }
 
                                     ui.vertical(|ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(spacing, spacing);
+                                        ui.spacing_mut().button_padding = egui::vec2((2.0 * scale).max(0.5), (2.0 * scale).max(0.5));
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             ui.label(egui::RichText::new(&calc.display)
                                                 .font(egui::FontId::monospace(display_font))
@@ -472,10 +475,16 @@ pub fn render_canvas(
 
                                         if changed && volume != current_volume {
                                             let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetVolume { pid, volume });
+                                            if let Some(session) = volume_sessions.iter_mut().find(|s| s.pid == pid) {
+                                                session.volume = volume;
+                                            }
                                         }
 
                                         if response.double_clicked() {
                                             let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetMute { pid, mute: !is_muted });
+                                            if let Some(session) = volume_sessions.iter_mut().find(|s| s.pid == pid) {
+                                                session.mute = !is_muted;
+                                            }
                                         }
 
                                         let painter = ui.painter();
@@ -751,12 +760,17 @@ pub fn render_canvas(
                                         let show_all = settings.selected_mixer_apps.is_empty();
                                         
                                         ui.vertical(|ui| {
-                                            ui.label(egui::RichText::new("Volume Mixer").strong().color(accent_color));
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("Volume Mixer").strong().color(accent_color));
+                                                if ui.button("⟲").on_hover_text("Refresh Sessions").clicked() {
+                                                    let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::ForcePoll);
+                                                }
+                                            });
                                             ui.separator();
                                             
                                             egui::ScrollArea::vertical().max_height(disp_h - 70.0).show(ui, |ui| {
                                                 let mut rendered_any = false;
-                                                for session in volume_sessions.iter() {
+                                                for session in volume_sessions.iter_mut() {
                                                     let is_selected = settings.selected_mixer_apps.contains(&session.name);
                                                     if is_selected || show_all {
                                                         rendered_any = true;
@@ -771,12 +785,14 @@ pub fn render_canvas(
                                                             
                                                             let mut vol = session.volume;
                                                             if ui.add_sized([70.0, 16.0], egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false)).changed() {
+                                                                session.volume = vol;
                                                                 let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetVolume { pid: session.pid, volume: vol });
                                                             }
                                                             
                                                             let mute_text = if session.mute { "🔇" } else { "🔊" };
                                                             if ui.small_button(mute_text).clicked() {
-                                                                let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetMute { pid: session.pid, mute: !session.mute });
+                                                                session.mute = !session.mute;
+                                                                let _ = volume_mixer_cmd_tx.send(crate::volume_mixer::MixerCommand::SetMute { pid: session.pid, mute: session.mute });
                                                             }
                                                         });
                                                     }
@@ -1677,6 +1693,8 @@ pub fn render_canvas(
                                     let closing_edge = if current < start { (current, start) } else { (start, current) };
                                     if edges.contains(&closing_edge) {
                                         edges.remove(&closing_edge);
+                                    }
+                                    if path.last() != Some(&start) {
                                         path.push(start);
                                     }
                                     break;
@@ -1684,11 +1702,15 @@ pub fn render_canvas(
                             }
                             
                             if path.len() >= 3 {
-                                let mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
+                                let mut mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
                                     let screen_x = min_x + (pt.0 as f32 / 2.0) * step;
                                     let screen_y = min_y + (pt.1 as f32 / 2.0) * step;
                                     egui::pos2(screen_x - ctx.render_offset.x, screen_y - ctx.render_offset.y)
                                 }).collect();
+                                // Force-close the contour so the marching ants loop seamlessly
+                                if mapped_path.len() >= 2 && mapped_path.first() != mapped_path.last() {
+                                    mapped_path.push(mapped_path[0]);
+                                }
                                 loops.push(mapped_path);
                             }
                         }
@@ -1714,16 +1736,10 @@ pub fn render_canvas(
                     } else {
                         false
                     };
-                    if is_selected && img.show_source_rect && img.source_rect.is_some() {
+                    if !img.snip_source_overlay && img.capture_source != crate::types::CaptureSource::Overlay && img.show_source_rect && img.source_rect.is_some() {
                         has_show_source = true;
                         let src = img.source_rect.unwrap();
                         let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
-                        
-                        let is_selected = if let Some(sel) = &ctx.project.selected_object {
-                            sel.layer_idx == layer_idx && sel.object_type == crate::types::ObjectType::Image && sel.object_idx == img_idx
-                        } else {
-                            false
-                        };
 
                         let stroke_color = if is_selected {
                             egui::Color32::from_rgb(255, 140, 0) // Orange
@@ -1733,27 +1749,7 @@ pub fn render_canvas(
 
                         let stroke_width = if is_selected { 1.8f32 } else { 1.2f32 };
                         
-                        if let Some(ref mask_ref) = img.mask {
-                            if img.cached_mask_outline.is_none() {
-                                let ppp = ctx.ui.ctx().pixels_per_point();
-                                img.cached_mask_outline = Some(get_mask_outline(mask_ref, img.mask_size.unwrap_or(img.size), ppp));
-                            }
-                            if let Some(ref loops) = img.cached_mask_outline {
-                                let src_center = src_rect.center();
-                                let p_arr = img.source_perspective;
-                                for path in loops {
-                                    let mut current_path = Vec::with_capacity(path.len());
-                                    for &p in path {
-                                        let world_pt = egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y);
-                                        let transformed = crate::utils::transform_point_complex(world_pt, src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
-                                        current_path.push(transformed);
-                                    }
-                                    if !current_path.is_empty() {
-                                        crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
-                                    }
-                                }
-                            }
-                        } else if let Some(ref local_pts) = img.snip_points {
+                        if let Some(ref local_pts) = img.snip_points {
                             let src_center = src_rect.center();
                             let p_arr = img.source_perspective;
                             let mut current_path = Vec::new();
@@ -1787,6 +1783,26 @@ pub fn render_canvas(
                                     closed.push(*closed.first().unwrap());
                                 }
                                 crate::utils::draw_dashed_path_color(&painter, &closed, time, stroke_color, stroke_width);
+                            }
+                        } else if let Some(ref mask_ref) = img.mask {
+                            if img.cached_mask_outline.is_none() {
+                                let ppp = ctx.ui.ctx().pixels_per_point();
+                                img.cached_mask_outline = Some(get_mask_outline(mask_ref, img.mask_size.unwrap_or(img.size), ppp));
+                            }
+                            if let Some(ref loops) = img.cached_mask_outline {
+                                let src_center = src_rect.center();
+                                let p_arr = img.source_perspective;
+                                for path in loops {
+                                    let mut current_path = Vec::with_capacity(path.len());
+                                    for &p in path {
+                                        let world_pt = egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y);
+                                        let transformed = crate::utils::transform_point_complex(world_pt, src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
+                                        current_path.push(transformed);
+                                    }
+                                    if !current_path.is_empty() {
+                                        crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
+                                    }
+                                }
                             }
                         } else {
                             let r = src_rect.translate(-ctx.render_offset);
@@ -1972,6 +1988,8 @@ fn get_mask_outline(mask: &[u8], size: [usize; 2], ppp: f32) -> Vec<Vec<egui::Po
                 let closing_edge = if current < start { (current, start) } else { (start, current) };
                 if edges.contains(&closing_edge) {
                     edges.remove(&closing_edge);
+                }
+                if path.last() != Some(&start) {
                     path.push(start);
                 }
                 break;

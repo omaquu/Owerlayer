@@ -133,6 +133,8 @@ fn marquee_to_local_points(sel: &crate::types::MarqueeSelection, bounds_min: egu
                 let closing_edge = if current < start { (current, start) } else { (start, current) };
                 if edges.contains(&closing_edge) {
                     edges.remove(&closing_edge);
+                }
+                if path.last() != Some(&start) {
                     path.push(start);
                 }
                 break;
@@ -268,21 +270,25 @@ impl OwerlayerApp {
                 
                 let mut last_poll = std::time::Instant::now() - std::time::Duration::from_secs(2);
                 loop {
-                    let mut processed_any = false;
                     while let Ok(cmd) = rx.try_recv() {
-                        processed_any = true;
                         match cmd {
                             crate::volume_mixer::MixerCommand::SetVolume { pid, volume } => {
                                 crate::volume_mixer::set_session_volume(pid, volume);
+                                // Delay next poll so the API change propagates before we re-read
+                                last_poll = std::time::Instant::now();
                             }
                             crate::volume_mixer::MixerCommand::SetMute { pid, mute } => {
                                 crate::volume_mixer::set_session_mute(pid, mute);
+                                last_poll = std::time::Instant::now();
+                            }
+                            crate::volume_mixer::MixerCommand::ForcePoll => {
+                                last_poll = std::time::Instant::now() - std::time::Duration::from_secs(2);
                             }
                         }
                     }
                     
                     if active_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                        if last_poll.elapsed() >= std::time::Duration::from_millis(1500) && !processed_any {
+                        if last_poll.elapsed() >= std::time::Duration::from_millis(1500) {
                             let sessions = crate::volume_mixer::get_active_sessions();
                             if let Ok(mut lock) = vs_clone.lock() {
                                 *lock = sessions;
@@ -295,9 +301,14 @@ impl OwerlayerApp {
                         match cmd {
                             crate::volume_mixer::MixerCommand::SetVolume { pid, volume } => {
                                 crate::volume_mixer::set_session_volume(pid, volume);
+                                last_poll = std::time::Instant::now();
                             }
                             crate::volume_mixer::MixerCommand::SetMute { pid, mute } => {
                                 crate::volume_mixer::set_session_mute(pid, mute);
+                                last_poll = std::time::Instant::now();
+                            }
+                            crate::volume_mixer::MixerCommand::ForcePoll => {
+                                last_poll = std::time::Instant::now() - std::time::Duration::from_secs(2);
                             }
                         }
                     }
@@ -1603,7 +1614,7 @@ impl eframe::App for OwerlayerApp {
                         ("New Content Options", "You are creating new content. What would you like to do?")
                     };
 
-                    let is_vector = self.active_tool == crate::overlay::Tool::Shape || (self.active_tool == crate::overlay::Tool::Brush && self.settings.brush_arrow);
+                    let is_vector = self.active_tool == crate::overlay::Tool::Shape || self.active_tool == crate::overlay::Tool::Brush;
                     let new_content_is_in_placed_images = self.pending_stroke.is_none();
                     let has_merge_target = if self.pending_stroke.is_some() {
                         if is_vector {
@@ -1710,7 +1721,7 @@ impl eframe::App for OwerlayerApp {
 
                 if let Some(act) = action {
                     if let Some(s) = self.pending_stroke.take() {
-                        let is_vector = self.active_tool == crate::overlay::Tool::Shape || (self.active_tool == crate::overlay::Tool::Brush && self.settings.brush_arrow);
+                        let is_vector = self.active_tool == crate::overlay::Tool::Shape || self.active_tool == crate::overlay::Tool::Brush;
                         
                         match act {
                             1 => {
@@ -2175,7 +2186,7 @@ impl eframe::App for OwerlayerApp {
                     self.rasterize_bbox,
                     self.rasterize_capture.clone(),
                     &mut self.perf_stats,
-                    &self.volume_sessions,
+                    &mut self.volume_sessions,
                     &self.volume_mixer_cmd_tx,
                 );
 

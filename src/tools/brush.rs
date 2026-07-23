@@ -15,10 +15,20 @@ pub fn update(ctx: &mut ToolContext) {
     let active_layer_idx = project.active_layer;
     if active_layer_idx >= project.layers.len() { return; }
 
-    let layer = &project.layers[active_layer_idx];
-    let is_layer_locked = layer.locked;
+    let (lock_prompt_dismissed, lock_prompt_choice, is_layer_locked) = {
+        let layer = &project.layers[active_layer_idx];
+        (layer.lock_prompt_dismissed, layer.lock_prompt_choice, layer.locked)
+    };
+    let choice = if settings.auto_new_layer == Some(true) {
+        Some(3)
+    } else if lock_prompt_dismissed {
+        lock_prompt_choice
+    } else {
+        None
+    };
+
     let mut is_image_locked = false;
-    if !settings.brush_arrow {
+    if false { // all brush strokes are vector now
         let has_target_image = project.selected_object.map_or(false, |s| {
             s.object_type == ObjectType::Image
                 && s.layer_idx == active_layer_idx
@@ -73,14 +83,17 @@ pub fn update(ctx: &mut ToolContext) {
                 // ── Find or create target PlacedImage ──
                 // Priority: keep the currently selected image, then fall back to the
                 // last unlocked PlacedImage on this layer, then create a new one.
-                let is_ask_mode = settings.auto_new_layer.is_none();
-                if !is_locked && !is_ask_mode && !settings.brush_arrow {
+                let is_ask_mode = choice.is_none();
+                if false { // all brush strokes are vector now
                     // ── Find or create target PlacedImage ──
-                    let has_target_image = project.selected_object.map_or(false, |s| {
+                    let mut has_target_image = project.selected_object.map_or(false, |s| {
                         s.object_type == ObjectType::Image
                             && s.layer_idx == active_layer_idx
                             && s.object_idx < project.layers[active_layer_idx].placed_images.len()
                     });
+                    if choice == Some(2) {
+                        has_target_image = false; // Force creation of a new canvas
+                    }
 
                     if !has_target_image && current_stroke.is_empty() {
                         let should_fallback = project.selected_object.is_none();
@@ -170,8 +183,8 @@ pub fn update(ctx: &mut ToolContext) {
                 } else { current_stroke.push(pos); }
                 let new_points_count = current_stroke.len() - prev_len;
 
-                let is_ask_mode = settings.auto_new_layer.is_none();
-                if !is_locked && !is_ask_mode && !settings.brush_arrow {
+                let is_ask_mode = choice.is_none();
+                if false { // all brush strokes are vector now
                     if let Some(sel) = project.selected_object {
                         if sel.object_type == ObjectType::Image && sel.layer_idx == active_layer_idx {
                             if let Some(img) = project.layers[active_layer_idx].placed_images.get_mut(sel.object_idx) {
@@ -242,34 +255,58 @@ pub fn update(ctx: &mut ToolContext) {
                                         }
                                     }
 
+                                    let points_to_process = if prev_len > 0 {
+                                        &current_stroke[prev_len - 1..]
+                                    } else {
+                                        &current_stroke[..]
+                                    };
+
+                                    let mut canvas_pts = Vec::with_capacity(points_to_process.len());
+                                    for &pt in points_to_process {
+                                        let world_pt = pt + render_offset;
+                                        let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+                                        let rel_world = world_pt - center;
+                                        let cos = img.rotation.cos();
+                                        let sin = img.rotation.sin();
+                                        let px_rot = rel_world.x * cos + rel_world.y * sin;
+                                        let py_rot = rel_world.y * cos - rel_world.x * sin;
+                                        
+                                        let sx = img.scale.x; let sy = img.scale.y;
+                                        let kx = img.skew.x; let ky = img.skew.y;
+                                        let det = 1.0 - kx * ky;
+                                        let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+                                            ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+                                        } else {
+                                            (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+                                        };
+                                        
+                                        let base_p = center + egui::vec2(rel_x, rel_y);
+                                        let lx = (base_p.x - img.position.x) * scale_x;
+                                        let ly = (base_p.y - img.position.y) * scale_y;
+                                        canvas_pts.push(egui::pos2(lx, ly));
+                                    }
+
+                                    let mut dirs = Vec::with_capacity(canvas_pts.len());
+                                    for i in 0..canvas_pts.len() {
+                                        let dir = if i < canvas_pts.len() - 1 {
+                                            let d = canvas_pts[i+1] - canvas_pts[i];
+                                            if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                                        } else if i > 0 {
+                                            let d = canvas_pts[i] - canvas_pts[i-1];
+                                            if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                                        } else {
+                                            egui::vec2(1.0, 0.0)
+                                        };
+                                        dirs.push(dir);
+                                    }
+
                                     match settings.brush_mode {
                                         BrushMode::Spray => {
                                             let mut rng = 42u32;
                                             let half_w = radius;
                                             let dot_radius = scale_x.max(0.8);
-                                            for &pt in current_stroke.iter().skip(current_stroke.len().saturating_sub(new_points_count)) {
-                                                let world_pt = pt + render_offset;
-                                                let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                                                let rel_world = world_pt - center;
-                                                
-                                                let cos = img.rotation.cos();
-                                                let sin = img.rotation.sin();
-                                                let px_rot = rel_world.x * cos + rel_world.y * sin;
-                                                let py_rot = rel_world.y * cos - rel_world.x * sin;
-                                                
-                                                let sx = img.scale.x; let sy = img.scale.y;
-                                                let kx = img.skew.x; let ky = img.skew.y;
-                                                let det = 1.0 - kx * ky;
-                                                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                                                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                                                } else {
-                                                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                                                };
-                                                
-                                                let base_p = center + egui::vec2(rel_x, rel_y);
-                                                let lx = (base_p.x - img.position.x) * scale_x;
-                                                let ly = (base_p.y - img.position.y) * scale_y;
-
+                                            let start_idx = if prev_len > 0 { 1 } else { 0 };
+                                            for &p in &canvas_pts[start_idx..] {
                                                 for _ in 0..settings.spray_density {
                                                     rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
                                                     let rx = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
@@ -282,7 +319,7 @@ pub fn update(ctx: &mut ToolContext) {
                                                     };
 
                                                     if inside {
-                                                        draw_pixel_shape(img, lx + rx, ly + ry, dot_radius, color, iw, ih, false);
+                                                        draw_pixel_shape(img, p.x + rx, p.y + ry, dot_radius, color, iw, ih, false);
                                                     }
                                                 }
                                             }
@@ -315,31 +352,28 @@ pub fn update(ctx: &mut ToolContext) {
                                                 bristle_offsets.push((off_x, off_y, b_col, b_radius));
                                             }
 
-                                            for &pt in current_stroke.iter().skip(current_stroke.len().saturating_sub(new_points_count)) {
-                                                let world_pt = pt + render_offset;
-                                                let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                                                let rel_world = world_pt - center;
-                                                
-                                                let cos = img.rotation.cos();
-                                                let sin = img.rotation.sin();
-                                                let px_rot = rel_world.x * cos + rel_world.y * sin;
-                                                let py_rot = rel_world.y * cos - rel_world.x * sin;
-                                                
-                                                let sx = img.scale.x; let sy = img.scale.y;
-                                                let kx = img.skew.x; let ky = img.skew.y;
-                                                let det = 1.0 - kx * ky;
-                                                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                                                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                                                } else {
-                                                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                                                };
-                                                
-                                                let base_p = center + egui::vec2(rel_x, rel_y);
-                                                let lx = (base_p.x - img.position.x) * scale_x;
-                                                let ly = (base_p.y - img.position.y) * scale_y;
+                                            if prev_len == 0 && !canvas_pts.is_empty() {
+                                                let p = canvas_pts[0];
+                                                for &(ox, oy, b_col, b_radius) in &bristle_offsets {
+                                                    draw_pixel_shape(img, p.x + ox, p.y + oy, b_radius, b_col, iw, ih, settings.brush_shape == BrushShape::Square);
+                                                }
+                                            }
 
-                                                for &(off_x, off_y, b_col, b_radius) in &bristle_offsets {
-                                                    draw_pixel_shape(img, lx + off_x, ly + off_y, b_radius, b_col, iw, ih, false);
+                                            for i in 1..canvas_pts.len() {
+                                                let p1 = canvas_pts[i-1];
+                                                let p2 = canvas_pts[i];
+                                                let dist = p1.distance(p2);
+                                                if dist > 0.001 {
+                                                    let min_b_radius = bristle_offsets.iter().map(|&(_, _, _, r)| r).fold(f32::MAX, f32::min);
+                                                    let step_size = (min_b_radius * 0.2).clamp(0.2, 1.0);
+                                                    let steps = (dist / step_size).ceil() as usize;
+                                                    for step in 1..=steps {
+                                                        let t = step as f32 / steps as f32;
+                                                        let pi = p1.lerp(p2, t);
+                                                        for &(ox, oy, b_col, b_radius) in &bristle_offsets {
+                                                            draw_pixel_shape(img, pi.x + ox, pi.y + oy, b_radius, b_col, iw, ih, settings.brush_shape == BrushShape::Square);
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -347,80 +381,74 @@ pub fn update(ctx: &mut ToolContext) {
                                             let nib_angle = std::f32::consts::PI / 4.0;
                                             let nib_dir = egui::vec2(nib_angle.cos(), nib_angle.sin());
 
-                                            for i in current_stroke.len().saturating_sub(new_points_count)..current_stroke.len() {
-                                                let pt = current_stroke[i];
-                                                let dir = if i > 0 {
-                                                    let d = pt - current_stroke[i-1];
-                                                    if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
-                                                } else if current_stroke.len() > 1 {
-                                                    let d = current_stroke[1] - current_stroke[0];
-                                                    if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
-                                                } else {
-                                                    egui::vec2(1.0, 0.0)
-                                                };
-
-                                                let world_pt = pt + render_offset;
-                                                let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                                                let rel_world = world_pt - center;
-                                                
-                                                let cos = img.rotation.cos();
-                                                let sin = img.rotation.sin();
-                                                let px_rot = rel_world.x * cos + rel_world.y * sin;
-                                                let py_rot = rel_world.y * cos - rel_world.x * sin;
-                                                
-                                                let sx = img.scale.x; let sy = img.scale.y;
-                                                let kx = img.skew.x; let ky = img.skew.y;
-                                                let det = 1.0 - kx * ky;
-                                                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                                                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                                                } else {
-                                                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                                                };
-                                                
-                                                let base_p = center + egui::vec2(rel_x, rel_y);
-                                                let lx = (base_p.x - img.position.x) * scale_x;
-                                                let ly = (base_p.y - img.position.y) * scale_y;
-
+                                            if prev_len == 0 && !canvas_pts.is_empty() {
+                                                let p = canvas_pts[0];
+                                                let dir = dirs[0];
                                                 if settings.brush_shape == BrushShape::Round {
                                                     let cross = (dir.x * nib_dir.y - dir.y * nib_dir.x).abs();
                                                     let thickness = radius * (cross * 0.85 + 0.15);
-                                                    draw_pixel_shape(img, lx, ly, thickness, color, iw, ih, false);
+                                                    draw_pixel_shape(img, p.x, p.y, thickness, color, iw, ih, false);
                                                 } else {
                                                     let steps = (radius * 2.0) as usize + 2;
                                                     for step in 0..=steps {
                                                         let t = step as f32 / steps as f32 * 2.0 - 1.0;
-                                                        let px = lx + nib_dir.x * radius * t;
-                                                        let py = ly + nib_dir.y * radius * t;
+                                                        let px = p.x + nib_dir.x * radius * t;
+                                                        let py = p.y + nib_dir.y * radius * t;
                                                         draw_pixel_shape(img, px, py, scale_x.max(1.0), color, iw, ih, false);
+                                                    }
+                                                }
+                                            }
+
+                                            for i in 1..canvas_pts.len() {
+                                                let p1 = canvas_pts[i-1];
+                                                let p2 = canvas_pts[i];
+                                                let dir1 = dirs[i-1];
+                                                let dir2 = dirs[i];
+                                                let dist = p1.distance(p2);
+                                                if dist > 0.001 {
+                                                    let step_size = (radius * 0.1).clamp(0.2, 1.0);
+                                                    let steps = (dist / step_size).ceil() as usize;
+                                                    for step in 1..=steps {
+                                                        let t = step as f32 / steps as f32;
+                                                        let pi = p1.lerp(p2, t);
+                                                        let di = dir1 * (1.0 - t) + dir2 * t;
+                                                        let di = if di.length() > 0.001 { di.normalized() } else { dir1 };
+
+                                                        if settings.brush_shape == BrushShape::Round {
+                                                            let cross = (di.x * nib_dir.y - di.y * nib_dir.x).abs();
+                                                            let thickness = radius * (cross * 0.85 + 0.15);
+                                                            draw_pixel_shape(img, pi.x, pi.y, thickness, color, iw, ih, false);
+                                                        } else {
+                                                            let steps_nib = (radius * 2.0) as usize + 2;
+                                                            for step_nib in 0..=steps_nib {
+                                                                let tn = step_nib as f32 / steps_nib as f32 * 2.0 - 1.0;
+                                                                let px = pi.x + nib_dir.x * radius * tn;
+                                                                let py = pi.y + nib_dir.y * radius * tn;
+                                                                draw_pixel_shape(img, px, py, scale_x.max(1.0), color, iw, ih, false);
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                         _ => {
-                                            for &pt in current_stroke.iter().skip(current_stroke.len().saturating_sub(new_points_count)) {
-                                                let world_pt = pt + render_offset;
-                                                let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                                                let rel_world = world_pt - center;
-                                                
-                                                let cos = img.rotation.cos();
-                                                let sin = img.rotation.sin();
-                                                let px_rot = rel_world.x * cos + rel_world.y * sin;
-                                                let py_rot = rel_world.y * cos - rel_world.x * sin;
-                                                
-                                                let sx = img.scale.x; let sy = img.scale.y;
-                                                let kx = img.skew.x; let ky = img.skew.y;
-                                                let det = 1.0 - kx * ky;
-                                                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                                                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                                                } else {
-                                                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                                                };
-                                                
-                                                let base_p = center + egui::vec2(rel_x, rel_y);
-                                                let lx = (base_p.x - img.position.x) * scale_x;
-                                                let ly = (base_p.y - img.position.y) * scale_y;
+                                            if prev_len == 0 && !canvas_pts.is_empty() {
+                                                draw_pixel_shape(img, canvas_pts[0].x, canvas_pts[0].y, radius, color, iw, ih, settings.brush_shape == BrushShape::Square);
+                                            }
 
-                                                draw_pixel_shape(img, lx, ly, radius, color, iw, ih, settings.brush_shape == BrushShape::Square);
+                                            for i in 1..canvas_pts.len() {
+                                                let p1 = canvas_pts[i-1];
+                                                let p2 = canvas_pts[i];
+                                                let dist = p1.distance(p2);
+                                                if dist > 0.001 {
+                                                    let step_size = (radius * 0.1).clamp(0.2, 1.0);
+                                                    let steps = (dist / step_size).ceil() as usize;
+                                                    for step in 1..=steps {
+                                                        let t = step as f32 / steps as f32;
+                                                        let pi = p1.lerp(p2, t);
+                                                        draw_pixel_shape(img, pi.x, pi.y, radius, color, iw, ih, settings.brush_shape == BrushShape::Square);
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -435,10 +463,7 @@ pub fn update(ctx: &mut ToolContext) {
             }
 
             if left_just_released && !current_stroke.is_empty() {
-                let has_existing_canvas = project.selected_object.map_or(false, |s| {
-                    s.object_type == ObjectType::Image && s.layer_idx == active_layer_idx
-                });
-                let ask_mode = settings.auto_new_layer.is_none() || has_existing_canvas;
+                let ask_mode = choice.is_none();
                 if is_locked || ask_mode {
                     let s = Stroke::new(
                         current_stroke.clone(),
@@ -458,7 +483,7 @@ pub fn update(ctx: &mut ToolContext) {
                     *ctx.pending_stroke = Some(s);
                     *ctx.layer_prompt_open = true;
                 } else {
-                    if settings.brush_arrow {
+                    if true { // all brush strokes saved as vector
                         if let Some(layer) = project.get_active_layer_mut() {
                             let s = Stroke::new(
                                 current_stroke.clone(),
@@ -755,9 +780,9 @@ pub fn update(ctx: &mut ToolContext) {
                     let dir = (end - prev).normalized();
                     let perp = egui::vec2(-dir.y, dir.x);
                     let head_len = match s.arrow_size {
-                        crate::types::ArrowSize::Small => (width * 2.5).max(8.0),
-                        crate::types::ArrowSize::Medium => (width * 4.5).max(14.0),
-                        crate::types::ArrowSize::Large => (width * 7.0).max(24.0),
+                        crate::types::ArrowSize::Small => (width * 1.5).max(8.0),
+                        crate::types::ArrowSize::Medium => (width * 2.5).max(14.0),
+                        crate::types::ArrowSize::Large => (width * 4.0).max(24.0),
                     };
                     let tip = end + dir * head_len; 
                     let p1 = end + perp * head_len * 0.45;
@@ -948,28 +973,35 @@ pub fn create_new_canvas(id: usize, pos: egui::Pos2, logical_w: f32, logical_h: 
 
 fn draw_pixel_shape(img: &mut crate::types::PlacedImage, lx: f32, ly: f32, r: f32, color: [u8; 4], iw: usize, ih: usize, is_square: bool) {
     let r_ceil = r.ceil() as i32;
+    let lx_floor = lx.floor() as i32;
+    let ly_floor = ly.floor() as i32;
     for dy in -r_ceil..=r_ceil {
         for dx in -r_ceil..=r_ceil {
-            let px = (lx as i32 + dx) as usize;
-            let py = (ly as i32 + dy) as usize;
+            let px = (lx_floor + dx) as usize;
+            let py = (ly_floor + dy) as usize;
             if px < iw && py < ih {
-                let coverage = if is_square {
-                    1.0f32
+                let px_center_x = px as f32 + 0.5;
+                let px_center_y = py as f32 + 0.5;
+                let rx_dist = (px_center_x - lx).abs();
+                let ry_dist = (px_center_y - ly).abs();
+                let dist = if is_square {
+                    rx_dist.max(ry_dist)
                 } else {
-                    let dist = ((dx as f32).powi(2) + (dy as f32).powi(2)).sqrt();
-                    if r <= 0.5 {
-                        (1.0 - dist).clamp(0.0, 1.0) * (r * 2.0)
+                    (rx_dist.powi(2) + ry_dist.powi(2)).sqrt()
+                };
+
+                let coverage = if r <= 0.5 {
+                    (1.0 - dist).clamp(0.0, 1.0) * (r * 2.0)
+                } else {
+                    let edge_width = 1.0f32;
+                    let inner_r = r - edge_width * 0.5;
+                    let outer_r = r + edge_width * 0.5;
+                    if dist <= inner_r {
+                        1.0
+                    } else if dist >= outer_r {
+                        0.0
                     } else {
-                        let edge_width = 1.0f32;
-                        let inner_r = r - edge_width * 0.5;
-                        let outer_r = r + edge_width * 0.5;
-                        if dist <= inner_r {
-                            1.0
-                        } else if dist >= outer_r {
-                            0.0
-                        } else {
-                            ((outer_r - dist) / edge_width).clamp(0.0, 1.0)
-                        }
+                        ((outer_r - dist) / edge_width).clamp(0.0, 1.0)
                     }
                 };
 
@@ -1006,28 +1038,35 @@ fn draw_pixel_shape(img: &mut crate::types::PlacedImage, lx: f32, ly: f32, r: f3
 
 fn accumulate_pixel_coverage(coverages: &mut [u8], lx: f32, ly: f32, r: f32, iw: usize, ih: usize, is_square: bool) {
     let r_ceil = r.ceil() as i32;
+    let lx_floor = lx.floor() as i32;
+    let ly_floor = ly.floor() as i32;
     for dy in -r_ceil..=r_ceil {
         for dx in -r_ceil..=r_ceil {
-            let px = (lx as i32 + dx) as usize;
-            let py = (ly as i32 + dy) as usize;
+            let px = (lx_floor + dx) as usize;
+            let py = (ly_floor + dy) as usize;
             if px < iw && py < ih {
-                let coverage = if is_square {
-                    1.0f32
+                let px_center_x = px as f32 + 0.5;
+                let px_center_y = py as f32 + 0.5;
+                let rx_dist = (px_center_x - lx).abs();
+                let ry_dist = (px_center_y - ly).abs();
+                let dist = if is_square {
+                    rx_dist.max(ry_dist)
                 } else {
-                    let dist = ((dx as f32).powi(2) + (dy as f32).powi(2)).sqrt();
-                    if r <= 0.5 {
-                        (1.0 - dist).clamp(0.0, 1.0) * (r * 2.0)
+                    (rx_dist.powi(2) + ry_dist.powi(2)).sqrt()
+                };
+
+                let coverage = if r <= 0.5 {
+                    (1.0 - dist).clamp(0.0, 1.0) * (r * 2.0)
+                } else {
+                    let edge_width = 1.0f32;
+                    let inner_r = r - edge_width * 0.5;
+                    let outer_r = r + edge_width * 0.5;
+                    if dist <= inner_r {
+                        1.0
+                    } else if dist >= outer_r {
+                        0.0
                     } else {
-                        let edge_width = 1.0f32;
-                        let inner_r = r - edge_width * 0.5;
-                        let outer_r = r + edge_width * 0.5;
-                        if dist <= inner_r {
-                            1.0
-                        } else if dist >= outer_r {
-                            0.0
-                        } else {
-                            ((outer_r - dist) / edge_width).clamp(0.0, 1.0)
-                        }
+                        ((outer_r - dist) / edge_width).clamp(0.0, 1.0)
                     }
                 };
 
@@ -1118,32 +1157,50 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
         color[3] = (color[3] as f32 * s.highlight_opacity) as u8;
     }
 
+    let mut canvas_pts = Vec::with_capacity(s.points.len());
+    for &pt in &s.points {
+        let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
+        let rel_world = pt - center;
+        let cos = img.rotation.cos();
+        let sin = img.rotation.sin();
+        let px_rot = rel_world.x * cos + rel_world.y * sin;
+        let py_rot = rel_world.y * cos - rel_world.x * sin;
+        
+        let sx = img.scale.x; let sy = img.scale.y;
+        let kx = img.skew.x; let ky = img.skew.y;
+        let det = 1.0 - kx * ky;
+        let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
+            ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
+        } else {
+            (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
+        };
+        
+        let base_p = center + egui::vec2(rel_x, rel_y);
+        let lx = (base_p.x - img.position.x) * scale_x;
+        let ly = (base_p.y - img.position.y) * scale_y;
+        canvas_pts.push(egui::pos2(lx, ly));
+    }
+
+    let mut dirs = Vec::with_capacity(canvas_pts.len());
+    for i in 0..canvas_pts.len() {
+        let dir = if i < canvas_pts.len() - 1 {
+            let d = canvas_pts[i+1] - canvas_pts[i];
+            if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+        } else if i > 0 {
+            let d = canvas_pts[i] - canvas_pts[i-1];
+            if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+        } else {
+            egui::vec2(1.0, 0.0)
+        };
+        dirs.push(dir);
+    }
+
     match s.brush_mode {
         BrushMode::Spray => {
             let mut rng = 42u32;
             let half_w = radius;
             let dot_radius = scale_x.max(0.8);
-            for &pt in &s.points {
-                let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                let rel_world = pt - center;
-                let cos = img.rotation.cos();
-                let sin = img.rotation.sin();
-                let px_rot = rel_world.x * cos + rel_world.y * sin;
-                let py_rot = rel_world.y * cos - rel_world.x * sin;
-                
-                let sx = img.scale.x; let sy = img.scale.y;
-                let kx = img.skew.x; let ky = img.skew.y;
-                let det = 1.0 - kx * ky;
-                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                } else {
-                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                };
-                
-                let base_p = center + egui::vec2(rel_x, rel_y);
-                let lx = (base_p.x - img.position.x) * scale_x;
-                let ly = (base_p.y - img.position.y) * scale_y;
-
+            for &p in &canvas_pts {
                 for _ in 0..s.spray_density {
                     rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
                     let rx = ((rng % 1000) as f32 / 500.0 - 1.0) * half_w;
@@ -1156,7 +1213,7 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
                     };
 
                     if inside {
-                        draw_pixel_shape(img, lx + rx, ly + ry, dot_radius, color, iw, ih, false);
+                        draw_pixel_shape(img, p.x + rx, p.y + ry, dot_radius, color, iw, ih, false);
                     }
                 }
             }
@@ -1189,29 +1246,28 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
                 bristle_offsets.push((off_x, off_y, b_col, b_radius));
             }
 
-            for &pt in &s.points {
-                let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                let rel_world = pt - center;
-                let cos = img.rotation.cos();
-                let sin = img.rotation.sin();
-                let px_rot = rel_world.x * cos + rel_world.y * sin;
-                let py_rot = rel_world.y * cos - rel_world.x * sin;
-                
-                let sx = img.scale.x; let sy = img.scale.y;
-                let kx = img.skew.x; let ky = img.skew.y;
-                let det = 1.0 - kx * ky;
-                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                } else {
-                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                };
-                
-                let base_p = center + egui::vec2(rel_x, rel_y);
-                let lx = (base_p.x - img.position.x) * scale_x;
-                let ly = (base_p.y - img.position.y) * scale_y;
-
+            if !canvas_pts.is_empty() {
+                let p = canvas_pts[0];
                 for &(ox, oy, b_col, b_radius) in &bristle_offsets {
-                    draw_pixel_shape(img, lx + ox, ly + oy, b_radius, b_col, iw, ih, s.brush_shape == BrushShape::Square);
+                    draw_pixel_shape(img, p.x + ox, p.y + oy, b_radius, b_col, iw, ih, s.brush_shape == BrushShape::Square);
+                }
+            }
+
+            for i in 1..canvas_pts.len() {
+                let p1 = canvas_pts[i-1];
+                let p2 = canvas_pts[i];
+                let dist = p1.distance(p2);
+                if dist > 0.001 {
+                    let min_b_radius = bristle_offsets.iter().map(|&(_, _, _, r)| r).fold(f32::MAX, f32::min);
+                    let step_size = (min_b_radius * 0.2).clamp(0.2, 1.0);
+                    let steps = (dist / step_size).ceil() as usize;
+                    for step in 1..=steps {
+                        let t = step as f32 / steps as f32;
+                        let pi = p1.lerp(p2, t);
+                        for &(ox, oy, b_col, b_radius) in &bristle_offsets {
+                            draw_pixel_shape(img, pi.x + ox, pi.y + oy, b_radius, b_col, iw, ih, s.brush_shape == BrushShape::Square);
+                        }
+                    }
                 }
             }
         }
@@ -1222,75 +1278,72 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
                 let nib_angle = std::f32::consts::PI / 4.0;
                 let nib_dir = egui::vec2(nib_angle.cos(), nib_angle.sin());
 
-                for i in 0..s.points.len() {
-                    let pt = s.points[i];
-                    let dir = if i > 0 {
-                        let d = pt - s.points[i-1];
-                        if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
-                    } else if s.points.len() > 1 {
-                        let d = s.points[1] - s.points[0];
-                        if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
-                    } else {
-                        egui::vec2(1.0, 0.0)
-                    };
-
-                    let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                    let rel_world = pt - center;
-                    let cos = img.rotation.cos();
-                    let sin = img.rotation.sin();
-                    let px_rot = rel_world.x * cos + rel_world.y * sin;
-                    let py_rot = rel_world.y * cos - rel_world.x * sin;
-                    
-                    let sx = img.scale.x; let sy = img.scale.y;
-                    let kx = img.skew.x; let ky = img.skew.y;
-                    let det = 1.0 - kx * ky;
-                    let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                        ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                    } else {
-                        (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                    };
-                    
-                    let base_p = center + egui::vec2(rel_x, rel_y);
-                    let lx = (base_p.x - img.position.x) * scale_x;
-                    let ly = (base_p.y - img.position.y) * scale_y;
-
+                if !canvas_pts.is_empty() {
+                    let p = canvas_pts[0];
+                    let dir = dirs[0];
                     if s.brush_shape == BrushShape::Round {
                         let cross = (dir.x * nib_dir.y - dir.y * nib_dir.x).abs();
                         let thickness = radius * (cross * 0.85 + 0.15);
-                        accumulate_pixel_coverage(&mut coverages, lx, ly, thickness, iw, ih, false);
+                        accumulate_pixel_coverage(&mut coverages, p.x, p.y, thickness, iw, ih, false);
                     } else {
                         let steps = (radius * 2.0) as usize + 2;
                         for step in 0..=steps {
                             let t = step as f32 / steps as f32 * 2.0 - 1.0;
-                            let px = lx + nib_dir.x * radius * t;
-                            let py = ly + nib_dir.y * radius * t;
+                            let px = p.x + nib_dir.x * radius * t;
+                            let py = p.y + nib_dir.y * radius * t;
                             accumulate_pixel_coverage(&mut coverages, px, py, scale_x.max(1.0), iw, ih, false);
                         }
                     }
                 }
-            } else {
-                for &pt in &s.points {
-                    let center = img.position + egui::vec2(dw * 0.5, dh * 0.5);
-                    let rel_world = pt - center;
-                    let cos = img.rotation.cos();
-                    let sin = img.rotation.sin();
-                    let px_rot = rel_world.x * cos + rel_world.y * sin;
-                    let py_rot = rel_world.y * cos - rel_world.x * sin;
-                    
-                    let sx = img.scale.x; let sy = img.scale.y;
-                    let kx = img.skew.x; let ky = img.skew.y;
-                    let det = 1.0 - kx * ky;
-                    let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                        ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                    } else {
-                        (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                    };
-                    
-                    let base_p = center + egui::vec2(rel_x, rel_y);
-                    let lx = (base_p.x - img.position.x) * scale_x;
-                    let ly = (base_p.y - img.position.y) * scale_y;
 
-                    accumulate_pixel_coverage(&mut coverages, lx, ly, radius, iw, ih, s.brush_shape == BrushShape::Square);
+                for i in 1..canvas_pts.len() {
+                    let p1 = canvas_pts[i-1];
+                    let p2 = canvas_pts[i];
+                    let dir1 = dirs[i-1];
+                    let dir2 = dirs[i];
+                    let dist = p1.distance(p2);
+                    if dist > 0.001 {
+                        let step_size = (radius * 0.1).clamp(0.2, 1.0);
+                        let steps = (dist / step_size).ceil() as usize;
+                        for step in 1..=steps {
+                            let t = step as f32 / steps as f32;
+                            let pi = p1.lerp(p2, t);
+                            let di = dir1 * (1.0 - t) + dir2 * t;
+                            let di = if di.length() > 0.001 { di.normalized() } else { dir1 };
+
+                            if s.brush_shape == BrushShape::Round {
+                                let cross = (di.x * nib_dir.y - di.y * nib_dir.x).abs();
+                                let thickness = radius * (cross * 0.85 + 0.15);
+                                accumulate_pixel_coverage(&mut coverages, pi.x, pi.y, thickness, iw, ih, false);
+                            } else {
+                                let steps_nib = (radius * 2.0) as usize + 2;
+                                for step_nib in 0..=steps_nib {
+                                    let tn = step_nib as f32 / steps_nib as f32 * 2.0 - 1.0;
+                                    let px = pi.x + nib_dir.x * radius * tn;
+                                    let py = pi.y + nib_dir.y * radius * tn;
+                                    accumulate_pixel_coverage(&mut coverages, px, py, scale_x.max(1.0), iw, ih, false);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                if !canvas_pts.is_empty() {
+                    accumulate_pixel_coverage(&mut coverages, canvas_pts[0].x, canvas_pts[0].y, radius, iw, ih, s.brush_shape == BrushShape::Square);
+                }
+                for i in 1..canvas_pts.len() {
+                    let p1 = canvas_pts[i-1];
+                    let p2 = canvas_pts[i];
+                    let dist = p1.distance(p2);
+                    if dist > 0.001 {
+                        let step_size = (radius * 0.1).clamp(0.2, 1.0);
+                        let steps = (dist / step_size).ceil() as usize;
+                        for step in 1..=steps {
+                            let t = step as f32 / steps as f32;
+                            let pi = p1.lerp(p2, t);
+                            accumulate_pixel_coverage(&mut coverages, pi.x, pi.y, radius, iw, ih, s.brush_shape == BrushShape::Square);
+                        }
+                    }
                 }
             }
 

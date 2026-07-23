@@ -695,9 +695,15 @@ pub fn update(ctx: &mut ToolContext) {
                                                     let new_vec = hover_pos_screen - anchor;
                                                     
                                                     if old_vec.x.abs() > 1.0 && old_vec.y.abs() > 1.0 {
-                                                        let scale_factor = egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y);
-                                                        img.source_scale = init_img.source_scale * scale_factor;
-                                                    }
+                                                         let mut scale_factor = egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y);
+                                                         scale_factor.x = scale_factor.x.max(0.01);
+                                                         scale_factor.y = scale_factor.y.max(0.01);
+                                                         let new_w = (init_src[2] * scale_factor.x).max(1.0);
+                                                         let new_h = (init_src[3] * scale_factor.y).max(1.0);
+                                                         let new_x = anchor.x + (init_src[0] - anchor.x) * scale_factor.x;
+                                                         let new_y = anchor.y + (init_src[1] - anchor.y) * scale_factor.y;
+                                                         img.source_rect = Some([new_x, new_y, new_w, new_h]);
+                                                     }
                                                 }
                                                 20..=23 => {
                                                     // Perspective
@@ -858,7 +864,9 @@ pub fn update(ctx: &mut ToolContext) {
                                 let old_vec = ic[handle_idx] - anchor;
                                 let new_vec = world_pos - anchor;
                                 if old_vec.x.abs() > 1.0 && old_vec.y.abs() > 1.0 {
-                                    let scale = egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y);
+                                    let mut scale = egui::vec2(new_vec.x / old_vec.x, new_vec.y / old_vec.y);
+                                    scale.x = scale.x.max(0.01);
+                                    scale.y = scale.y.max(0.01);
                                     if scale.x.is_finite() && scale.y.is_finite() {
                                         if let Some(sel) = project.selected_object {
                                             match sel.object_type {
@@ -895,6 +903,16 @@ pub fn update(ctx: &mut ToolContext) {
                                                     img.display_size = Some([target_w, target_h]);
                                                     let rel = img.position - anchor;
                                                     img.position = anchor + egui::vec2(rel.x * eff_scale_x, rel.y * eff_scale_y);
+                                                    if eff_scale_x != 1.0 || eff_scale_y != 1.0 {
+                                                        if let Some(ref mut pts) = img.snip_points {
+                                                            for p in pts {
+                                                                if !p.x.is_nan() && !p.y.is_nan() {
+                                                                    p.x *= eff_scale_x;
+                                                                    p.y *= eff_scale_y;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 ObjectType::Stroke => {
                                                     let s = &mut layer.strokes[sel.object_idx];

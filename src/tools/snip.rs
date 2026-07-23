@@ -445,10 +445,17 @@ pub fn update(ctx: &mut ToolContext) {
                             img.name = "Snip".to_string();
                             img.snip_source_overlay = settings.snip_source_overlay;
                             img.display_size = Some([w, h]);
-                            img.is_live = true;
+                            img.is_live = settings.snip_live;
                             img.source_rect = Some([rect.min.x + offset_x, rect.min.y + offset_y, w, h]);
                             img.show_source_rect = settings.show_source_rect;
                             img.shadow = settings.snip_shadow;
+                            img.snip_points = Some(vec![
+                                egui::pos2(0.0, 0.0),
+                                egui::pos2(w, 0.0),
+                                egui::pos2(w, h),
+                                egui::pos2(0.0, h),
+                                egui::pos2(0.0, 0.0),
+                            ]);
                             layer.placed_images.push(img);
                         }
                     }
@@ -459,7 +466,24 @@ pub fn update(ctx: &mut ToolContext) {
                 if let Some(layer) = project.get_active_layer_mut() {
                     if let Some(img) = layer.placed_images.last_mut() {
                         img.capture_source = settings.snip_source;
-                        img.target_hwnd = settings.origin_target_hwnd;
+                        if settings.snip_source == crate::types::CaptureSource::Origin {
+                            if let Some(src) = img.source_rect {
+                                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                                let ppp = ctx.ui.ctx().pixels_per_point();
+                                let center_x = ((src[0] + src[2] * 0.5) * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                                let center_y = ((src[1] + src[3] * 0.5) * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                                if let Some((hwnd, _, _)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
+                                    img.target_hwnd = hwnd as isize;
+                                    settings.origin_target_hwnd = hwnd as isize;
+                                } else {
+                                    img.target_hwnd = settings.origin_target_hwnd;
+                                }
+                            } else {
+                                img.target_hwnd = settings.origin_target_hwnd;
+                            }
+                        } else {
+                            img.target_hwnd = settings.origin_target_hwnd;
+                        }
                     }
                 }
                 match settings.auto_new_layer {

@@ -6,8 +6,16 @@ pub fn color32(c: &[u8; 4]) -> egui::Color32 {
 }
 
 pub fn is_inside_poly(poly: &[egui::Pos2], p: egui::Pos2) -> bool {
-    let mut inside = false;
     if poly.is_empty() { return false; }
+    if poly.iter().any(|pt| pt.x.is_nan() || pt.y.is_nan()) {
+        for sub_poly in poly.split(|pt| pt.x.is_nan() || pt.y.is_nan()) {
+            if !sub_poly.is_empty() && is_inside_poly(sub_poly, p) {
+                return true;
+            }
+        }
+        return false;
+    }
+    let mut inside = false;
     let mut j = poly.len() - 1;
     for i in 0..poly.len() {
         let dy = poly[j].y - poly[i].y;
@@ -209,7 +217,7 @@ pub fn object_bounds(layer: &crate::project::Layer, obj_type: ObjectType, obj_id
         ObjectType::Image => {
             if let Some(img) = layer.placed_images.get(obj_idx) {
                 let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-                let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+                let disp_h = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1];
                 let initial_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
                 let center = initial_rect.center();
                 for c in [initial_rect.left_top(), initial_rect.right_top(), initial_rect.left_bottom(), initial_rect.right_bottom()] {
@@ -278,7 +286,7 @@ pub fn scale_layer(layer: &mut crate::project::Layer, center: egui::Pos2, scale:
 
     for img in &mut layer.placed_images {
         let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+        let disp_h = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1];
         let c = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
         let c_new = scale_p(c);
         img.position += c_new - c;
@@ -321,7 +329,7 @@ pub fn rotate_layer(layer: &mut crate::project::Layer, center: egui::Pos2, angle
     };
     for img in &mut layer.placed_images {
         let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+        let disp_h = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1];
         let c = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
         let c_new = rot(c);
         img.position += c_new - c;
@@ -358,7 +366,7 @@ pub fn skew_layer(layer: &mut crate::project::Layer, center: egui::Pos2, skew_de
     };
     for img in &mut layer.placed_images {
         let disp_w = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0];
-        let disp_h = img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1];
+        let disp_h = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[1];
         let c = img.position + egui::vec2(disp_w * 0.5, disp_h * 0.5);
         let c_new = skew_p(c);
         img.position += c_new - c;

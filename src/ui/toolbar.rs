@@ -414,6 +414,10 @@ pub fn render_photoshop_panel(
                         let is_selected = *active_tool == *tool;
                         if tool_btn_custom(ui, *tool, is_selected).clicked() { *active_tool = *tool; }
                     }
+                    let mut fg = color32(&settings.pen_color);
+                    if egui::color_picker::color_edit_button_srgba(ui, &mut fg, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Pen Color").changed() {
+                        settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()];
+                    }
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
                     if ui.add(egui::Button::new("🕓").min_size(egui::vec2(28.0, 24.0))).on_hover_text("History").clicked() { *show_history_panel = !*show_history_panel; }
@@ -455,6 +459,10 @@ pub fn render_photoshop_panel(
                     for tool in &main_tools {
                         let is_selected = *active_tool == *tool;
                         if tool_btn_custom(ui, *tool, is_selected).clicked() { *active_tool = *tool; }
+                    }
+                    let mut fg = color32(&settings.pen_color);
+                    if egui::color_picker::color_edit_button_srgba(ui, &mut fg, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Pen Color").changed() {
+                        settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()];
                     }
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
@@ -866,17 +874,12 @@ pub fn render_tool_options(
             });
         }
         Tool::Move => {
+            let mut delete_requested = None;
             ui.vertical(|ui| {
                 if let Some(sel) = project.selected_object {
                     ui.horizontal(|ui| {
                         if ui.button(egui::RichText::new("✖").color(egui::Color32::RED)).on_hover_text("Delete Selected (X)").clicked() {
-                            let layer = &mut project.layers[sel.layer_idx];
-                            match sel.object_type {
-                                ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
-                                ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
-                                ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
-                            }
-                            project.selected_object = None;
+                            delete_requested = Some(sel);
                         }
                         ui.separator();
                         
@@ -933,6 +936,51 @@ pub fn render_tool_options(
                                 ObjectType::Text => { let t = &mut layer.text_annotations[sel.object_idx]; t.rotation = 0.0; t.skew = egui::Vec2::ZERO; t.perspective = [egui::Vec2::ZERO; 4]; }
                             }
                             *request_history_push = Some("Reset Transforms".into());
+                        }
+
+                        if let ObjectType::Text = sel.object_type {
+                            let t = &mut project.layers[sel.layer_idx].text_annotations[sel.object_idx];
+                            let mut changed = false;
+                            ui.separator();
+                            if ui.add(egui::DragValue::new(&mut t.font_size).range(10.0..=200.0).prefix("Size: ")).on_hover_text("Font Size").changed() {
+                                changed = true;
+                            }
+                            if ui.toggle_value(&mut t.wave_warp, "〜").on_hover_text("Wave Warp").changed() {
+                                changed = true;
+                            }
+                            ui.separator();
+                            if ui.add(egui::TextEdit::singleline(&mut t.text).hint_text("Text...").desired_width(100.0)).changed() {
+                                changed = true;
+                            }
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut settings.font_search_query).hint_text("Search...").desired_width(60.0));
+                                egui::ComboBox::from_id_salt(format!("font_family_sel_{}", t.name))
+                                    .selected_text(format!("{:?}", t.font))
+                                    .show_ui(ui, |ui| {
+                                        let fonts = [TextFont::Sans, TextFont::Serif, TextFont::Mono, TextFont::Handwriting, TextFont::Heading, TextFont::Custom];
+                                        for f in fonts {
+                                            let name = format!("{:?}", f);
+                                            if settings.font_search_query.is_empty() || name.to_lowercase().contains(&settings.font_search_query.to_lowercase()) {
+                                                if ui.selectable_value(&mut t.font, f, name).changed() {
+                                                    changed = true;
+                                                }
+                                            }
+                                        }
+                                    });
+                            });
+                            ui.separator();
+                            let mut text_color = egui::Color32::from_rgba_unmultiplied(t.color[0], t.color[1], t.color[2], t.color[3]);
+                            if egui::color_picker::color_edit_button_srgba(ui, &mut text_color, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Text Color").changed() {
+                                t.color = [text_color.r(), text_color.g(), text_color.b(), text_color.a()];
+                                changed = true;
+                            }
+                            if changed {
+                                let font = crate::tools::text::resolve_font(t.font, t.font_size);
+                                let galley = ui.ctx().fonts(|f| f.layout_no_wrap(t.text.clone(), font, egui::Color32::WHITE));
+                                t.exact_size = [galley.size().x, galley.size().y];
+                                *request_history_push = Some("Edit Text".into());
+                            }
                         }
 
                         if let ObjectType::Image = sel.object_type {
@@ -1367,6 +1415,15 @@ pub fn render_tool_options(
                     });
                 }
             });
+            if let Some(sel) = delete_requested {
+                let layer = &mut project.layers[sel.layer_idx];
+                match sel.object_type {
+                    ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
+                    ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
+                    ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
+                }
+                project.selected_object = None;
+            }
         }
         Tool::Embed => {
             ui.vertical(|ui| {
@@ -1394,11 +1451,11 @@ pub fn render_tool_options(
                     #[cfg(not(feature = "webengine"))]
                     {
                         ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "Web Engine Feature Not Enabled:");
-                        ui.label(egui::RichText::new("Compile with --features webengine").size(10.0).color(egui::Color32::GRAY));
+                        ui.label(egui::RichText::new("Browser widget requires compilation with --features webengine and Ultralight SDK DLLs.").size(10.0).color(egui::Color32::GRAY));
                         ui.separator();
                     }
 
-                    ui.add_enabled_ui(false, |ui| {
+                    ui.add_enabled_ui(true, |ui| {
                         ui.horizontal(|ui| {
                             ui.label("Select Window:");
                             let mut selected_hwnd = None;

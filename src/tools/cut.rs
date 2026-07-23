@@ -116,7 +116,6 @@ pub fn update(ctx: &mut ToolContext) {
             let rect = egui::Rect::from_two_pos(start, pos);
             let rect_pts = vec![rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()];
             crate::utils::draw_dashed_path(&painter, &rect_pts, time);
-            painter.rect_filled(rect, 0.0, egui::Color32::from_white_alpha(15));
         }
         if left_just_released {
             if let Some(start) = line_start.take() {
