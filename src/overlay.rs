@@ -1752,6 +1752,15 @@ pub fn render_canvas(
                         if let Some(ref local_pts) = img.snip_points {
                             let src_center = src_rect.center();
                             let p_arr = img.source_perspective;
+                            let mut max_x = 0.0f32;
+                            let mut max_y = 0.0f32;
+                            for p in local_pts {
+                                if !p.x.is_nan() && p.x > max_x { max_x = p.x; }
+                                if !p.y.is_nan() && p.y > max_y { max_y = p.y; }
+                            }
+                            let bounds_w = max_x.max(1.0);
+                            let bounds_h = max_y.max(1.0);
+
                             let mut current_path = Vec::new();
                             for p in local_pts {
                                 if p.x.is_nan() || p.y.is_nan() {
@@ -1768,7 +1777,9 @@ pub fn render_canvas(
                                         current_path.clear();
                                     }
                                 } else {
-                                    let world_pt = egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y);
+                                    let norm_x = p.x / bounds_w;
+                                    let norm_y = p.y / bounds_h;
+                                    let world_pt = egui::pos2(src_rect.min.x + norm_x * src_rect.width(), src_rect.min.y + norm_y * src_rect.height());
                                     let transformed = crate::utils::transform_point_complex(world_pt, src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
                                     current_path.push(transformed);
                                 }
@@ -1792,10 +1803,15 @@ pub fn render_canvas(
                             if let Some(ref loops) = img.cached_mask_outline {
                                 let src_center = src_rect.center();
                                 let p_arr = img.source_perspective;
+                                let mask_sz = img.mask_size.unwrap_or(img.size);
+                                let mask_w = (mask_sz[0] as f32).max(1.0);
+                                let mask_h = (mask_sz[1] as f32).max(1.0);
                                 for path in loops {
                                     let mut current_path = Vec::with_capacity(path.len());
                                     for &p in path {
-                                        let world_pt = egui::pos2(src_rect.min.x + p.x, src_rect.min.y + p.y);
+                                        let norm_x = p.x / mask_w;
+                                        let norm_y = p.y / mask_h;
+                                        let world_pt = egui::pos2(src_rect.min.x + norm_x * src_rect.width(), src_rect.min.y + norm_y * src_rect.height());
                                         let transformed = crate::utils::transform_point_complex(world_pt, src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
                                         current_path.push(transformed);
                                     }
