@@ -923,7 +923,8 @@ pub fn render_tool_options(
                         }
                         ui.separator();
                         
-                        if ui.button("↺").on_hover_text("Reset Transforms").clicked() {
+                        let yellow_color = egui::Color32::from_rgb(255, 215, 0);
+                        if ui.add(egui::Button::new(egui::RichText::new("↺").color(yellow_color))).on_hover_text("Reset Transforms").clicked() {
                             let layer = &mut project.layers[sel.layer_idx];
                             match sel.object_type {
                                 ObjectType::Image => { let img = &mut layer.placed_images[sel.object_idx]; img.rotation = 0.0; img.skew = egui::Vec2::ZERO; img.perspective = [egui::Vec2::ZERO; 4]; }
@@ -931,6 +932,38 @@ pub fn render_tool_options(
                                 ObjectType::Text => { let t = &mut layer.text_annotations[sel.object_idx]; t.rotation = 0.0; t.skew = egui::Vec2::ZERO; t.perspective = [egui::Vec2::ZERO; 4]; }
                             }
                             *request_history_push = Some("Reset Transforms".into());
+                        }
+
+                        if sel.object_type == ObjectType::Image {
+                            let img_ref = &project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                            if img_ref.show_source_rect {
+                                let btn_resp = ui.add(egui::Button::new(egui::RichText::new("↺").color(yellow_color)))
+                                    .on_hover_text("Reset Source (Reset Source Rect & Transforms)");
+
+                                let inner_rect = btn_resp.rect.shrink(2.5);
+                                let stroke_color = egui::Color32::from_rgb(255, 140, 0);
+                                let pts = vec![
+                                    inner_rect.left_top(),
+                                    inner_rect.right_top(),
+                                    inner_rect.right_bottom(),
+                                    inner_rect.left_bottom(),
+                                    inner_rect.left_top(),
+                                ];
+                                let time = ui.input(|i| i.time);
+                                crate::utils::draw_dashed_path_color(ui.painter(), &pts, time, stroke_color, 1.0);
+
+                                if btn_resp.clicked() {
+                                    let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                    img.source_rotation = 0.0;
+                                    img.source_skew = egui::Vec2::ZERO;
+                                    img.source_perspective = [egui::Vec2::ZERO; 4];
+                                    img.source_scale = egui::vec2(1.0, 1.0);
+                                    let ds = img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32]);
+                                    img.source_rect = Some([img.position.x, img.position.y, ds[0], ds[1]]);
+                                    img.show_source_rect = true;
+                                    *request_history_push = Some("Reset Source".into());
+                                }
+                            }
                         }
 
                         if let ObjectType::Text = sel.object_type {

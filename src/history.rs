@@ -32,9 +32,54 @@ impl History {
         }
     }
 
+    pub fn format_action_label(project: &Project, raw_action: &str) -> String {
+        let layer_idx = project.active_layer;
+        let layer_name = project.layers.get(layer_idx)
+            .map(|l| if l.name.is_empty() { format!("Layer {}", layer_idx + 1) } else { l.name.clone() })
+            .unwrap_or_else(|| format!("Layer {}", layer_idx + 1));
+
+        if let Some(sel) = project.selected_object {
+            if let Some(layer) = project.layers.get(sel.layer_idx) {
+                match sel.object_type {
+                    crate::types::ObjectType::Image => {
+                        if let Some(img) = layer.placed_images.get(sel.object_idx) {
+                            let obj_name = if !img.name.is_empty() {
+                                img.name.clone()
+                            } else {
+                                format!("Object {}", sel.object_idx + 1)
+                            };
+                            let is_source_action = raw_action.contains("Source") || raw_action.contains("Coordinates");
+                            let src_type = if is_source_action {
+                                match img.capture_source {
+                                    crate::types::CaptureSource::Overlay => "Source Overlay; ",
+                                    crate::types::CaptureSource::Desktop => "Source Desktop; ",
+                                    crate::types::CaptureSource::Origin  => "Source Window; ",
+                                }
+                            } else {
+                                ""
+                            };
+                            return format!("{}; {}; {}{}", layer_name, obj_name, src_type, raw_action);
+                        }
+                    }
+                    crate::types::ObjectType::Stroke => {
+                        return format!("{}; Stroke {}; {}", layer_name, sel.object_idx + 1, raw_action);
+                    }
+                    crate::types::ObjectType::Text => {
+                        return format!("{}; Text {}; {}", layer_name, sel.object_idx + 1, raw_action);
+                    }
+                }
+            }
+        }
+
+        format!("{}; {}", layer_name, raw_action)
+    }
+
     /// Push the current project state with a descriptive label.
     /// Any redo candidates (entries after the cursor) are discarded.
     pub fn push(&mut self, project: &Project, label: impl Into<String>) {
+        let raw = label.into();
+        let formatted = Self::format_action_label(project, &raw);
+
         // Discard redo entries after cursor.
         if let Some(c) = self.cursor {
             self.entries.truncate(c + 1);
@@ -51,7 +96,7 @@ impl History {
         }
 
         self.entries.push(HistoryEntry {
-            label: label.into(),
+            label: formatted,
             snapshot: project.clone(),
         });
         self.cursor = Some(self.entries.len() - 1);

@@ -477,7 +477,7 @@ pub fn update(ctx: &mut ToolContext) {
 
     if ctx.mouse.left_just_released {
         for img in &mut project.layers[active_layer_idx].placed_images {
-            if !img.is_live {
+            if !img.is_live && img.source_rect.is_none() && img.mask.is_none() {
                 crate::tools::brush::crop_to_content(img);
             }
         }

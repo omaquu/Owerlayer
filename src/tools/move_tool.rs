@@ -636,7 +636,7 @@ pub fn update(ctx: &mut ToolContext) {
                             // Dragging Source Rect (works for both live and static snips)
                             if let Some(sel) = project.selected_object {
                                 if let ObjectType::Image = sel.object_type {
-                                    let img = &mut project.layers[sel.layer_idx].placed_images[sel.object_idx];
+                                     let img = &mut layer.placed_images[sel.object_idx];
                                     if img.source_rect.is_some() {
                                         let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                         let ppp = ui.ctx().pixels_per_point();
@@ -711,8 +711,8 @@ pub fn update(ctx: &mut ToolContext) {
                                                     let delta = hover_pos - start;
                                                     let new_val = init_img.source_perspective[p_idx] + delta;
                                                     if let Some(src) = init_img.source_rect {
-                                                        let w_clamp = src[2] * 0.5;
-                                                        let h_clamp = src[3] * 0.5;
+                                                        let w_clamp = (src[2] * 2.0).max(2000.0);
+                                                        let h_clamp = (src[3] * 2.0).max(2000.0);
                                                         img.source_perspective[p_idx] = egui::vec2(
                                                             new_val.x.clamp(-w_clamp, w_clamp),
                                                             new_val.y.clamp(-h_clamp, h_clamp),
@@ -999,15 +999,43 @@ pub fn update(ctx: &mut ToolContext) {
                 if left_just_released {
                     if let Some(start) = *line_start {
                         if (pos - start).length_sq() > 1.0 || *drag_state > 0 {
-                            let name = match *drag_state {
-                                0 => "Move",
-                                1 => "Rotate",
-                                2..=5 => "Skew",
-                                10..=13 => "Resize",
-                                20..=23 => "Perspective",
-                                _ => "Transform",
+                            let coords = if let Some(sel) = project.selected_object {
+                                match sel.object_type {
+                                    ObjectType::Image => {
+                                        if let Some(img) = layer.placed_images.get(sel.object_idx) {
+                                            if *dragging_source_rect {
+                                                if let Some(src) = img.source_rect {
+                                                    format!(" ({:.0}, {:.0})", src[0], src[1])
+                                                } else {
+                                                    String::new()
+                                                }
+                                            } else {
+                                                format!(" ({:.0}, {:.0})", img.position.x, img.position.y)
+                                            }
+                                        } else { String::new() }
+                                    }
+                                    ObjectType::Stroke => {
+                                        if let Some(s) = layer.strokes.get(sel.object_idx) {
+                                            s.points.first().map(|p| format!(" ({:.0}, {:.0})", p.x, p.y)).unwrap_or_default()
+                                        } else { String::new() }
+                                    }
+                                    ObjectType::Text => {
+                                        if let Some(t) = layer.text_annotations.get(sel.object_idx) {
+                                            format!(" ({:.0}, {:.0})", t.position.x, t.position.y)
+                                        } else { String::new() }
+                                    }
+                                }
+                            } else { String::new() };
+
+                            let base_name = match *drag_state {
+                                0 => if *dragging_source_rect { "Move Coordinates" } else { "Move" },
+                                1 => if *dragging_source_rect { "Rotate Source" } else { "Rotate" },
+                                2..=5 => if *dragging_source_rect { "Skew Source" } else { "Skew" },
+                                10..=13 => if *dragging_source_rect { "Resize Source" } else { "Resize" },
+                                20..=23 => if *dragging_source_rect { "Perspective Source" } else { "Perspective" },
+                                _ => if *dragging_source_rect { "Transform Source" } else { "Transform" },
                             };
-                            *ctx.request_history_push = Some(name.into());
+                            *ctx.request_history_push = Some(format!("{}{}", base_name, coords));
                         }
                     }
                     // Re-capture for static snips when source rect drag ends

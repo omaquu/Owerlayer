@@ -1793,7 +1793,7 @@ pub fn render_canvas(
                                         if current_path.len() >= 2 && current_path.first() != current_path.last() {
                                             current_path.push(*current_path.first().unwrap());
                                         }
-                                        let simplified = crate::utils::simplify_path(&current_path, 2.0);
+                                        let simplified = crate::utils::simplify_path(&current_path, 0.5);
                                         let mut closed = simplified;
                                         if closed.len() >= 2 && closed.first() != closed.last() {
                                             closed.push(*closed.first().unwrap());
@@ -1813,7 +1813,7 @@ pub fn render_canvas(
                                 if current_path.len() >= 2 && current_path.first() != current_path.last() {
                                     current_path.push(*current_path.first().unwrap());
                                 }
-                                let simplified = crate::utils::simplify_path(&current_path, 2.0);
+                                let simplified = crate::utils::simplify_path(&current_path, 0.5);
                                 let mut closed = simplified;
                                 if closed.len() >= 2 && closed.first() != closed.last() {
                                     closed.push(*closed.first().unwrap());
@@ -2016,11 +2016,13 @@ fn get_mask_outline(mask: &[u8], size: [usize; 2], _ppp: f32) -> Vec<Vec<egui::P
         }
 
         if path.len() >= 3 {
+            let total_cols = (cols - 2) as f32;
+            let total_rows = (rows - 2) as f32;
             let mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
-                let gx = (pt.0 as f32 - 2.0) / 2.0;
-                let gy = (pt.1 as f32 - 2.0) / 2.0;
-                let lx = (gx * step).clamp(0.0, w as f32);
-                let ly = (gy * step).clamp(0.0, h as f32);
+                let norm_x = ((pt.0 as f32 - 2.0) / (2.0 * total_cols)).clamp(0.0, 1.0);
+                let norm_y = ((pt.1 as f32 - 2.0) / (2.0 * total_rows)).clamp(0.0, 1.0);
+                let lx = norm_x * w as f32;
+                let ly = norm_y * h as f32;
                 egui::pos2(lx, ly)
             }).collect();
             loops.push(mapped_path);
