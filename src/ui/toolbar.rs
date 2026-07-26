@@ -414,10 +414,6 @@ pub fn render_photoshop_panel(
                         let is_selected = *active_tool == *tool;
                         if tool_btn_custom(ui, *tool, is_selected).clicked() { *active_tool = *tool; }
                     }
-                    let mut fg = color32(&settings.pen_color);
-                    if egui::color_picker::color_edit_button_srgba(ui, &mut fg, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Pen Color").changed() {
-                        settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()];
-                    }
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
                     if ui.add(egui::Button::new("🕓").min_size(egui::vec2(28.0, 24.0))).on_hover_text("History").clicked() { *show_history_panel = !*show_history_panel; }
@@ -459,10 +455,6 @@ pub fn render_photoshop_panel(
                     for tool in &main_tools {
                         let is_selected = *active_tool == *tool;
                         if tool_btn_custom(ui, *tool, is_selected).clicked() { *active_tool = *tool; }
-                    }
-                    let mut fg = color32(&settings.pen_color);
-                    if egui::color_picker::color_edit_button_srgba(ui, &mut fg, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Pen Color").changed() {
-                        settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()];
                     }
                     ui.separator();
                     if ui.add(egui::Button::new("📁").min_size(egui::vec2(28.0, 24.0))).on_hover_text("Layers").clicked() { *show_layers_panel = !*show_layers_panel; }
@@ -509,26 +501,29 @@ pub fn render_tool_options(
     let show_color_pickers = !matches!(active_tool, Tool::Mirror);
     if show_color_pickers {
         ui.horizontal(|ui| {
+            // 1st: Main Color & Eyedropper
             let mut fg = color32(&settings.pen_color);
-            if egui::color_picker::color_edit_button_srgba(ui, &mut fg, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Pen Color (Widget BG)").changed() { settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()]; }
+            if egui::color_picker::color_edit_button_srgba(ui, &mut fg, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Main Color").changed() {
+                settings.pen_color = [fg.r(), fg.g(), fg.b(), fg.a()];
+            }
 
             let (rect, resp) = ui.allocate_at_least(egui::vec2(24.0, 24.0), egui::Sense::click());
             if resp.clicked() { settings.picking_stroke_color = true; }
             if resp.hovered() { ui.painter().rect_filled(rect, 4.0, egui::Color32::from_white_alpha(30)); }
             draw_pick_color_icon(ui, rect, egui::Color32::WHITE);
-            resp.on_hover_text("Pick Color");
-            
-            let show_bg_picker = matches!(active_tool, Tool::Shape | Tool::Move | Tool::Embed);
-            if show_bg_picker {
-                let mut bg = color32(&settings.background_color);
-                if ui.color_edit_button_srgba(&mut bg).on_hover_text("Fill Color (Widget Border/Accent)").changed() { settings.background_color = [bg.r(), bg.g(), bg.b(), bg.a()]; }
-                
-                let (rect2, resp2) = ui.allocate_at_least(egui::vec2(24.0, 24.0), egui::Sense::click());
-                if resp2.clicked() { settings.picking_fill_color = true; }
-                if resp2.hovered() { ui.painter().rect_filled(rect2, 4.0, egui::Color32::from_white_alpha(30)); }
-                draw_pick_color_icon(ui, rect2, egui::Color32::LIGHT_GRAY);
-                resp2.on_hover_text("Pick Fill");
+            resp.on_hover_text("Pick Main Color");
+
+            // 2nd: Foreground Color & Eyedropper
+            let mut bg = color32(&settings.background_color);
+            if egui::color_picker::color_edit_button_srgba(ui, &mut bg, egui::color_picker::Alpha::OnlyBlend).on_hover_text("Foreground Color").changed() {
+                settings.background_color = [bg.r(), bg.g(), bg.b(), bg.a()];
             }
+
+            let (rect2, resp2) = ui.allocate_at_least(egui::vec2(24.0, 24.0), egui::Sense::click());
+            if resp2.clicked() { settings.picking_fill_color = true; }
+            if resp2.hovered() { ui.painter().rect_filled(rect2, 4.0, egui::Color32::from_white_alpha(30)); }
+            draw_pick_color_icon(ui, rect2, egui::Color32::LIGHT_GRAY);
+            resp2.on_hover_text("Pick Foreground Color");
         });
         ui.add(egui::Separator::default().vertical());
     }

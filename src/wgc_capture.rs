@@ -273,6 +273,9 @@ pub mod wgc {
                     false
                 };
 
+                let target_w = if let Some((_, _, cw, _ch)) = crop { cw as usize } else { crop_width };
+                let target_h = if let Some((_, _, _cw, ch)) = crop { ch as usize } else { crop_height };
+
                 desc.Width = crop_width as u32;
                 desc.Height = crop_height as u32;
 
@@ -341,23 +344,52 @@ pub mod wgc {
                 let pitch = mapped.RowPitch as usize;
 
                 let swap_start = std::time::Instant::now();
-                let mut pixels = vec![0u8; width * height * 4];
-                let src_data = std::slice::from_raw_parts(mapped.pData as *const u8, pitch * height);
 
-                use rayon::prelude::*;
-                let row_width_bytes = width * 4;
-                pixels
-                    .par_chunks_mut(row_width_bytes)
-                    .enumerate()
-                    .for_each(|(y, dst_row)| {
-                        let src_row = &src_data[y * pitch..y * pitch + row_width_bytes];
-                        dst_row.copy_from_slice(src_row);
-                    });
+                let needs_padding = target_w != width || target_h != height;
+                let (out_pixels, out_w, out_h) = if needs_padding {
+                    let mut pixels = vec![0u8; target_w * target_h * 4];
+                    let src_data = std::slice::from_raw_parts(mapped.pData as *const u8, pitch * height);
+                    let dst_offset_x = if let Some((cx, _, _, _)) = crop {
+                        if cx < 0 { (-cx) as usize } else { 0 }
+                    } else { 0 };
+                    let dst_offset_y = if let Some((_, cy, _, _)) = crop {
+                        if cy < 0 { (-cy) as usize } else { 0 }
+                    } else { 0 };
+
+                    use rayon::prelude::*;
+                    let row_copy_bytes = width.min(target_w.saturating_sub(dst_offset_x)) * 4;
+                    pixels
+                        .par_chunks_mut(target_w * 4)
+                        .skip(dst_offset_y)
+                        .take(height)
+                        .enumerate()
+                        .for_each(|(y, dst_row)| {
+                            let src_row = &src_data[y * pitch..y * pitch + width * 4];
+                            let dst_start = dst_offset_x * 4;
+                            let dst_end = dst_start + row_copy_bytes;
+                            dst_row[dst_start..dst_end].copy_from_slice(&src_row[..row_copy_bytes]);
+                        });
+                    (pixels, target_w, target_h)
+                } else {
+                    let mut pixels = vec![0u8; width * height * 4];
+                    let src_data = std::slice::from_raw_parts(mapped.pData as *const u8, pitch * height);
+
+                    use rayon::prelude::*;
+                    let row_width_bytes = width * 4;
+                    pixels
+                        .par_chunks_mut(row_width_bytes)
+                        .enumerate()
+                        .for_each(|(y, dst_row)| {
+                            let src_row = &src_data[y * pitch..y * pitch + row_width_bytes];
+                            dst_row.copy_from_slice(src_row);
+                        });
+                    (pixels, width, height)
+                };
                 let pixel_swap_time = swap_start.elapsed().as_micros();
 
                 self.d3d_context.Unmap(&staging_texture, 0);
 
-                Ok(Some((pixels, width, height, gpu_copy_time, map_wait_time, pixel_swap_time)))
+                Ok(Some((out_pixels, out_w, out_h, gpu_copy_time, map_wait_time, pixel_swap_time)))
             }
         }
     }

@@ -1736,7 +1736,7 @@ pub fn render_canvas(
                     } else {
                         false
                     };
-                    if !img.snip_source_overlay && img.capture_source != crate::types::CaptureSource::Overlay && img.show_source_rect && img.source_rect.is_some() {
+                    if img.show_source_rect && img.source_rect.is_some() {
                         has_show_source = true;
                         let src = img.source_rect.unwrap();
                         let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
@@ -1749,7 +1749,32 @@ pub fn render_canvas(
 
                         let stroke_width = if is_selected { 1.8f32 } else { 1.2f32 };
                         
-                        if let Some(ref local_pts) = img.snip_points {
+                        if let Some(ref mask_ref) = img.mask {
+                            if img.cached_mask_outline.is_none() {
+                                let ppp = ctx.ui.ctx().pixels_per_point();
+                                img.cached_mask_outline = Some(get_mask_outline(mask_ref, img.mask_size.unwrap_or(img.size), ppp));
+                            }
+                            if let Some(ref loops) = img.cached_mask_outline {
+                                let src_center = src_rect.center();
+                                let p_arr = img.source_perspective;
+                                let mask_sz = img.mask_size.unwrap_or(img.size);
+                                let mask_w = (mask_sz[0] as f32).max(1.0);
+                                let mask_h = (mask_sz[1] as f32).max(1.0);
+                                for path in loops {
+                                    let mut current_path = Vec::with_capacity(path.len());
+                                    for &p in path {
+                                        let norm_x = p.x / mask_w;
+                                        let norm_y = p.y / mask_h;
+                                        let world_pt = egui::pos2(src_rect.min.x + norm_x * src_rect.width(), src_rect.min.y + norm_y * src_rect.height());
+                                        let transformed = crate::utils::transform_point_complex(world_pt, src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
+                                        current_path.push(transformed);
+                                    }
+                                    if !current_path.is_empty() {
+                                        crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
+                                    }
+                                }
+                            }
+                        } else if let Some(ref local_pts) = img.snip_points {
                             let src_center = src_rect.center();
                             let p_arr = img.source_perspective;
                             let mut max_x = 0.0f32;
@@ -1794,31 +1819,6 @@ pub fn render_canvas(
                                     closed.push(*closed.first().unwrap());
                                 }
                                 crate::utils::draw_dashed_path_color(&painter, &closed, time, stroke_color, stroke_width);
-                            }
-                        } else if let Some(ref mask_ref) = img.mask {
-                            if img.cached_mask_outline.is_none() {
-                                let ppp = ctx.ui.ctx().pixels_per_point();
-                                img.cached_mask_outline = Some(get_mask_outline(mask_ref, img.mask_size.unwrap_or(img.size), ppp));
-                            }
-                            if let Some(ref loops) = img.cached_mask_outline {
-                                let src_center = src_rect.center();
-                                let p_arr = img.source_perspective;
-                                let mask_sz = img.mask_size.unwrap_or(img.size);
-                                let mask_w = (mask_sz[0] as f32).max(1.0);
-                                let mask_h = (mask_sz[1] as f32).max(1.0);
-                                for path in loops {
-                                    let mut current_path = Vec::with_capacity(path.len());
-                                    for &p in path {
-                                        let norm_x = p.x / mask_w;
-                                        let norm_y = p.y / mask_h;
-                                        let world_pt = egui::pos2(src_rect.min.x + norm_x * src_rect.width(), src_rect.min.y + norm_y * src_rect.height());
-                                        let transformed = crate::utils::transform_point_complex(world_pt, src_center, img.source_rotation, img.source_skew, p_arr, src_rect, img.source_scale) - ctx.render_offset;
-                                        current_path.push(transformed);
-                                    }
-                                    if !current_path.is_empty() {
-                                        crate::utils::draw_dashed_path_color(&painter, &current_path, time, stroke_color, stroke_width);
-                                    }
-                                }
                             }
                         } else {
                             let r = src_rect.translate(-ctx.render_offset);
@@ -1903,21 +1903,24 @@ pub fn render_canvas(
     if switch_to_move { *active_tool = Tool::Move; }
 }
 
-fn get_mask_outline(mask: &[u8], size: [usize; 2], ppp: f32) -> Vec<Vec<egui::Pos2>> {
+fn get_mask_outline(mask: &[u8], size: [usize; 2], _ppp: f32) -> Vec<Vec<egui::Pos2>> {
     let w = size[0];
     let h = size[1];
     if w == 0 || h == 0 { return Vec::new(); }
 
     let step = (w.max(h) as f32 / 400.0).max(1.0);
-    let cols = (w as f32 / step).ceil() as i32 + 1;
-    let rows = (h as f32 / step).ceil() as i32 + 1;
+    let sample_cols = (w as f32 / step).ceil() as i32 + 1;
+    let sample_rows = (h as f32 / step).ceil() as i32 + 1;
+
+    let cols = sample_cols + 2;
+    let rows = sample_rows + 2;
 
     let mut grid = vec![false; (cols * rows) as usize];
-    for r in 0..rows {
+    for r in 0..sample_rows {
         let py = ((r as f32 * step).round() as usize).min(h - 1);
-        for c in 0..cols {
+        for c in 0..sample_cols {
             let px = ((c as f32 * step).round() as usize).min(w - 1);
-            grid[(r * cols + c) as usize] = mask[py * w + px] > 127;
+            grid[((r + 1) * cols + (c + 1)) as usize] = mask[py * w + px] > 127;
         }
     }
 
@@ -2014,8 +2017,10 @@ fn get_mask_outline(mask: &[u8], size: [usize; 2], ppp: f32) -> Vec<Vec<egui::Po
 
         if path.len() >= 3 {
             let mapped_path: Vec<egui::Pos2> = path.into_iter().map(|pt| {
-                let lx = (pt.0 as f32 / 2.0) * step / ppp;
-                let ly = (pt.1 as f32 / 2.0) * step / ppp;
+                let gx = (pt.0 as f32 - 2.0) / 2.0;
+                let gy = (pt.1 as f32 - 2.0) / 2.0;
+                let lx = (gx * step).clamp(0.0, w as f32);
+                let ly = (gy * step).clamp(0.0, h as f32);
                 egui::pos2(lx, ly)
             }).collect();
             loops.push(mapped_path);

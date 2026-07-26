@@ -437,6 +437,11 @@ pub fn update(ctx: &mut ToolContext) {
                         };
                         
                         if erase_hit {
+                            if img.mask.is_none() && img.size[0] > 0 && img.size[1] > 0 {
+                                img.mask = Some(vec![255u8; img.size[0] * img.size[1]]);
+                                img.mask_size = Some(img.size);
+                            }
+
                             if let Some(ref mut mask) = img.mask {
                                 let m_size = img.mask_size.unwrap_or(img.size);
                                 if m_size[0] > 0 && m_size[1] > 0 && img.size[0] > 0 && img.size[1] > 0 {
@@ -464,6 +469,7 @@ pub fn update(ctx: &mut ToolContext) {
                 if modified {
                     img.clear_texture();
                     img.cached_mask_outline = None;
+                    img.mask_dirty = true;
                 }
             }
         }
