@@ -509,6 +509,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
                                     }
                                     project.selected_object = None;
+                                    *ctx.request_history_push = Some("Delete Object".into());
                                 }
                             }
                         });

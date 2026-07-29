@@ -10,6 +10,7 @@ pub fn render_layers_window(
     open: &mut bool,
     filters_open: &mut Option<usize>,
     load_picker_open: &mut bool,
+    request_history_push: &mut Option<String>,
 ) {
     let frame = photoshop_frame(settings);
 
@@ -40,13 +41,14 @@ pub fn render_layers_window(
                     project.save();
                 }
                 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("➕").on_hover_text("New Layer").clicked() {
                         project.layers.push(crate::project::Layer::new(&format!("Layer {}", project.layers.len() + 1)));
                         project.active_layer = project.layers.len() - 1;
                         project.selected_object = None;
+                        *request_history_push = Some("New Layer".into());
                     }
-                });
+                }).response.clicked() {}
             });
 
             ui.add_space(8.0);
@@ -457,6 +459,7 @@ pub fn render_layers_window(
                         bottom.expanded = true;
                         project.active_layer = idx - 1;
                         project.selected_object = None;
+                        *request_history_push = Some("Merge Layer Down".into());
                     }
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_rasterize {
@@ -480,6 +483,7 @@ pub fn render_layers_window(
                         if project.layers.is_empty() { project.layers.push(crate::project::Layer::new("Layer 1")); }
                         project.active_layer = project.active_layer.min(project.layers.len().saturating_sub(1));
                         project.save();
+                        *request_history_push = Some("Delete Layer".into());
                     }
                 }
                 if let Some(idx) = layer_to_move_up {
@@ -488,6 +492,7 @@ pub fn render_layers_window(
                         if project.active_layer == idx { project.active_layer = idx + 1; }
                         else if project.active_layer == idx + 1 { project.active_layer = idx; }
                         project.save();
+                        *request_history_push = Some("Reorder Layer".into());
                     }
                 }
                 if let Some(idx) = layer_to_move_down {
@@ -496,6 +501,7 @@ pub fn render_layers_window(
                         if project.active_layer == idx { project.active_layer = idx - 1; }
                         else if project.active_layer == idx - 1 { project.active_layer = idx; }
                         project.save();
+                        *request_history_push = Some("Reorder Layer".into());
                     }
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_delete {
@@ -529,6 +535,7 @@ pub fn render_layers_window(
                     }
                     project.selected_object = None;
                     project.save();
+                    *request_history_push = Some("Delete Object".into());
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_clone {
                     match obj_type {
@@ -579,6 +586,7 @@ pub fn render_layers_window(
                             project.layers[l_idx].text_annotations.push(cloned);
                         }
                     }
+                    *request_history_push = Some("Duplicate Object".into());
                 }
                 if let Some((l_idx, obj_type, o_idx)) = object_to_select {
                     project.active_layer = l_idx;
@@ -592,6 +600,7 @@ pub fn render_layers_window(
                             if new_idx != o_idx { 
                                 layer.placed_images.swap(o_idx, new_idx); 
                                 project.selected_object = Some(SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: new_idx });
+                                *request_history_push = Some("Reorder Object".into());
                             }
                         }
                         ObjectType::Text => {
@@ -599,6 +608,7 @@ pub fn render_layers_window(
                             if new_idx != o_idx { 
                                 layer.text_annotations.swap(o_idx, new_idx); 
                                 project.selected_object = Some(SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: new_idx });
+                                *request_history_push = Some("Reorder Object".into());
                             }
                         }
                         ObjectType::Stroke => {
@@ -606,6 +616,7 @@ pub fn render_layers_window(
                             if new_idx != o_idx { 
                                 layer.strokes.swap(o_idx, new_idx); 
                                 project.selected_object = Some(SelectedObject { layer_idx: l_idx, object_type: obj_type, object_idx: new_idx });
+                                *request_history_push = Some("Reorder Object".into());
                             }
                         }
                     }
@@ -640,6 +651,7 @@ pub fn render_layers_window(
                             if project.layers.is_empty() { project.layers.push(crate::project::Layer::new("Layer 1")); }
                             project.active_layer = project.active_layer.min(project.layers.len().saturating_sub(1));
                             project.save();
+                            *request_history_push = Some("Delete Layer".into());
                         }
                         close = true;
                     }

@@ -1451,6 +1451,7 @@ pub fn render_tool_options(
                     ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
                 }
                 project.selected_object = None;
+                *request_history_push = Some("Delete Object".into());
             }
         }
         Tool::Embed => {

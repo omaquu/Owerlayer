@@ -455,6 +455,61 @@ pub fn transform_point_complex(p: egui::Pos2, center: egui::Pos2, rotation: f32,
     center + egui::vec2(px * cos - py * sin, py * cos + px * sin)
 }
 
+pub fn transform_point_complex_inv(
+    screen_pos: egui::Pos2,
+    center: egui::Pos2,
+    rotation: f32,
+    skew: egui::Vec2,
+    perspective: [egui::Vec2; 4],
+    initial_rect: egui::Rect,
+    scale: egui::Vec2,
+) -> egui::Pos2 {
+    let size = initial_rect.size();
+    if size.x <= 0.0 || size.y <= 0.0 { return initial_rect.min; }
+
+    let rel_screen = screen_pos - center;
+    let cos = (-rotation).cos();
+    let sin = (-rotation).sin();
+    let target = egui::vec2(rel_screen.x * cos - rel_screen.y * sin, rel_screen.y * cos + rel_screen.x * sin);
+
+    let sx = if scale.x.abs() > 0.001 { scale.x } else { 1.0 };
+    let sy = if scale.y.abs() > 0.001 { scale.y } else { 1.0 };
+    let kx = skew.x;
+    let ky = skew.y;
+    let det = if (1.0 - kx * ky).abs() > 0.001 { 1.0 - kx * ky } else { 1.0 };
+
+    let mut rel_x = (target.x / sx - target.y * kx / sy) / det;
+    let mut rel_y = (target.y / sy - target.x * ky / sx) / det;
+
+    let has_persp = perspective.iter().any(|v| v.x.abs() > 0.001 || v.y.abs() > 0.001);
+    if has_persp {
+        for _ in 0..5 {
+            let p_guess = center + egui::vec2(rel_x, rel_y);
+            let tx = ((p_guess.x - initial_rect.min.x) / size.x).clamp(0.0, 1.0);
+            let ty = ((p_guess.y - initial_rect.min.y) / size.y).clamp(0.0, 1.0);
+
+            let p_offset = 
+                perspective[0] * (1.0 - tx) * (1.0 - ty) + 
+                perspective[1] * tx * (1.0 - ty) +        
+                perspective[2] * (1.0 - tx) * ty +        
+                perspective[3] * tx * ty;
+
+            let cur_x = rel_x * sx + p_offset.x + rel_y * sy * kx;
+            let cur_y = rel_y * sy + p_offset.y + rel_x * sx * ky;
+
+            let err_x = target.x - cur_x;
+            let err_y = target.y - cur_y;
+
+            if err_x.abs() < 0.01 && err_y.abs() < 0.01 { break; }
+
+            rel_x += (err_x / sx - err_y * kx / sy) / det;
+            rel_y += (err_y / sy - err_x * ky / sx) / det;
+        }
+    }
+
+    center + egui::vec2(rel_x, rel_y)
+}
+
 pub fn apply_mesh_filters(mesh: &mut egui::Mesh, grayscale: bool, invert: bool, sepia: bool, glow: bool, glow_strength: f32) {
     if !grayscale && !invert && !sepia && !glow { return; }
     for v in &mut mesh.vertices {

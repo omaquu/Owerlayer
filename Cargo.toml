@@ -1,8 +1,9 @@
 [package]
 name = "owerlayer"
-version = "0.21.0-alpha"
+version = "0.22.6"
+authors = ["omaquu"]
 edition = "2021"
-description = "Lightweight transparent screen overlay for drawing and annotations"
+description = "Lightweight transparent screen overlay for drawing and annotations (c) omaquu 2026"
 
 [dependencies]
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow"] }

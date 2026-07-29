@@ -1016,7 +1016,13 @@ impl eframe::App for OwerlayerApp {
                             self.project.layers[target_layer_idx].text_annotations.push(ann);
                             self.project.layers[target_layer_idx].expanded = true;
                         }
-                        self.history.push(&self.project, format!("Text: {}", text_str));
+                        let clean_text = text_str.replace('\n', " ");
+                        let display_text = if clean_text.chars().count() > 15 {
+                            format!("{}...", clean_text.chars().take(15).collect::<String>())
+                        } else {
+                            clean_text
+                        };
+                        self.history.push(&self.project, format!("Text: \"{}\"", display_text));
                     }
                 }
                 if !self.current_stroke.is_empty() {
@@ -1081,6 +1087,7 @@ impl eframe::App for OwerlayerApp {
                         if !p.buffer.is_empty() {
                             let text_str = p.buffer.clone();
                             let is_edit = p.original.is_some();
+                            let orig_text_for_history = p.original.as_ref().map(|o| o.text.replace('\n', " "));
                             let mut ann = if let Some(mut orig) = p.original {
                                 orig.text = text_str.clone();
                                 orig.position = p.position;
@@ -1110,6 +1117,24 @@ impl eframe::App for OwerlayerApp {
                             let is_locked = target_layer_idx < self.project.layers.len() && self.project.layers[target_layer_idx].locked;
                             let ask_mode = self.settings.auto_new_layer.is_none();
                             
+                            let clean_text = text_str.replace('\n', " ");
+                            let display_text = if clean_text.chars().count() > 15 {
+                                format!("{}...", clean_text.chars().take(15).collect::<String>())
+                            } else {
+                                clean_text
+                            };
+                            let label = if is_edit {
+                                let orig_raw = orig_text_for_history.unwrap_or_default();
+                                let display_orig = if orig_raw.chars().count() > 10 {
+                                    format!("{}...", orig_raw.chars().take(10).collect::<String>())
+                                } else {
+                                    orig_raw
+                                };
+                                format!("Text: \"{}\" -> \"{}\"", display_orig, display_text)
+                            } else {
+                                format!("Text: \"{}\"", display_text)
+                            };
+
                             if is_edit {
                                 if target_layer_idx < self.project.layers.len() {
                                     self.project.layers[target_layer_idx].text_annotations.push(ann);
@@ -1121,7 +1146,7 @@ impl eframe::App for OwerlayerApp {
                                     });
                                     self.project.layers[target_layer_idx].expanded = true;
                                 }
-                                self.history.push(&self.project, format!("Text: {}", text_str));
+                                self.history.push(&self.project, label);
                                 self.project.save();
                             } else if is_locked || ask_mode {
                                 self.pending_text_to_add = Some(ann);
@@ -1137,7 +1162,7 @@ impl eframe::App for OwerlayerApp {
                                     });
                                     self.project.layers[target_layer_idx].expanded = true;
                                 }
-                                self.history.push(&self.project, format!("Text: {}", text_str));
+                                self.history.push(&self.project, label);
                                 self.project.save();
                             }
                         }
@@ -1391,11 +1416,23 @@ impl eframe::App for OwerlayerApp {
                     self.show_debug_window = !self.show_debug_window;
                 }
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
+            if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
                 if self.project.marquee_selection.is_some() {
                     crate::tools::cut::erase_marquee_selection(&mut self.project, &self.settings);
                     self.history.push(&self.project, "Erase Selection");
                     self.project.save();
+                } else if let Some(sel) = self.project.selected_object {
+                    if sel.layer_idx < self.project.layers.len() {
+                        let layer = &mut self.project.layers[sel.layer_idx];
+                        match sel.object_type {
+                            ObjectType::Image => { if sel.object_idx < layer.placed_images.len() { layer.placed_images.remove(sel.object_idx); } }
+                            ObjectType::Stroke => { if sel.object_idx < layer.strokes.len() { layer.strokes.remove(sel.object_idx); } }
+                            ObjectType::Text => { if sel.object_idx < layer.text_annotations.len() { layer.text_annotations.remove(sel.object_idx); } }
+                        }
+                        self.project.selected_object = None;
+                        self.history.push(&self.project, "Delete Object");
+                        self.project.save();
+                    }
                 }
             }
         }
@@ -1494,7 +1531,7 @@ impl eframe::App for OwerlayerApp {
             }
             if self.show_layers_panel && self.edit_mode {
                 // println!("DEBUG: Rendering Layers window");
-                render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.active_tool, &mut self.show_layers_panel, &mut self.filters_open, &mut self.load_picker_open);
+                render_layers_window(ctx, &mut self.project, &mut self.settings, &mut self.active_tool, &mut self.show_layers_panel, &mut self.filters_open, &mut self.load_picker_open, &mut self.request_history_push);
             }
             if self.show_history_panel && self.edit_mode {
                 if let Some(snap) = ui::history_menu::render_history_window(ctx, &mut self.history, &mut self.show_history_panel, &mut self.settings) {
@@ -2274,6 +2311,31 @@ impl eframe::App for OwerlayerApp {
 }
 
 fn main() -> eframe::Result<()> {
+    // Crash log: write panic info to a file next to the executable
+    std::panic::set_hook(Box::new(|info| {
+        let log_path = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("owerlayer_crash.log")))
+            .unwrap_or_else(|| std::path::PathBuf::from("owerlayer_crash.log"));
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut msg = format!("[Crash at timestamp {}]\n", timestamp);
+        if let Some(loc) = info.location() {
+            msg.push_str(&format!("Location: {}:{}:{}\n", loc.file(), loc.line(), loc.column()));
+        }
+        msg.push_str(&format!("Info: {}\n", info));
+        msg.push_str(&format!("Thread: {:?}\n\n", std::thread::current().name()));
+        // Append to log file
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            let _ = f.write_all(msg.as_bytes());
+        }
+        // Also print to stderr
+        eprintln!("{}", msg);
+    }));
+
     let settings = Settings::load();
     let (sw, sh) = winapi_utils::get_screen_size(settings.multi_monitor);
     let (vx, vy) = if settings.multi_monitor {

@@ -208,21 +208,23 @@ pub fn update(ctx: &mut ToolContext) {
         };
 
         if settings.eraser_mode == EraserMode::Stroke {
-            let mut s_idx = 0;
+            let initial_strokes_len = layer.strokes.len();
             layer.strokes.retain(|s| {
-                let idx = s_idx;
-                s_idx += 1;
                 if let Some(sel) = project.selected_object {
-                    if sel == (SelectedObject { layer_idx: active_layer_idx, object_type: ObjectType::Stroke, object_idx: idx }) {
+                    if sel == (SelectedObject { layer_idx: active_layer_idx, object_type: ObjectType::Stroke, object_idx: 0 }) {
                         !hit_test(s)
                     } else {
-                        true // Keep other objects
+                        true // Keep other strokes
                     }
                 } else {
                     !hit_test(s) // No selection: erase anything
                 }
             });
+            if layer.strokes.len() != initial_strokes_len {
+                ctx.ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("eraser_modified"), true));
+            }
 
+            let initial_img_len = layer.placed_images.len();
             let mut img_idx = 0;
             layer.placed_images.retain(|img| {
                 let idx = img_idx;
@@ -244,6 +246,9 @@ pub fn update(ctx: &mut ToolContext) {
                     true // Keep drawing canvases; they will be pixel-erased below
                 }
             });
+            if layer.placed_images.len() != initial_img_len {
+                ctx.ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("eraser_modified"), true));
+            }
 
             // In Stroke mode: touching the anchor point of a text annotation deletes it
             let mut to_remove = Vec::new();
@@ -261,6 +266,9 @@ pub fn update(ctx: &mut ToolContext) {
                     };
                     if hit { to_remove.push(i); }
                 }
+            }
+            if !to_remove.is_empty() {
+                ctx.ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("eraser_modified"), true));
             }
             for i in to_remove.into_iter().rev() {
                 layer.text_annotations.remove(i);
@@ -362,86 +370,204 @@ pub fn update(ctx: &mut ToolContext) {
 
             if overlaps {
                 let mut modified = false;
-                if img.mask.is_none() {
-                    img.mask = Some(vec![255; img.size[0] * img.size[1]]);
+                if img.mask.is_none() && img.size[0] > 0 && img.size[1] > 0 {
+                    let mut new_mask = vec![255u8; img.size[0] * img.size[1]];
+                    if let Some(ref pts) = img.snip_points {
+                        let w = img.size[0];
+                        let h = img.size[1];
+                        let max_x = pts.iter().fold(0.0f32, |acc, p| if !p.x.is_nan() { acc.max(p.x) } else { acc }).max(1.0);
+                        let max_y = pts.iter().fold(0.0f32, |acc, p| if !p.y.is_nan() { acc.max(p.y) } else { acc }).max(1.0);
+                        for y in 0..h {
+                            for x in 0..w {
+                                let px = (x as f32 / w as f32) * max_x;
+                                let py = (y as f32 / h as f32) * max_y;
+                                if !crate::utils::is_inside_poly(pts, egui::pos2(px, py)) {
+                                    new_mask[y * w + x] = 0;
+                                }
+                            }
+                        }
+                    }
+                    img.mask = Some(new_mask);
                     img.mask_size = Some(img.size);
                 }
                 
-                let scale_x = img.size[0] as f32 / disp_w;
-                let scale_y = img.size[1] as f32 / disp_h;
-                
-                // Compute inverse transform to get local mouse position (lx, ly)
-                let rel_world = pos - center;
-                let cos = img.rotation.cos();
-                let sin = img.rotation.sin();
-                let px_rot = rel_world.x * cos + rel_world.y * sin;
-                let py_rot = rel_world.y * cos - rel_world.x * sin;
-                
-                let mut sx = img.scale.x;
-                let mut sy = img.scale.y;
-                if img.flipped_h { sx *= -1.0; }
-                if img.flipped_v { sy *= -1.0; }
-                
-                let kx = img.skew.x;
-                let ky = img.skew.y;
-                let det = 1.0 - kx * ky;
-                let (rel_x, rel_y) = if det.abs() > 0.001 && sx.abs() > 0.001 && sy.abs() > 0.001 {
-                    ((px_rot - py_rot * kx) / (sx * det), (py_rot - px_rot * ky) / (sy * det))
-                } else {
-                    (px_rot / sx.max(0.001), py_rot / sy.max(0.001))
-                };
-                
-                let base_p = center + egui::vec2(rel_x, rel_y);
-                let lx = (base_p.x - img.position.x) * scale_x;
-                let ly = (base_p.y - img.position.y) * scale_y;
-                
-                if lx.is_nan() || ly.is_nan() || lx.is_infinite() || ly.is_infinite() {
-                    continue;
-                }
-                
-                // Detailed candidate pixel range based on brush radius mapped to local space
-                let r_local_x = (r * scale_x / max_scale_factor) * 2.0;
-                let r_local_y = (r * scale_y / max_scale_factor) * 2.0;
-                
-                let min_px = (((lx - r_local_x).floor() as i32).max(0) as usize).min(img.size[0]);
-                let max_px = (((lx + r_local_x).ceil() as i32).max(0) as usize).min(img.size[0]);
-                let min_py = (((ly - r_local_y).floor() as i32).max(0) as usize).min(img.size[1]);
-                let max_py = (((ly + r_local_y).ceil() as i32).max(0) as usize).min(img.size[1]);
+                let scale_x = img.size[0] as f32 / disp_w.max(1.0);
+                let scale_y = img.size[1] as f32 / disp_h.max(1.0);
 
                 let img_rect = egui::Rect::from_min_size(img.position, egui::vec2(disp_w, disp_h));
                 let mut draw_scale = img.scale;
                 if img.flipped_h { draw_scale.x *= -1.0; }
                 if img.flipped_v { draw_scale.y *= -1.0; }
 
-                for py in min_py..max_py {
-                    for px in min_px..max_px {
-                        let px_norm = px as f32 / img.size[0] as f32;
-                        let py_norm = py as f32 / img.size[1] as f32;
-                        let p_local = img.position + egui::vec2(px_norm * disp_w, py_norm * disp_h);
-                        
-                        // Map pixel local coordinate back to screen space using full forward transform
-                        let pixel_screen_pos = crate::utils::transform_point_complex(
-                            p_local,
-                            center,
-                            img.rotation,
-                            img.skew,
-                            img.perspective,
-                            img_rect,
-                            draw_scale
-                        );
-                        
-                        let erase_hit = if settings.brush_shape == BrushShape::Square {
-                            (pixel_screen_pos.x - pos.x).abs() <= r && (pixel_screen_pos.y - pos.y).abs() <= r
-                        } else {
-                            pixel_screen_pos.distance(pos) < r
-                        };
-                        
-                        if erase_hit {
-                            if img.mask.is_none() && img.size[0] > 0 && img.size[1] > 0 {
-                                img.mask = Some(vec![255u8; img.size[0] * img.size[1]]);
-                                img.mask_size = Some(img.size);
-                            }
+                // Check hit on placed image destination rect OR source rect (if source rect shown)
+                let mut target_hits: Vec<(usize, usize)> = Vec::new();
 
+                // 1. Placed Image Hit
+                let local_p = crate::utils::transform_point_complex_inv(
+                    pos,
+                    center,
+                    img.rotation,
+                    img.skew,
+                    img.perspective,
+                    img_rect,
+                    draw_scale,
+                );
+                let lx = (local_p.x - img.position.x) * scale_x;
+                let ly = (local_p.y - img.position.y) * scale_y;
+
+                if !lx.is_nan() && !ly.is_nan() && !lx.is_infinite() && !ly.is_infinite() {
+                    let r_local_x = (r * scale_x / max_scale_factor) * 2.0;
+                    let r_local_y = (r * scale_y / max_scale_factor) * 2.0;
+                    let min_px = (((lx - r_local_x).floor() as i32).max(0) as usize).min(img.size[0]);
+                    let max_px = (((lx + r_local_x).ceil() as i32).max(0) as usize).min(img.size[0]);
+                    let min_py = (((ly - r_local_y).floor() as i32).max(0) as usize).min(img.size[1]);
+                    let max_py = (((ly + r_local_y).ceil() as i32).max(0) as usize).min(img.size[1]);
+
+                    for py in min_py..max_py {
+                        for px in min_px..max_px {
+                            let px_norm = px as f32 / img.size[0] as f32;
+                            let py_norm = py as f32 / img.size[1] as f32;
+                            let p_local = img.position + egui::vec2(px_norm * disp_w, py_norm * disp_h);
+                            let pixel_screen_pos = crate::utils::transform_point_complex(
+                                p_local,
+                                center,
+                                img.rotation,
+                                img.skew,
+                                img.perspective,
+                                img_rect,
+                                draw_scale,
+                            );
+                            let erase_hit = if settings.brush_shape == BrushShape::Square {
+                                (pixel_screen_pos.x - pos.x).abs() <= r && (pixel_screen_pos.y - pos.y).abs() <= r
+                            } else {
+                                pixel_screen_pos.distance(pos) < r
+                            };
+                            if erase_hit {
+                                target_hits.push((px, py));
+                            }
+                        }
+                    }
+                }
+
+                // 2. Source Rect Hit (if source rect is shown)
+                if img.show_source_rect && img.source_rect.is_some() {
+                    let src = img.source_rect.unwrap();
+                    let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
+                    let src_center = src_rect.center();
+                    let src_local_p = crate::utils::transform_point_complex_inv(
+                        pos,
+                        src_center,
+                        img.source_rotation,
+                        img.source_skew,
+                        img.source_perspective,
+                        src_rect,
+                        img.source_scale,
+                    );
+                    if src_rect.contains(src_local_p) {
+                        let src_scale_x = img.size[0] as f32 / src[2].max(1.0);
+                        let src_scale_y = img.size[1] as f32 / src[3].max(1.0);
+                        let src_lx = (src_local_p.x - src_rect.min.x) * src_scale_x;
+                        let src_ly = (src_local_p.y - src_rect.min.y) * src_scale_y;
+                        let r_src_x = r * src_scale_x;
+                        let r_src_y = r * src_scale_y;
+                        let s_min_x = (((src_lx - r_src_x).floor() as i32).max(0) as usize).min(img.size[0]);
+                        let s_max_x = (((src_lx + r_src_x).ceil() as i32).max(0) as usize).min(img.size[0]);
+                        let s_min_y = (((src_ly - r_src_y).floor() as i32).max(0) as usize).min(img.size[1]);
+                        let s_max_y = (((src_ly + r_src_y).ceil() as i32).max(0) as usize).min(img.size[1]);
+                        for py in s_min_y..s_max_y {
+                            for px in s_min_x..s_max_x {
+                                target_hits.push((px, py));
+                            }
+                        }
+                    }
+                }
+
+                if !target_hits.is_empty() {
+                    if img.mask.is_none() && img.size[0] > 0 && img.size[1] > 0 {
+                        let mut new_mask = vec![255u8; img.size[0] * img.size[1]];
+                        if let Some(ref pts) = img.snip_points {
+                            let w = img.size[0];
+                            let h = img.size[1];
+                            let max_x = pts.iter().fold(0.0f32, |acc, p| if !p.x.is_nan() { acc.max(p.x) } else { acc }).max(1.0);
+                            let max_y = pts.iter().fold(0.0f32, |acc, p| if !p.y.is_nan() { acc.max(p.y) } else { acc }).max(1.0);
+                            for y in 0..h {
+                                for x in 0..w {
+                                    let px = (x as f32 / w as f32) * max_x;
+                                    let py = (y as f32 / h as f32) * max_y;
+                                    if !crate::utils::is_inside_poly(pts, egui::pos2(px, py)) {
+                                        new_mask[y * w + x] = 0;
+                                    }
+                                }
+                            }
+                        }
+                        img.mask = Some(new_mask);
+                        img.mask_size = Some(img.size);
+                    }
+
+                    if settings.eraser_mode == crate::types::EraserMode::Stroke {
+                        // Stroke Eraser: Flood-fill erase connected region starting at hit pixels
+                        for (hit_px, hit_py) in target_hits {
+                            if let Some(ref mut mask) = img.mask {
+                                let m_size = img.mask_size.unwrap_or(img.size);
+                                let start_mx = ((hit_px * m_size[0]) / img.size[0]).min(m_size[0] - 1);
+                                let start_my = ((hit_py * m_size[1]) / img.size[1]).min(m_size[1] - 1);
+                                let start_idx = start_my * m_size[0] + start_mx;
+                                if start_idx < mask.len() && mask[start_idx] != 0 {
+                                    let mut queue = std::collections::VecDeque::new();
+                                    queue.push_back((start_mx, start_my));
+                                    mask[start_idx] = 0;
+                                    modified = true;
+                                    img.mask_dirty = true;
+                                    while let Some((cx, cy)) = queue.pop_front() {
+                                        let neighbors = [
+                                            (cx.wrapping_sub(1), cy),
+                                            (cx + 1, cy),
+                                            (cx, cy.wrapping_sub(1)),
+                                            (cx, cy + 1),
+                                        ];
+                                        for (nx, ny) in neighbors {
+                                            if nx < m_size[0] && ny < m_size[1] {
+                                                let n_idx = ny * m_size[0] + nx;
+                                                if n_idx < mask.len() && mask[n_idx] != 0 {
+                                                    mask[n_idx] = 0;
+                                                    queue.push_back((nx, ny));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !img.is_live && !img.pixels.is_empty() {
+                                let start_idx = hit_py * img.size[0] + hit_px;
+                                if start_idx * 4 + 3 < img.pixels.len() && img.pixels[start_idx * 4 + 3] != 0 {
+                                    let mut queue = std::collections::VecDeque::new();
+                                    queue.push_back((hit_px, hit_py));
+                                    img.pixels[start_idx * 4 + 3] = 0;
+                                    modified = true;
+                                    while let Some((cx, cy)) = queue.pop_front() {
+                                        let neighbors = [
+                                            (cx.wrapping_sub(1), cy),
+                                            (cx + 1, cy),
+                                            (cx, cy.wrapping_sub(1)),
+                                            (cx, cy + 1),
+                                        ];
+                                        for (nx, ny) in neighbors {
+                                            if nx < img.size[0] && ny < img.size[1] {
+                                                let n_idx = ny * img.size[0] + nx;
+                                                let b_idx = n_idx * 4;
+                                                if b_idx + 3 < img.pixels.len() && img.pixels[b_idx + 3] != 0 {
+                                                    img.pixels[b_idx + 3] = 0;
+                                                    queue.push_back((nx, ny));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Pixel Eraser: Zero out specific hit pixels
+                        for (px, py) in target_hits {
                             if let Some(ref mut mask) = img.mask {
                                 let m_size = img.mask_size.unwrap_or(img.size);
                                 if m_size[0] > 0 && m_size[1] > 0 && img.size[0] > 0 && img.size[1] > 0 {
@@ -466,10 +592,12 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                     }
                 }
+
                 if modified {
                     img.clear_texture();
                     img.cached_mask_outline = None;
                     img.mask_dirty = true;
+                    ctx.ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("eraser_modified"), true));
                 }
             }
         }
@@ -481,7 +609,11 @@ pub fn update(ctx: &mut ToolContext) {
                 crate::tools::brush::crop_to_content(img);
             }
         }
-        *ctx.request_history_push = Some("Erase".into());
+        let was_modified: bool = ctx.ui.ctx().memory_mut(|m| m.data.get_temp(egui::Id::new("eraser_modified"))).unwrap_or(false);
+        if was_modified {
+            *ctx.request_history_push = Some("Erase".into());
+            ctx.ui.ctx().memory_mut(|m| m.data.remove_temp::<bool>(egui::Id::new("eraser_modified")));
+        }
     }
 
     // Visual cursor

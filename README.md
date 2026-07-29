@@ -1,26 +1,21 @@
-# Owerlayer 🦉
+# Owerlayer 🦉 (v0.22.6)
 
-Owerlayer is a lightweight, transparent screen overlay application built in Rust, powered by `egui` and hardware-accelerated OpenGL. It allows you to draw, annotate, snip, and overlay live content or shader effects directly over other running applications or games without disrupting your workflow.
+*(c) 2026 omaquu*
+
+Owerlayer is a high-performance, lightweight, transparent screen overlay application built in Rust, powered by `egui` and hardware-accelerated OpenGL. It allows you to draw, annotate, snip live windows, erase, transform, and overlay live content or shader effects directly over other running applications or games without disrupting your workflow.
 
 ---
 
 ## Key Features 🚀
 
-- **Edit Mode Toggle**: Smoothly switch between clicking through the overlay (passthrough mode) and focusing on the overlay to draw or edit (hotkey-activated).
-- **Multi-Layer Annotations**: Create, reorder, group, lock, and hide layers to organize drawings.
-- **Advanced Brushes**:
-  - **Solid / Calligraphy**: High-precision lines with pressure-friendly rendering.
-  - **Highlighter**: Semi-transparent highlighter with adjustable opacity.
-  - **Spray**: Spray brush with adjustable density.
-- **Dynamic Selection & Snipping**:
-  - **Static Snips**: Capture screen regions and place them on the overlay.
-  - **Live Snips**: Capture screen regions in real-time (up to 360 FPS via Windows Graphics Capture, falls back to GDI in Performance mode) to overlay active videos or animations.
-- **Custom Shapes**: Draw Rectangles, Circles, Stars, Hearts, or manual point-to-point Polygons.
-- **Hardware-Accelerated Layer FX**:
-  - **Gaussian Blur, Pixelate, and VHS Glitch**: Apply custom fragment shaders to snips.
-  - **Chromatic Aberration & Antialiasing**: Smooth out borders or apply chromatic offsets.
-  - **Secondary Filters**: Grayscale, Sepia, Invert, Glow, and Shadow effects.
-- **OBS / Capture Friendly**: Easy overlay transparency settings so you can stream or record with clear transparency via Game Capture or Windows Graphics Capture (WGC).
+- **Version 0.22.6 Suite**:
+  - **Live & Desktop Snips**: Capture screen regions or desktop windows in real-time (up to 360 FPS) with marching ants outlines.
+  - **Selected Source Outlines**: Source rect marching ants outlines display only when the snip object is actively selected.
+  - **Interactive Source Resizing & Erasing**: Erase directly over source rectangles or snip images using pixel or connected flood-fill stroke eraser.
+  - **Perspective & Inverse Mapping**: Real-time inverse quad perspective mapping ensures erasing and handle transforms align 100% with screen pixels.
+  - **Multi-Layer Architecture & History**: Full action history tracking for layers, objects, text edits, and stroke modifications with non-blocking single-line history entries.
+  - **Custom Photoshop-Style Toolbar**: Dedicated Main Color & Foreground Color pickers with integrated eyedroppers, transform reset, and source reset tools.
+  - **Hardware-Accelerated Layer FX**: Custom OpenGL fragment shaders including Gaussian Blur, Pixelate, VHS Glitch, Chromatic Aberration, Glow, Grayscale, Invert, Sepia, and Drop Shadows.
 
 ---
 
@@ -32,45 +27,20 @@ Owerlayer is a lightweight, transparent screen overlay application built in Rust
 | `Ctrl + Z` | Undo |
 | `Ctrl + Y` | Redo |
 | `Ctrl + S` | Save current project state |
+| `Delete` / `Backspace` | Erase active marquee selection or delete selected object |
 | `Escape` | Cancel active drawing / marquee selection / text editing |
 | `Enter` / `Right-Click` | Finalize custom Poly Blur or Poly Shape path |
 
 ---
 
-## Building from Source 🛠️
+## Building & GitHub Releases 🛠️
 
-Ensure you have [Rust and Cargo](https://rustup.rs/) installed on your system.
+Automated Windows `.exe` builds are compiled via GitHub Actions on every commit to `main`.
 
-1. Clone the repository:
-   ```powershell
-   git clone https://github.com/omaquu/Owerlayer.git
-   cd Owerlayer
-   ```
-
-2. Compile the application in Release mode:
-   ```powershell
-   cargo build --release
-   ```
-
-3. Run the compiled binary:
-   ```powershell
-   ./target/release/owerlayer.exe
-   ```
-
----
-
-## CI/CD Release Pipeline ⚙️
-
-This repository has a built-in **GitHub Actions Release Pipeline** (`.github/workflows/release.yml`) that triggers automatically:
-- On every **push to `main`**: Compiles the code and uploads the Windows executable as a build artifact.
-- On **pushing tags** (e.g. `v0.17.0`): Compiles the binary, packages it, and automatically publishes a GitHub Release containing the standalone `owerlayer.exe` binary.
-
----
-
-## Known Issues ⚠️
-
-- **Widget Resizing**: Resizing widgets is currently buggy.
-- **Deleting Widgets**: Deleting a widget crashes the application.
-- **Lasso Marching Ants**: Marching ants outline for the Lasso tool is not fully connected.
-- **Source Perspective Resizing**: When changing the perspective of the source, the object is not being resized to fit the new perspective.
-
+To build locally:
+```powershell
+git clone https://github.com/omaquu/Owerlayer.git
+cd Owerlayer
+cargo build --release
+```
+The compiled executable will be located at `target/release/owerlayer.exe`.

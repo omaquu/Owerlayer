@@ -512,6 +512,12 @@ pub fn update(ctx: &mut ToolContext) {
                             project.layers.last_mut().unwrap().placed_images.push(snip);
                             project.layers.last_mut().unwrap().expanded = true;
                         }
+                        let act_idx = project.active_layer;
+                        if let Some(l) = project.layers.get(act_idx) {
+                            if !l.placed_images.is_empty() {
+                                project.selected_object = Some(SelectedObject { layer_idx: act_idx, object_type: ObjectType::Image, object_idx: l.placed_images.len() - 1 });
+                            }
+                        }
                         *ctx.request_history_push = Some("Snip".into());
                     }
                     Some(false) => {
@@ -536,10 +542,30 @@ pub fn update(ctx: &mut ToolContext) {
                                 });
                             }
                         }
-                        if let Some(layer) = project.get_active_layer_mut() { layer.expanded = true; }
+                        {
+                            let act_idx = project.active_layer;
+                            let mut img_count = 0usize;
+                            if let Some(layer) = project.get_active_layer_mut() {
+                                layer.expanded = true;
+                                img_count = layer.placed_images.len();
+                            }
+                            if img_count > 0 {
+                                project.selected_object = Some(SelectedObject { layer_idx: act_idx, object_type: ObjectType::Image, object_idx: img_count - 1 });
+                            }
+                        }
                         *ctx.request_history_push = Some("Snip".into());
                     }
                     None => {
+                        {
+                            let act_idx = project.active_layer;
+                            let mut img_count = 0usize;
+                            if let Some(layer) = project.get_active_layer_mut() {
+                                img_count = layer.placed_images.len();
+                            }
+                            if img_count > 0 {
+                                project.selected_object = Some(SelectedObject { layer_idx: act_idx, object_type: ObjectType::Image, object_idx: img_count - 1 });
+                            }
+                        }
                         if let Some(layer) = project.get_active_layer_mut() {
                             if let Some(snip) = layer.placed_images.last() {
                                 let snip_clone = snip.clone();

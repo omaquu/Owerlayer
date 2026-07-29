@@ -1736,7 +1736,7 @@ pub fn render_canvas(
                     } else {
                         false
                     };
-                    if img.show_source_rect && img.source_rect.is_some() {
+                    if is_selected && img.show_source_rect && img.source_rect.is_some() {
                         has_show_source = true;
                         let src = img.source_rect.unwrap();
                         let src_rect = egui::Rect::from_min_size(egui::pos2(src[0], src[1]), egui::vec2(src[2], src[3]));
