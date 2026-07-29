@@ -58,6 +58,10 @@ pub struct Layer {
     pub chromatic_aberration: f32,
     #[serde(default)]
     pub antialias: bool,
+    #[serde(default)]
+    pub antialias_outline: bool,
+    #[serde(default)]
+    pub antialias_shadow: bool,
 }
 
 fn default_shadow_offset() -> [f32; 2] { [2.0, 2.0] }
@@ -100,6 +104,8 @@ impl Layer {
             lock_prompt_choice: None,
             chromatic_aberration: 0.0,
             antialias: false,
+            antialias_outline: false,
+            antialias_shadow: true,
         }
     }
 }

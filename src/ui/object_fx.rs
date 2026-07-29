@@ -222,7 +222,10 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                             ui.label("Chromatic Aberration:");
                             ui.add(egui::Slider::new(&mut $obj.chromatic_aberration, 0.0..=20.0));
                         });
-                        ui.checkbox(&mut $obj.antialias, "Antialias Edges");
+                        section_heading(ui, "Antialiasing & Smoothing", accent);
+                        ui.checkbox(&mut $obj.antialias, "Antialias Main Edges");
+                        ui.checkbox(&mut $obj.antialias_outline, "Antialias Outline");
+                        ui.checkbox(&mut $obj.antialias_shadow, "Antialias Drop Shadow");
                     };
                 }
 
@@ -248,32 +251,9 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 if img.gif_recorder.is_recording {
                                     if ui.button("⏹ Stop & Save GIF").clicked() {
                                         img.gif_recorder.is_recording = false;
-                                        img.gif_recorder.status = "Saved to Snips folder".into();
+                                        img.gif_recorder.status = "Save dialog opened".into();
                                         let frames_to_encode = std::mem::take(&mut img.gif_recorder.frames);
-                                        std::thread::spawn(move || {
-                                            let timestamp = std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .map(|d| d.as_secs())
-                                                .unwrap_or(0);
-                                            if let Some(mut dir) = directories::UserDirs::new().and_then(|u| u.picture_dir().map(|p| p.to_path_buf())) {
-                                                dir.push("Owerlayer");
-                                                dir.push("Snips");
-                                                let _ = std::fs::create_dir_all(&dir);
-                                                let gif_path = dir.join(format!("snip_{}.gif", timestamp));
-                                                if let Ok(file) = std::fs::File::create(&gif_path) {
-                                                    use image::codecs::gif::{GifEncoder, Repeat};
-                                                    use image::{Frame, Delay, RgbaImage};
-                                                    let mut encoder = GifEncoder::new_with_speed(file, 10);
-                                                    let _ = encoder.set_repeat(Repeat::Infinite);
-                                                    for (px, sz) in frames_to_encode {
-                                                        if let Some(rgba) = RgbaImage::from_raw(sz[0] as u32, sz[1] as u32, px) {
-                                                            let frame = Frame::from_parts(rgba, 0, 0, Delay::from_numer_denom_ms(100, 1));
-                                                            let _ = encoder.encode_frame(frame);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        });
+                                        crate::utils::save_gif_recording(frames_to_encode);
                                     }
                                 } else {
                                     ui.horizontal(|ui| {

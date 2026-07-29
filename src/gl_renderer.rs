@@ -120,20 +120,25 @@ impl GLRenderer {
                         color.b = cb;
                     }
 
-                    // Edge antialiasing
+                    // Edge antialiasing (includes mask / erased shape boundaries)
                     if (u_antialias != 0) {
                         vec2 px = 1.0 / u_resolution;
-                        float a0 = color.a;
-                        float a1 = sample_tex(u_sampler, uv + vec2(px.x, 0.0)).a;
-                        float a2 = sample_tex(u_sampler, uv - vec2(px.x, 0.0)).a;
-                        float a3 = sample_tex(u_sampler, uv + vec2(0.0, px.y)).a;
-                        float a4 = sample_tex(u_sampler, uv - vec2(0.0, px.y)).a;
+                        float mask_cur = (u_has_mask != 0) ? sample_tex(u_mask, uv).r : 1.0;
+                        float a0 = color.a * mask_cur;
+                        
+                        float a1 = sample_tex(u_sampler, uv + vec2(px.x, 0.0)).a * ((u_has_mask != 0) ? sample_tex(u_mask, uv + vec2(px.x, 0.0)).r : 1.0);
+                        float a2 = sample_tex(u_sampler, uv - vec2(px.x, 0.0)).a * ((u_has_mask != 0) ? sample_tex(u_mask, uv - vec2(px.x, 0.0)).r : 1.0);
+                        float a3 = sample_tex(u_sampler, uv + vec2(0.0, px.y)).a * ((u_has_mask != 0) ? sample_tex(u_mask, uv + vec2(0.0, px.y)).r : 1.0);
+                        float a4 = sample_tex(u_sampler, uv - vec2(0.0, px.y)).a * ((u_has_mask != 0) ? sample_tex(u_mask, uv - vec2(0.0, px.y)).r : 1.0);
+                        
                         float avg_a = (a0 + a1 + a2 + a3 + a4) / 5.0;
-                        // Only smooth edges (where alpha varies across neighbors)
                         float edge = abs(a0 - avg_a);
-                        if (edge > 0.01) {
-                            color.a = mix(a0, avg_a, 0.5);
-                            color.rgb *= color.a / max(a0, 0.001);
+                        if (edge > 0.005) {
+                            float smoothed = mix(a0, avg_a, 0.7);
+                            color.a = smoothed;
+                            if (a0 > 0.001) {
+                                color.rgb *= (smoothed / a0);
+                            }
                         }
                     }
 

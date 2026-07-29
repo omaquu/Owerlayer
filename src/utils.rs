@@ -517,13 +517,12 @@ pub fn apply_mesh_filters(mesh: &mut egui::Mesh, grayscale: bool, invert: bool, 
     }
 }
 
-pub fn apply_color_effects(mut color: egui::Color32, grayscale: bool, invert: bool, sepia: bool, glow: bool, glow_strength: f32) -> egui::Color32 {
+pub fn apply_color_effects(color: egui::Color32, grayscale: bool, invert: bool, sepia: bool, _glow: bool, _glow_strength: f32) -> egui::Color32 {
     if color.a() == 0 { return color; }
-    let a_f32 = color.a() as f32 / 255.0;
 
-    let mut r = (color.r() as f32 / 255.0) / a_f32;
-    let mut g = (color.g() as f32 / 255.0) / a_f32;
-    let mut b = (color.b() as f32 / 255.0) / a_f32;
+    let mut r = color.r() as f32 / 255.0;
+    let mut g = color.g() as f32 / 255.0;
+    let mut b = color.b() as f32 / 255.0;
 
     if grayscale {
         let gray = 0.299 * r + 0.587 * g + 0.114 * b;
@@ -538,12 +537,13 @@ pub fn apply_color_effects(mut color: egui::Color32, grayscale: bool, invert: bo
         let tb = (r * 0.272) + (g * 0.534) + (b * 0.131);
         r = tr.min(1.0); g = tg.min(1.0); b = tb.min(1.0);
     }
-    
-    r = (r * a_f32).clamp(0.0, 1.0);
-    g = (g * a_f32).clamp(0.0, 1.0);
-    b = (b * a_f32).clamp(0.0, 1.0);
 
-    egui::Color32::from_rgba_premultiplied((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, color.a())
+    egui::Color32::from_rgba_unmultiplied(
+        (r * 255.0).clamp(0.0, 255.0) as u8,
+        (g * 255.0).clamp(0.0, 255.0) as u8,
+        (b * 255.0).clamp(0.0, 255.0) as u8,
+        color.a()
+    )
 }
 
 pub fn trace_boundary(visited: &[bool], w: i32, h: i32, start_x: i32, start_y: i32) -> Vec<(i32, i32)> {
@@ -977,6 +977,30 @@ pub fn export_image_object_as_png(img: &crate::types::PlacedImage) {
         {
             if let Some(img_buf) = image::RgbaImage::from_raw(w as u32, h as u32, rgba_out) {
                 let _ = img_buf.save(path);
+            }
+        }
+    });
+}
+
+pub fn save_gif_recording(frames: Vec<(Vec<u8>, [usize; 2])>) {
+    if frames.is_empty() { return; }
+    std::thread::spawn(move || {
+        if let Some(gif_path) = rfd::FileDialog::new()
+            .add_filter("GIF Animation", &["gif"])
+            .set_file_name("live_snip.gif")
+            .save_file()
+        {
+            if let Ok(file) = std::fs::File::create(&gif_path) {
+                use image::codecs::gif::{GifEncoder, Repeat};
+                use image::{Frame, Delay, RgbaImage};
+                let mut encoder = GifEncoder::new_with_speed(file, 10);
+                let _ = encoder.set_repeat(Repeat::Infinite);
+                for (px, sz) in frames {
+                    if let Some(rgba) = RgbaImage::from_raw(sz[0] as u32, sz[1] as u32, px) {
+                        let frame = Frame::from_parts(rgba, 0, 0, Delay::from_numer_denom_ms(100, 1));
+                        let _ = encoder.encode_frame(frame);
+                    }
+                }
             }
         }
     });

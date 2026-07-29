@@ -783,6 +783,10 @@ pub struct PlacedImage {
     #[serde(default)]
     pub antialias: bool,
     #[serde(default)]
+    pub antialias_outline: bool,
+    #[serde(default = "default_true")]
+    pub antialias_shadow: bool,
+    #[serde(default)]
     pub eraser_apply_to_source: Option<bool>,
     #[serde(default)]
     pub source_rotation: f32,
@@ -863,6 +867,8 @@ impl Clone for PlacedImage {
             texture_version: self.texture_version,
             chromatic_aberration: self.chromatic_aberration,
             antialias: self.antialias,
+            antialias_outline: self.antialias_outline,
+            antialias_shadow: self.antialias_shadow,
             eraser_apply_to_source: self.eraser_apply_to_source,
             source_rotation: self.source_rotation,
             source_skew: self.source_skew,
@@ -940,6 +946,8 @@ impl PlacedImage {
             texture_version: 0,
             chromatic_aberration: 0.0,
             antialias: false,
+            antialias_outline: false,
+            antialias_shadow: true,
             eraser_apply_to_source: None,
             source_rotation: 0.0,
             source_skew: egui::Vec2::ZERO,
@@ -1468,3 +1476,6 @@ pub struct PerfDisplayAverages {
     pub thread_total_us: f32,
     pub upload_us: f32,
 }
+
+pub fn default_true() -> bool { true }
+

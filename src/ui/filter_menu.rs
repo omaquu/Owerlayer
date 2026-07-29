@@ -153,7 +153,10 @@ pub fn render_filter_menu(
                     ui.label("Chromatic Aberration:");
                     ui.add(egui::Slider::new(&mut layer.chromatic_aberration, 0.0..=20.0));
                 });
-                ui.checkbox(&mut layer.antialias, "Antialias Edges");
+                section_heading(ui, "Antialiasing & Smoothing", accent);
+                ui.checkbox(&mut layer.antialias, "Antialias Main Edges");
+                ui.checkbox(&mut layer.antialias_outline, "Antialias Outline");
+                ui.checkbox(&mut layer.antialias_shadow, "Antialias Drop Shadow");
 
                 ui.add_space(8.0);
                 if ui.button("Close").clicked() {
