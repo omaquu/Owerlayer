@@ -641,6 +641,31 @@ impl Default for VolumeMixerState {
     }
 }
 
+#[derive(Clone)]
+pub struct GifRecorderState {
+    pub is_recording: bool,
+    pub is_encoding: bool,
+    pub target_duration_secs: u32,
+    pub start_time: Option<std::time::Instant>,
+    pub last_sample_time: Option<std::time::Instant>,
+    pub frames: Vec<(Vec<u8>, [usize; 2])>,
+    pub status: String,
+}
+
+impl Default for GifRecorderState {
+    fn default() -> Self {
+        Self {
+            is_recording: false,
+            is_encoding: false,
+            target_duration_secs: 5,
+            start_time: None,
+            last_sample_time: None,
+            frames: Vec::new(),
+            status: String::new(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct PlacedImage {
     #[serde(default = "default_image_name")]
@@ -751,6 +776,8 @@ pub struct PlacedImage {
     pub calculator_state: Option<CalcState>,
     #[serde(default)]
     pub volume_mixer_state: Option<VolumeMixerState>,
+    #[serde(skip)]
+    pub gif_recorder: GifRecorderState,
     #[serde(default)]
     pub chromatic_aberration: f32,
     #[serde(default)]
@@ -846,6 +873,7 @@ impl Clone for PlacedImage {
             widget_type: self.widget_type,
             calculator_state: self.calculator_state.clone(),
             volume_mixer_state: self.volume_mixer_state.clone(),
+            gif_recorder: self.gif_recorder.clone(),
             transparent_bg: self.transparent_bg,
         }
     }
@@ -854,6 +882,7 @@ impl Clone for PlacedImage {
 impl PlacedImage {
     pub fn new(id: usize, position: egui::Pos2, size: [usize; 2], pixels: Vec<u8>) -> Self {
         Self {
+            gif_recorder: GifRecorderState::default(),
             name: "Image".to_string(),
             id, position, size, pixels,
             display_size: Some([size[0] as f32, size[1] as f32]),

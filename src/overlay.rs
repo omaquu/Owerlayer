@@ -899,6 +899,54 @@ pub fn render_canvas(
                     _capture_thread.update_request(img.id, req);
                     
                     if let Some(res) = _capture_thread.get_frame(img.id) {
+                        if img.gif_recorder.is_recording {
+                            let now = std::time::Instant::now();
+                            let start = *img.gif_recorder.start_time.get_or_insert(now);
+                            let elapsed = now.duration_since(start).as_secs_f32();
+                            let target = img.gif_recorder.target_duration_secs as f32;
+                            
+                            let should_sample = match img.gif_recorder.last_sample_time {
+                                Some(last) => now.duration_since(last).as_millis() >= 100,
+                                None => true,
+                            };
+
+                            if should_sample && elapsed <= target {
+                                img.gif_recorder.last_sample_time = Some(now);
+                                img.gif_recorder.frames.push((res.pixels.clone(), res.size));
+                                img.gif_recorder.status = format!("🔴 Recording: {:.1}s / {}s", elapsed, img.gif_recorder.target_duration_secs);
+                            }
+
+                            if elapsed >= target {
+                                img.gif_recorder.is_recording = false;
+                                img.gif_recorder.status = "Saved to Snips folder".into();
+                                let frames_to_encode = std::mem::take(&mut img.gif_recorder.frames);
+                                std::thread::spawn(move || {
+                                    let timestamp = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_secs())
+                                        .unwrap_or(0);
+                                    if let Some(mut dir) = directories::UserDirs::new().and_then(|u| u.picture_dir().map(|p| p.to_path_buf())) {
+                                        dir.push("Owerlayer");
+                                        dir.push("Snips");
+                                        let _ = std::fs::create_dir_all(&dir);
+                                        let gif_path = dir.join(format!("snip_{}.gif", timestamp));
+                                        if let Ok(file) = std::fs::File::create(&gif_path) {
+                                            use image::codecs::gif::{GifEncoder, Repeat};
+                                            use image::{Frame, Delay, RgbaImage};
+                                            let mut encoder = GifEncoder::new_with_speed(file, 10);
+                                            let _ = encoder.set_repeat(Repeat::Infinite);
+                                            for (px, sz) in frames_to_encode {
+                                                if let Some(rgba) = RgbaImage::from_raw(sz[0] as u32, sz[1] as u32, px) {
+                                                    let frame = Frame::from_parts(rgba, 0, 0, Delay::from_numer_denom_ms(100, 1));
+                                                    let _ = encoder.encode_frame(frame);
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        }
+
                         img.size = res.size;
                         img.thumbnail_dirty = true;
 
@@ -1106,6 +1154,7 @@ pub fn render_canvas(
                 // apply_filters = true only for the main image pass, NOT for shadow/outline/glow silhouette passes
                 let draw_pass = |
                     is_shadow: bool,
+                    is_drop_shadow: bool,
                     apply_filters: bool,
                     offset_x: f32, offset_y: f32,
                     spread: f32,
@@ -1241,7 +1290,7 @@ pub fn render_canvas(
                                     
                                     let actual_effect = if pass_blur_strength > 0.0 { 1 } else { final_effect };
                                     let actual_strength = if pass_blur_strength > 0.0 { pass_blur_strength } else { strength };
-                                    renderer.render_effect(gl, gl_tex, gl_mask, actual_effect, actual_strength, res, time, pass_gray, pass_inv, pass_sepia, tint, is_shadow, pass_opacity, vertex_count, &mapped_vertices, if apply_filters { chromatic_val } else { 0.0 }, apply_filters && antialias_val);
+                                    renderer.render_effect(gl, gl_tex, gl_mask, actual_effect, actual_strength, res, time, pass_gray, pass_inv, pass_sepia, tint, is_shadow, pass_opacity, vertex_count, &mapped_vertices, if apply_filters { chromatic_val } else { 0.0 }, is_drop_shadow && antialias_val);
                                     
                                     gl.viewport(old_viewport[0], old_viewport[1], old_viewport[2], old_viewport[3]);
                                 }
@@ -1275,10 +1324,10 @@ pub fn render_canvas(
                     } else if layer.shadow {
                         (layer.shadow_color, layer.shadow_offset, layer.shadow_spread)
                     } else {
-                        ([0, 0, 0, 100], [6.0, 6.0], 0.0)
+                        ([0, 0, 0, 255], [6.0, 6.0], 0.0)
                     };
                     let tint = [s_col_arr[0] as f32 / 255.0, s_col_arr[1] as f32 / 255.0, s_col_arr[2] as f32 / 255.0, s_col_arr[3] as f32 / 255.0];
-                    draw_pass(true, true, s_off[0], s_off[1], s_spread, if img.shadow { img.shadow_blur } else { layer.shadow_blur }, tint, l_op * img.opacity);
+                    draw_pass(true, true, true, s_off[0], s_off[1], s_spread, if img.shadow { img.shadow_blur } else { layer.shadow_blur }, tint, l_op * img.opacity);
                 }
 
                 if layer.outline || img.outline {
@@ -1289,10 +1338,14 @@ pub fn render_canvas(
                         let angle = (i as f32) * std::f32::consts::TAU / (steps as f32);
                         let off_x = angle.cos() * o_width;
                         let off_y = angle.sin() * o_width;
-                        draw_pass(true, true, off_x, off_y, 0.0, 0.0, tint, l_op * img.opacity);
+                        draw_pass(true, false, true, off_x, off_y, 0.0, 0.0, tint, l_op * img.opacity);
                     }
                 }
 
+                // Render main image pass
+                draw_pass(false, false, true, 0.0, 0.0, 0.0, 0.0, [1.0, 1.0, 1.0, 1.0], l_op * img.opacity);
+
+                // Render Glow over the image content
                 let has_glow = layer.glow || img.glow;
                 if has_glow {
                     let (g_col_arr, g_str, g_spread) = if img.glow { 
@@ -1302,11 +1355,9 @@ pub fn render_canvas(
                     };
                     let alpha = (g_str / 100.0).clamp(0.0, 1.0);
                     let tint = [g_col_arr[0] as f32 / 255.0, g_col_arr[1] as f32 / 255.0, g_col_arr[2] as f32 / 255.0, g_col_arr[3] as f32 / 255.0 * alpha];
-                    // Render glow silhouette
-                    draw_pass(true, true, 0.0, 0.0, g_spread, 10.0, tint, l_op * img.opacity);
+                    // Render glow silhouette over image
+                    draw_pass(true, false, true, 0.0, 0.0, g_spread, 10.0, tint, l_op * img.opacity);
                 }
-
-                draw_pass(false, true, 0.0, 0.0, 0.0, 0.0, [1.0, 1.0, 1.0, 1.0], l_op * img.opacity);
             }
         }
 

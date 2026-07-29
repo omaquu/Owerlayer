@@ -928,4 +928,56 @@ pub fn simplify_path(points: &[egui::Pos2], epsilon: f32) -> Vec<egui::Pos2> {
     }
 }
 
+pub fn export_image_object_as_png(img: &crate::types::PlacedImage) {
+    if img.pixels.is_empty() || img.size[0] == 0 || img.size[1] == 0 { return; }
+    
+    let w = img.size[0];
+    let h = img.size[1];
+    let mut rgba_out = img.pixels.clone();
+    
+    // Apply mask if present
+    if let Some(ref mask) = img.mask {
+        if mask.len() == w * h {
+            for i in 0..(w * h) {
+                let m = mask[i] as u16;
+                let b_idx = i * 4;
+                if b_idx + 3 < rgba_out.len() {
+                    rgba_out[b_idx + 3] = ((rgba_out[b_idx + 3] as u16 * m) / 255) as u8;
+                }
+            }
+        }
+    }
+    
+    // Apply color filters if active
+    let is_gray = img.grayscale;
+    let is_inv = img.invert;
+    let is_sepia = img.sepia;
+    if is_gray || is_inv || is_sepia {
+        for i in 0..(w * h) {
+            let b_idx = i * 4;
+            if b_idx + 3 < rgba_out.len() {
+                let col = egui::Color32::from_rgba_unmultiplied(
+                    rgba_out[b_idx], rgba_out[b_idx + 1], rgba_out[b_idx + 2], rgba_out[b_idx + 3]
+                );
+                let transformed = apply_color_effects(col, is_gray, is_inv, is_sepia, false, 0.0);
+                rgba_out[b_idx] = transformed.r();
+                rgba_out[b_idx + 1] = transformed.g();
+                rgba_out[b_idx + 2] = transformed.b();
+                rgba_out[b_idx + 3] = transformed.a();
+            }
+        }
+    }
 
+    // Prompt user for save destination
+    std::thread::spawn(move || {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("PNG Image", &["png"])
+            .set_file_name("snip_export.png")
+            .save_file() 
+        {
+            if let Some(img_buf) = image::RgbaImage::from_raw(w as u32, h as u32, rgba_out) {
+                let _ = img_buf.save(path);
+            }
+        }
+    });
+}

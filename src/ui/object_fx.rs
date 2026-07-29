@@ -56,6 +56,13 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 ui.label("Spread:");
                                 ui.add(egui::Slider::new(&mut $obj.shadow_blur, 0.0..=50.0));
                             });
+                            ui.horizontal(|ui| {
+                                ui.label("Opacity:");
+                                let mut opacity_pct = ($obj.shadow_color[3] as f32 / 2.55).round() as u8;
+                                if ui.add(egui::Slider::new(&mut opacity_pct, 0..=100).suffix("%")).changed() {
+                                    $obj.shadow_color[3] = (opacity_pct as f32 * 2.55).round() as u8;
+                                }
+                            });
                         }
 
                         ui.add_space(8.0);
@@ -224,6 +231,67 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                         if sel.object_idx < layer.placed_images.len() {
                             let img = &mut layer.placed_images[sel.object_idx];
                             render_object_fx!(img, false);
+                            
+                            ui.add_space(8.0);
+                            ui.separator();
+                            
+                            if ui.button("💾 Save Object as PNG").clicked() {
+                                crate::utils::export_image_object_as_png(img);
+                            }
+
+                            if img.is_live {
+                                ui.add_space(8.0);
+                                section_heading(ui, "GIF Recording", accent);
+                                if !img.gif_recorder.status.is_empty() {
+                                    ui.label(&img.gif_recorder.status);
+                                }
+                                if img.gif_recorder.is_recording {
+                                    if ui.button("⏹ Stop & Save GIF").clicked() {
+                                        img.gif_recorder.is_recording = false;
+                                        img.gif_recorder.status = "Saved to Snips folder".into();
+                                        let frames_to_encode = std::mem::take(&mut img.gif_recorder.frames);
+                                        std::thread::spawn(move || {
+                                            let timestamp = std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_secs())
+                                                .unwrap_or(0);
+                                            if let Some(mut dir) = directories::UserDirs::new().and_then(|u| u.picture_dir().map(|p| p.to_path_buf())) {
+                                                dir.push("Owerlayer");
+                                                dir.push("Snips");
+                                                let _ = std::fs::create_dir_all(&dir);
+                                                let gif_path = dir.join(format!("snip_{}.gif", timestamp));
+                                                if let Ok(file) = std::fs::File::create(&gif_path) {
+                                                    use image::codecs::gif::{GifEncoder, Repeat};
+                                                    use image::{Frame, Delay, RgbaImage};
+                                                    let mut encoder = GifEncoder::new_with_speed(file, 10);
+                                                    let _ = encoder.set_repeat(Repeat::Infinite);
+                                                    for (px, sz) in frames_to_encode {
+                                                        if let Some(rgba) = RgbaImage::from_raw(sz[0] as u32, sz[1] as u32, px) {
+                                                            let frame = Frame::from_parts(rgba, 0, 0, Delay::from_numer_denom_ms(100, 1));
+                                                            let _ = encoder.encode_frame(frame);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
+                                } else {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Duration:");
+                                        ui.selectable_value(&mut img.gif_recorder.target_duration_secs, 5, "5s");
+                                        ui.selectable_value(&mut img.gif_recorder.target_duration_secs, 10, "10s");
+                                        ui.selectable_value(&mut img.gif_recorder.target_duration_secs, 15, "15s");
+                                        ui.selectable_value(&mut img.gif_recorder.target_duration_secs, 20, "20s");
+                                    });
+                                    if ui.button("🎥 Record GIF").clicked() {
+                                        img.gif_recorder.is_recording = true;
+                                        img.gif_recorder.start_time = Some(std::time::Instant::now());
+                                        img.gif_recorder.last_sample_time = None;
+                                        img.gif_recorder.frames.clear();
+                                        img.gif_recorder.status = "Recording...".into();
+                                    }
+                                }
+                            }
                         }
                     }
                     ObjectType::Text => {

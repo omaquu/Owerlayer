@@ -61,6 +61,13 @@ pub fn render_filter_menu(
                         ui.label("Spread:");
                         ui.add(egui::Slider::new(&mut layer.shadow_blur, 0.0..=50.0));
                     });
+                    ui.horizontal(|ui| {
+                        ui.label("Opacity:");
+                        let mut opacity_pct = (layer.shadow_color[3] as f32 / 2.55).round() as u8;
+                        if ui.add(egui::Slider::new(&mut opacity_pct, 0..=100).suffix("%")).changed() {
+                            layer.shadow_color[3] = (opacity_pct as f32 * 2.55).round() as u8;
+                        }
+                    });
                 }
 
                 // --- Outline ---
