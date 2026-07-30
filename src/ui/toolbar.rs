@@ -538,6 +538,13 @@ pub fn render_tool_options(
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut settings.brush_shape, BrushShape::Round, "○").on_hover_text("Round Brush");
                 ui.selectable_value(&mut settings.brush_shape, BrushShape::Square, "□").on_hover_text("Square Brush");
+                ui.add_space(4.0);
+                if ui.add(egui::DragValue::new(&mut settings.brush_hardness).range(0.0..=100.0).suffix("%").prefix("Hard: ")).on_hover_text("Brush Hardness (0% soft feather, 100% hard edge)").changed() {
+                    settings.save();
+                }
+                if ui.add(egui::DragValue::new(&mut settings.brush_spacing).range(1.0..=200.0).suffix("%").prefix("Space: ")).on_hover_text("Brush Spacing (Distance between stamps)").changed() {
+                    settings.save();
+                }
             });
             if *active_tool == Tool::Brush {
                 ui.horizontal(|ui| {
@@ -1241,6 +1248,60 @@ pub fn render_tool_options(
                                 layer_idx: sel.layer_idx,
                                 object_idx: Some((sel.object_type, sel.object_idx)),
                             });
+                        }
+
+                        // Save Object as PNG button right next to Rasterize button
+                        if sel.object_type == ObjectType::Image {
+                            if let Some(img) = project.layers[sel.layer_idx].placed_images.get_mut(sel.object_idx) {
+                                if ui.button("💾").on_hover_text("Save Object as PNG").clicked() {
+                                    crate::utils::export_image_object_as_png(img);
+                                }
+
+                                // Live Snip GIF recording controls right next to Rasterize button
+                                if img.is_live {
+                                    let popup_id = ui.make_persistent_id(format!("toolbar_gif_popup_{}", img.id));
+                                    let gif_btn_txt = if img.gif_recorder.is_recording { "🔴" } else { "🎥" };
+                                    let btn_resp = ui.button(gif_btn_txt).on_hover_text("Record GIF from Live Snip (5s, 10s, 20s, Custom up to 60s)");
+                                    if btn_resp.clicked() {
+                                        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+                                    }
+
+                                    egui::popup_below_widget(ui, popup_id, &btn_resp, egui::PopupCloseBehavior::CloseOnClickOutside, |ui: &mut egui::Ui| {
+                                        ui.set_max_width(220.0);
+                                        ui.heading("GIF Recording");
+                                        if !img.gif_recorder.status.is_empty() {
+                                            ui.label(&img.gif_recorder.status);
+                                        }
+                                        if img.gif_recorder.is_recording {
+                                            if ui.button("⏹ Stop & Save GIF").clicked() {
+                                                img.gif_recorder.is_recording = false;
+                                                img.gif_recorder.status = "Save dialog opened".into();
+                                                let frames_to_encode = std::mem::take(&mut img.gif_recorder.frames);
+                                                crate::utils::save_gif_recording(frames_to_encode);
+                                            }
+                                        } else {
+                                            ui.horizontal(|ui: &mut egui::Ui| {
+                                                ui.label("Presets:");
+                                                if ui.button("5s").clicked() { img.gif_recorder.target_duration_secs = 5; }
+                                                if ui.button("10s").clicked() { img.gif_recorder.target_duration_secs = 10; }
+                                                if ui.button("20s").clicked() { img.gif_recorder.target_duration_secs = 20; }
+                                                if ui.button("30s").clicked() { img.gif_recorder.target_duration_secs = 30; }
+                                            });
+                                            ui.horizontal(|ui: &mut egui::Ui| {
+                                                ui.label("Custom:");
+                                                ui.add(egui::Slider::new(&mut img.gif_recorder.target_duration_secs, 1..=60).suffix("s"));
+                                            });
+                                            if ui.button("▶ Record GIF").clicked() {
+                                                img.gif_recorder.is_recording = true;
+                                                img.gif_recorder.start_time = Some(std::time::Instant::now());
+                                                img.gif_recorder.last_sample_time = None;
+                                                img.gif_recorder.frames.clear();
+                                                img.gif_recorder.status = "Recording...".into();
+                                            }
+                                        }
+                                    });
+                                }
+                            }
                         }
                         ui.separator();
 

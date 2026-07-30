@@ -1117,6 +1117,10 @@ pub struct Settings {
     pub background_image: Option<String>,
     #[serde(default)]
     pub brush_shape: BrushShape,
+    #[serde(default = "default_brush_hardness")]
+    pub brush_hardness: f32,
+    #[serde(default = "default_brush_spacing")]
+    pub brush_spacing: f32,
     #[serde(default)]
     pub brush_arrow: bool,
     #[serde(default)]
@@ -1290,6 +1294,8 @@ fn default_keybind_blur() -> HotkeyBinding { HotkeyBinding { vk_code: 0x4B, name
 fn default_keybind_paint_bucket() -> HotkeyBinding { HotkeyBinding { vk_code: 0x47, name: "Ctrl + G".to_string(), ctrl: true, alt: false, shift: false } }
 fn default_grid_size() -> f32 { 50.0 }
 fn default_snap_to_grid() -> bool { true }
+fn default_brush_hardness() -> f32 { 100.0 }
+fn default_brush_spacing() -> f32 { 10.0 }
 fn default_keybind_calculator() -> HotkeyBinding { HotkeyBinding { vk_code: 0x43, name: "Ctrl + Alt + C".to_string(), ctrl: true, alt: true, shift: false } }
 fn default_keybind_volume_mixer() -> HotkeyBinding { HotkeyBinding { vk_code: 0x56, name: "Ctrl + Alt + V".to_string(), ctrl: true, alt: true, shift: false } }
 fn default_calculator_pos() -> egui::Pos2 { egui::pos2(150.0, 150.0) }
@@ -1356,6 +1362,8 @@ impl Default for Settings {
             hide_edit_info: false,
             background_image: None,
             brush_shape: BrushShape::Round,
+            brush_hardness: 100.0,
+            brush_spacing: 10.0,
             hide_all: false,
             auto_hide_seconds: 0.0,
             exclude_from_capture: false,

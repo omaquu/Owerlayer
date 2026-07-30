@@ -965,27 +965,64 @@ pub fn update(ctx: &mut ToolContext) {
                             } else {
                                 // Translate
                                 let delta = pos - start;
+                                let grid_size = settings.grid_size.max(10.0);
+                                let snap = settings.snap_to_grid;
                                 if let Some(sel) = project.selected_object {
                                     match sel.object_type {
                                         ObjectType::Stroke => {
                                             if let Some(s) = layer.strokes.get_mut(sel.object_idx) {
                                                 for p in &mut s.points { *p += delta; }
+                                                if snap {
+                                                    if let Some(first) = s.points.first().copied() {
+                                                        let snapped = egui::pos2(
+                                                            (first.x / grid_size).round() * grid_size,
+                                                            (first.y / grid_size).round() * grid_size,
+                                                        );
+                                                        let snap_delta = snapped - first;
+                                                        for p in &mut s.points { *p += snap_delta; }
+                                                    }
+                                                }
                                             }
                                         }
                                         ObjectType::Text => {
                                             if let Some(t) = layer.text_annotations.get_mut(sel.object_idx) {
                                                 t.position += delta;
+                                                if snap {
+                                                    t.position = egui::pos2(
+                                                        (t.position.x / grid_size).round() * grid_size,
+                                                        (t.position.y / grid_size).round() * grid_size,
+                                                    );
+                                                }
                                             }
                                         }
                                         ObjectType::Image => {
                                             if let Some(img) = layer.placed_images.get_mut(sel.object_idx) {
                                                 img.position += delta;
+                                                if snap {
+                                                    img.position = egui::pos2(
+                                                        (img.position.x / grid_size).round() * grid_size,
+                                                        (img.position.y / grid_size).round() * grid_size,
+                                                    );
+                                                }
                                                 // source_rect intentionally NOT moved — stays fixed so snip can be placed independently
                                             }
                                         }
                                     }
                                 } else {
                                     crate::utils::translate_layer(layer, delta);
+                                    if snap {
+                                        // Snap-to-grid for layers: snap first placed image position as reference
+                                        if let Some(img) = layer.placed_images.first_mut() {
+                                            let snapped = egui::pos2(
+                                                (img.position.x / grid_size).round() * grid_size,
+                                                (img.position.y / grid_size).round() * grid_size,
+                                            );
+                                            let snap_delta = snapped - img.position;
+                                            if snap_delta.length_sq() > 0.01 {
+                                                crate::utils::translate_layer(layer, snap_delta);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

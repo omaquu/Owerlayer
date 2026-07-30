@@ -50,7 +50,10 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 ui.label("Color:");
                                 let mut c = egui::Color32::from_rgba_unmultiplied($obj.shadow_color[0], $obj.shadow_color[1], $obj.shadow_color[2], $obj.shadow_color[3]);
                                 if ui.color_edit_button_srgba(&mut c).changed() {
-                                    $obj.shadow_color = [c.r(), c.g(), c.b(), c.a()];
+                                    let r = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.shadow_color[0] > 0 || $obj.shadow_color[1] > 0 || $obj.shadow_color[2] > 0) { $obj.shadow_color[0] } else { c.r() };
+                                    let g = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.shadow_color[0] > 0 || $obj.shadow_color[1] > 0 || $obj.shadow_color[2] > 0) { $obj.shadow_color[1] } else { c.g() };
+                                    let b = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.shadow_color[0] > 0 || $obj.shadow_color[1] > 0 || $obj.shadow_color[2] > 0) { $obj.shadow_color[2] } else { c.b() };
+                                    $obj.shadow_color = [r, g, b, c.a()];
                                 }
                                 ui.add_space(8.0);
                                 ui.label("Spread:");
@@ -77,7 +80,10 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 ui.label("Color:");
                                 let mut c = egui::Color32::from_rgba_unmultiplied($obj.outline_color[0], $obj.outline_color[1], $obj.outline_color[2], $obj.outline_color[3]);
                                 if ui.color_edit_button_srgba(&mut c).changed() {
-                                    $obj.outline_color = [c.r(), c.g(), c.b(), c.a()];
+                                    let r = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.outline_color[0] > 0 || $obj.outline_color[1] > 0 || $obj.outline_color[2] > 0) { $obj.outline_color[0] } else { c.r() };
+                                    let g = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.outline_color[0] > 0 || $obj.outline_color[1] > 0 || $obj.outline_color[2] > 0) { $obj.outline_color[1] } else { c.g() };
+                                    let b = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.outline_color[0] > 0 || $obj.outline_color[1] > 0 || $obj.outline_color[2] > 0) { $obj.outline_color[2] } else { c.b() };
+                                    $obj.outline_color = [r, g, b, c.a()];
                                 }
                             });
                         }
@@ -109,7 +115,10 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 ui.label("Color:");
                                 let mut gc = egui::Color32::from_rgba_unmultiplied($obj.glow_color[0], $obj.glow_color[1], $obj.glow_color[2], $obj.glow_color[3]);
                                 if ui.color_edit_button_srgba(&mut gc).changed() {
-                                    $obj.glow_color = [gc.r(), gc.g(), gc.b(), gc.a()];
+                                    let r = if gc.r() == 0 && gc.g() == 0 && gc.b() == 0 && ($obj.glow_color[0] > 0 || $obj.glow_color[1] > 0 || $obj.glow_color[2] > 0) { $obj.glow_color[0] } else { gc.r() };
+                                    let g = if gc.r() == 0 && gc.g() == 0 && gc.b() == 0 && ($obj.glow_color[0] > 0 || $obj.glow_color[1] > 0 || $obj.glow_color[2] > 0) { $obj.glow_color[1] } else { gc.g() };
+                                    let b = if gc.r() == 0 && gc.g() == 0 && gc.b() == 0 && ($obj.glow_color[0] > 0 || $obj.glow_color[1] > 0 || $obj.glow_color[2] > 0) { $obj.glow_color[2] } else { gc.b() };
+                                    $obj.glow_color = [r, g, b, gc.a()];
                                 }
                             });
                             ui.horizontal(|ui| {
@@ -136,7 +145,10 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 ui.label("Color:");
                                 let mut c = egui::Color32::from_rgba_unmultiplied($obj.shadow_color[0], $obj.shadow_color[1], $obj.shadow_color[2], $obj.shadow_color[3]);
                                 if ui.color_edit_button_srgba(&mut c).changed() {
-                                    $obj.shadow_color = [c.r(), c.g(), c.b(), c.a()];
+                                    let r = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.shadow_color[0] > 0 || $obj.shadow_color[1] > 0 || $obj.shadow_color[2] > 0) { $obj.shadow_color[0] } else { c.r() };
+                                    let g = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.shadow_color[0] > 0 || $obj.shadow_color[1] > 0 || $obj.shadow_color[2] > 0) { $obj.shadow_color[1] } else { c.g() };
+                                    let b = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.shadow_color[0] > 0 || $obj.shadow_color[1] > 0 || $obj.shadow_color[2] > 0) { $obj.shadow_color[2] } else { c.b() };
+                                    $obj.shadow_color = [r, g, b, c.a()];
                                 }
                                 ui.add_space(8.0);
                                 ui.label("Spread:");
@@ -156,7 +168,10 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 ui.label("Color:");
                                 let mut c = egui::Color32::from_rgba_unmultiplied($obj.outline_color[0], $obj.outline_color[1], $obj.outline_color[2], $obj.outline_color[3]);
                                 if ui.color_edit_button_srgba(&mut c).changed() {
-                                    $obj.outline_color = [c.r(), c.g(), c.b(), c.a()];
+                                    let r = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.outline_color[0] > 0 || $obj.outline_color[1] > 0 || $obj.outline_color[2] > 0) { $obj.outline_color[0] } else { c.r() };
+                                    let g = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.outline_color[0] > 0 || $obj.outline_color[1] > 0 || $obj.outline_color[2] > 0) { $obj.outline_color[1] } else { c.g() };
+                                    let b = if c.r() == 0 && c.g() == 0 && c.b() == 0 && ($obj.outline_color[0] > 0 || $obj.outline_color[1] > 0 || $obj.outline_color[2] > 0) { $obj.outline_color[2] } else { c.b() };
+                                    $obj.outline_color = [r, g, b, c.a()];
                                 }
                             });
                         }
@@ -188,7 +203,10 @@ pub fn render_fx_window(ctx: &egui::Context, project: &mut Project, settings: &m
                                 ui.label("Color:");
                                 let mut gc = egui::Color32::from_rgba_unmultiplied($obj.glow_color[0], $obj.glow_color[1], $obj.glow_color[2], $obj.glow_color[3]);
                                 if ui.color_edit_button_srgba(&mut gc).changed() {
-                                    $obj.glow_color = [gc.r(), gc.g(), gc.b(), gc.a()];
+                                    let r = if gc.r() == 0 && gc.g() == 0 && gc.b() == 0 && ($obj.glow_color[0] > 0 || $obj.glow_color[1] > 0 || $obj.glow_color[2] > 0) { $obj.glow_color[0] } else { gc.r() };
+                                    let g = if gc.r() == 0 && gc.g() == 0 && gc.b() == 0 && ($obj.glow_color[0] > 0 || $obj.glow_color[1] > 0 || $obj.glow_color[2] > 0) { $obj.glow_color[1] } else { gc.g() };
+                                    let b = if gc.r() == 0 && gc.g() == 0 && gc.b() == 0 && ($obj.glow_color[0] > 0 || $obj.glow_color[1] > 0 || $obj.glow_color[2] > 0) { $obj.glow_color[2] } else { gc.b() };
+                                    $obj.glow_color = [r, g, b, gc.a()];
                                 }
                             });
                             ui.horizontal(|ui| {

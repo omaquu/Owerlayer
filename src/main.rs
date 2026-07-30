@@ -1179,7 +1179,9 @@ impl eframe::App for OwerlayerApp {
                     }
                 }
             }
-        // ── Undo / Redo ──
+        // ── Undo / Redo / Edit Shortcuts (only when overlay is active) ──
+        let active_overlay = self.edit_mode && !self.settings.hide_all;
+        if active_overlay {
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
                 if let Some(snap) = self.history.undo() {
                     let snap = snap.clone();
@@ -1197,9 +1199,11 @@ impl eframe::App for OwerlayerApp {
             if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::S)) {
                 self.project.save();
             }
-            let trigger_copy = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C)) || self.project.request_copy;
-            let trigger_cut = ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::X)) || self.project.request_cut;
-            let trigger_blur = self.project.request_blur;
+        }
+
+        let trigger_copy = (active_overlay && ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::C))) || self.project.request_copy;
+        let trigger_cut = (active_overlay && ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::X))) || self.project.request_cut;
+        let trigger_blur = self.project.request_blur;
             
             if trigger_copy || trigger_cut || trigger_blur {
                 self.project.request_copy = false;
@@ -1351,7 +1355,7 @@ impl eframe::App for OwerlayerApp {
                     }
                 }
             }
-            if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
+            if active_overlay && ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
                 let img_to_paste = if self.copied_image.is_some() {
                     self.copied_image.clone()
                 } else if let Some((pixels, w, h)) = crate::winapi_utils::get_clipboard_image() {
@@ -1409,14 +1413,14 @@ impl eframe::App for OwerlayerApp {
                     }
                 }
             }
-            if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D)) {
+            if active_overlay && ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D)) {
                 if self.project.marquee_selection.is_some() {
                     self.project.marquee_selection = None;
                 } else {
                     self.show_debug_window = !self.show_debug_window;
                 }
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+            if active_overlay && ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
                 if self.project.marquee_selection.is_some() {
                     crate::tools::cut::erase_marquee_selection(&mut self.project, &self.settings);
                     self.history.push(&self.project, "Erase Selection");
@@ -2291,16 +2295,20 @@ impl eframe::App for OwerlayerApp {
         }
 
         // ---- 7. Repaint strategy ----
-        let has_live = self.project.layers.iter().any(|l| l.placed_images.iter().any(|img| img.is_live))
-            || (self.project.marquee_selection.is_some() && self.settings.snip_live);
-        if self.edit_mode || has_live {
+        let has_live = self.edit_mode && (
+            self.project.layers.iter().any(|l| l.placed_images.iter().any(|img| img.is_live))
+            || (self.project.marquee_selection.is_some() && self.settings.snip_live)
+        );
+        if !self.edit_mode {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500)); // Low overhead when app is disabled
+        } else if self.edit_mode || has_live {
             ctx.request_repaint(); // Native framerate for smooth brush or live mirror/capture
         } else if self.settings.keep_ui_visible {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         } else if !self.settings.hide_all {
             ctx.request_repaint_after(std::time::Duration::from_millis(33)); // 30 FPS fallback to keep OBS capture active and realtime!
         } else {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
     }
 

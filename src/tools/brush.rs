@@ -319,7 +319,7 @@ pub fn update(ctx: &mut ToolContext) {
                                                     };
 
                                                     if inside {
-                                                        draw_pixel_shape(img, p.x + rx, p.y + ry, dot_radius, color, iw, ih, false);
+                                                        draw_pixel_shape(img, p.x + rx, p.y + ry, dot_radius, color, iw, ih, false, settings.brush_hardness);
                                                     }
                                                 }
                                             }
@@ -355,7 +355,7 @@ pub fn update(ctx: &mut ToolContext) {
                                             if prev_len == 0 && !canvas_pts.is_empty() {
                                                 let p = canvas_pts[0];
                                                 for &(ox, oy, b_col, b_radius) in &bristle_offsets {
-                                                    draw_pixel_shape(img, p.x + ox, p.y + oy, b_radius, b_col, iw, ih, settings.brush_shape == BrushShape::Square);
+                                                    draw_pixel_shape(img, p.x + ox, p.y + oy, b_radius, b_col, iw, ih, settings.brush_shape == BrushShape::Square, settings.brush_hardness);
                                                 }
                                             }
 
@@ -371,7 +371,7 @@ pub fn update(ctx: &mut ToolContext) {
                                                         let t = step as f32 / steps as f32;
                                                         let pi = p1.lerp(p2, t);
                                                         for &(ox, oy, b_col, b_radius) in &bristle_offsets {
-                                                            draw_pixel_shape(img, pi.x + ox, pi.y + oy, b_radius, b_col, iw, ih, settings.brush_shape == BrushShape::Square);
+                                                            draw_pixel_shape(img, pi.x + ox, pi.y + oy, b_radius, b_col, iw, ih, settings.brush_shape == BrushShape::Square, settings.brush_hardness);
                                                         }
                                                     }
                                                 }
@@ -387,14 +387,14 @@ pub fn update(ctx: &mut ToolContext) {
                                                 if settings.brush_shape == BrushShape::Round {
                                                     let cross = (dir.x * nib_dir.y - dir.y * nib_dir.x).abs();
                                                     let thickness = radius * (cross * 0.85 + 0.15);
-                                                    draw_pixel_shape(img, p.x, p.y, thickness, color, iw, ih, false);
+                                                    draw_pixel_shape(img, p.x, p.y, thickness, color, iw, ih, false, settings.brush_hardness);
                                                 } else {
                                                     let steps = (radius * 2.0) as usize + 2;
                                                     for step in 0..=steps {
                                                         let t = step as f32 / steps as f32 * 2.0 - 1.0;
                                                         let px = p.x + nib_dir.x * radius * t;
                                                         let py = p.y + nib_dir.y * radius * t;
-                                                        draw_pixel_shape(img, px, py, scale_x.max(1.0), color, iw, ih, false);
+                                                        draw_pixel_shape(img, px, py, scale_x.max(1.0), color, iw, ih, false, settings.brush_hardness);
                                                     }
                                                 }
                                             }
@@ -417,14 +417,14 @@ pub fn update(ctx: &mut ToolContext) {
                                                         if settings.brush_shape == BrushShape::Round {
                                                             let cross = (di.x * nib_dir.y - di.y * nib_dir.x).abs();
                                                             let thickness = radius * (cross * 0.85 + 0.15);
-                                                            draw_pixel_shape(img, pi.x, pi.y, thickness, color, iw, ih, false);
+                                                            draw_pixel_shape(img, pi.x, pi.y, thickness, color, iw, ih, false, settings.brush_hardness);
                                                         } else {
                                                             let steps_nib = (radius * 2.0) as usize + 2;
                                                             for step_nib in 0..=steps_nib {
                                                                 let tn = step_nib as f32 / steps_nib as f32 * 2.0 - 1.0;
                                                                 let px = pi.x + nib_dir.x * radius * tn;
                                                                 let py = pi.y + nib_dir.y * radius * tn;
-                                                                draw_pixel_shape(img, px, py, scale_x.max(1.0), color, iw, ih, false);
+                                                                draw_pixel_shape(img, px, py, scale_x.max(1.0), color, iw, ih, false, settings.brush_hardness);
                                                             }
                                                         }
                                                     }
@@ -433,7 +433,7 @@ pub fn update(ctx: &mut ToolContext) {
                                         }
                                         _ => {
                                             if prev_len == 0 && !canvas_pts.is_empty() {
-                                                draw_pixel_shape(img, canvas_pts[0].x, canvas_pts[0].y, radius, color, iw, ih, settings.brush_shape == BrushShape::Square);
+                                                draw_pixel_shape(img, canvas_pts[0].x, canvas_pts[0].y, radius, color, iw, ih, settings.brush_shape == BrushShape::Square, settings.brush_hardness);
                                             }
 
                                             for i in 1..canvas_pts.len() {
@@ -441,12 +441,13 @@ pub fn update(ctx: &mut ToolContext) {
                                                 let p2 = canvas_pts[i];
                                                 let dist = p1.distance(p2);
                                                 if dist > 0.001 {
-                                                    let step_size = (radius * 0.1).clamp(0.2, 1.0);
+                                                    let spacing_factor = (settings.brush_spacing / 100.0).clamp(0.02, 5.0);
+                                                    let step_size = (radius * 2.0 * spacing_factor).max(0.5);
                                                     let steps = (dist / step_size).ceil() as usize;
                                                     for step in 1..=steps {
                                                         let t = step as f32 / steps as f32;
                                                         let pi = p1.lerp(p2, t);
-                                                        draw_pixel_shape(img, pi.x, pi.y, radius, color, iw, ih, settings.brush_shape == BrushShape::Square);
+                                                         draw_pixel_shape(img, pi.x, pi.y, radius, color, iw, ih, settings.brush_shape == BrushShape::Square, settings.brush_hardness);
                                                     }
                                                 }
                                             }
@@ -971,10 +972,11 @@ pub fn create_new_canvas(id: usize, pos: egui::Pos2, logical_w: f32, logical_h: 
     new_img
 }
 
-fn draw_pixel_shape(img: &mut crate::types::PlacedImage, lx: f32, ly: f32, r: f32, color: [u8; 4], iw: usize, ih: usize, is_square: bool) {
+fn draw_pixel_shape(img: &mut crate::types::PlacedImage, lx: f32, ly: f32, r: f32, color: [u8; 4], iw: usize, ih: usize, is_square: bool, hardness_pct: f32) {
     let r_ceil = r.ceil() as i32;
     let lx_floor = lx.floor() as i32;
     let ly_floor = ly.floor() as i32;
+    let hardness = (hardness_pct / 100.0).clamp(0.0, 1.0);
     for dy in -r_ceil..=r_ceil {
         for dx in -r_ceil..=r_ceil {
             let px = (lx_floor + dx) as usize;
@@ -993,15 +995,15 @@ fn draw_pixel_shape(img: &mut crate::types::PlacedImage, lx: f32, ly: f32, r: f3
                 let coverage = if r <= 0.5 {
                     (1.0 - dist).clamp(0.0, 1.0) * (r * 2.0)
                 } else {
-                    let edge_width = 1.0f32;
-                    let inner_r = r - edge_width * 0.5;
-                    let outer_r = r + edge_width * 0.5;
+                    let outer_r = r;
+                    let inner_r = (r * hardness).min(r - 0.5);
                     if dist <= inner_r {
                         1.0
                     } else if dist >= outer_r {
                         0.0
                     } else {
-                        ((outer_r - dist) / edge_width).clamp(0.0, 1.0)
+                        let fade = (outer_r - dist) / (outer_r - inner_r).max(0.001);
+                        fade.clamp(0.0, 1.0)
                     }
                 };
 
@@ -1213,7 +1215,7 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
                     };
 
                     if inside {
-                        draw_pixel_shape(img, p.x + rx, p.y + ry, dot_radius, color, iw, ih, false);
+                        draw_pixel_shape(img, p.x + rx, p.y + ry, dot_radius, color, iw, ih, false, 100.0);
                     }
                 }
             }
@@ -1249,7 +1251,7 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
             if !canvas_pts.is_empty() {
                 let p = canvas_pts[0];
                 for &(ox, oy, b_col, b_radius) in &bristle_offsets {
-                    draw_pixel_shape(img, p.x + ox, p.y + oy, b_radius, b_col, iw, ih, s.brush_shape == BrushShape::Square);
+                    draw_pixel_shape(img, p.x + ox, p.y + oy, b_radius, b_col, iw, ih, s.brush_shape == BrushShape::Square, 100.0);
                 }
             }
 
@@ -1265,7 +1267,7 @@ pub fn rasterize_stroke_to_image(img: &mut crate::types::PlacedImage, s: &Stroke
                         let t = step as f32 / steps as f32;
                         let pi = p1.lerp(p2, t);
                         for &(ox, oy, b_col, b_radius) in &bristle_offsets {
-                            draw_pixel_shape(img, pi.x + ox, pi.y + oy, b_radius, b_col, iw, ih, s.brush_shape == BrushShape::Square);
+                            draw_pixel_shape(img, pi.x + ox, pi.y + oy, b_radius, b_col, iw, ih, s.brush_shape == BrushShape::Square, 100.0);
                         }
                     }
                 }

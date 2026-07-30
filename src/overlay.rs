@@ -183,7 +183,7 @@ pub fn render_canvas(
     // ── Grid Rendering ──
     if settings.show_grid && !settings.hide_all {
         let grid_size = settings.grid_size.max(10.0);
-        let color = egui::Color32::from_rgba_premultiplied(128, 128, 128, 12);
+        let color = egui::Color32::from_rgba_unmultiplied(200, 200, 200, 50); // 20% opacity subtle grid
         let stroke = egui::Stroke::new(1.0, color);
         // Vertical lines
         let mut x = rect.min.x;
@@ -1148,13 +1148,17 @@ pub fn render_canvas(
                     
                     let mut padded_w = disp_w;
                     let mut padded_h = disp_h;
-                    // Only add effect_pad for the main pass (apply_filters=true)
                     let mut pass_pad = if apply_filters { effect_pad } else if pass_blur_strength > 0.0 { pass_blur_strength.max(20.0) } else { 0.0 };
                     
-                    if spread > 0.0 {
-                        pass_pad += spread;
-                        let scale_x = 1.0 + (spread / disp_w.max(1.0)) * 2.0;
-                        let scale_y = 1.0 + (spread / disp_h.max(1.0)) * 2.0;
+                    if pass_antialias {
+                        pass_pad += 6.0;
+                    }
+
+                    let effective_spread = spread + (if is_shadow { pass_blur_strength * 0.5 } else { 0.0 });
+                    if effective_spread > 0.0 {
+                        pass_pad += effective_spread;
+                        let scale_x = 1.0 + (effective_spread / disp_w.max(1.0)) * 2.0;
+                        let scale_y = 1.0 + (effective_spread / disp_h.max(1.0)) * 2.0;
                         draw_scale.x *= scale_x;
                         draw_scale.y *= scale_y;
                     }
@@ -1306,7 +1310,7 @@ pub fn render_canvas(
                         ([0, 0, 0, 255], [6.0, 6.0], 0.0)
                     };
                     let tint = [s_col_arr[0] as f32 / 255.0, s_col_arr[1] as f32 / 255.0, s_col_arr[2] as f32 / 255.0, s_col_arr[3] as f32 / 255.0];
-                    draw_pass(true, aa_shadow, true, s_off[0], s_off[1], s_spread, if img.shadow { img.shadow_blur } else { layer.shadow_blur }, tint, l_op * img.opacity);
+                    draw_pass(true, aa_shadow, false, s_off[0], s_off[1], s_spread, if img.shadow { img.shadow_blur } else { layer.shadow_blur }, tint, l_op * img.opacity);
                 }
 
                 if layer.outline || img.outline {
@@ -1317,7 +1321,7 @@ pub fn render_canvas(
                         let angle = (i as f32) * std::f32::consts::TAU / (steps as f32);
                         let off_x = angle.cos() * o_width;
                         let off_y = angle.sin() * o_width;
-                        draw_pass(true, aa_outline, true, off_x, off_y, 0.0, 0.0, tint, l_op * img.opacity);
+                        draw_pass(true, aa_outline, false, off_x, off_y, 0.0, 0.0, tint, l_op * img.opacity);
                     }
                 }
 
