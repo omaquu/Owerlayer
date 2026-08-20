@@ -480,6 +480,8 @@ pub fn update(ctx: &mut ToolContext) {
                         settings.spray_density,
                         settings.highlight_opacity,
                         settings.arrow_size,
+                        settings.brush_hardness,
+                        settings.brush_spacing,
                     );
                     *ctx.pending_stroke = Some(s);
                     *ctx.layer_prompt_open = true;
@@ -500,6 +502,8 @@ pub fn update(ctx: &mut ToolContext) {
                                 settings.spray_density,
                                 settings.highlight_opacity,
                                 settings.arrow_size,
+                                settings.brush_hardness,
+                                settings.brush_spacing,
                             );
                             layer.strokes.push(s);
                         }
@@ -689,89 +693,228 @@ pub fn update(ctx: &mut ToolContext) {
                         p.add(egui::Shape::mesh(mesh));
                     }
                     _ => {
-                        // Solid or Highlighter: Custom continuous non-overlapping mesh
-                        let mut mesh = egui::Mesh::default();
-                        
-                        let mut smoothed: Vec<egui::Pos2> = Vec::new();
-                        let min_dist = (width * 0.15).clamp(2.0, 10.0);
-                        for &pt in &pts {
-                            if smoothed.is_empty() || smoothed.last().unwrap().distance(pt) > min_dist {
-                                smoothed.push(pt);
-                            }
-                        }
-                        if smoothed.len() < 2 { smoothed = pts.clone(); }
-                        let render_pts = smoothed;
+                        let spacing_val = s.spacing.max(1.0);
+                        let hardness_val = s.hardness.clamp(0.0, 100.0) / 100.0;
+                        let r = width * 0.5;
 
-                        for i in 0..render_pts.len() {
-                            let dir = if i > 0 && i < render_pts.len() - 1 {
-                                let d1 = (render_pts[i] - render_pts[i-1]).normalized();
-                                let d2 = (render_pts[i+1] - render_pts[i]).normalized();
-                                let mut miter = d1 + d2;
-                                if miter.length() < 0.001 { miter = d1; }
-                                miter.normalized()
-                            } else if i < render_pts.len() - 1 {
-                                let d = render_pts[i+1] - render_pts[i];
-                                if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
-                            } else if i > 0 {
-                                let d = render_pts[i] - render_pts[i-1];
-                                if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
-                            } else {
-                                egui::vec2(1.0, 0.0)
-                            };
-
-                            let perp = egui::vec2(-dir.y, dir.x) * width * 0.5;
-                            
-                            mesh.vertices.push(egui::epaint::Vertex { pos: render_pts[i] + perp, uv: egui::Pos2::ZERO, color: stroke_color });
-                            mesh.vertices.push(egui::epaint::Vertex { pos: render_pts[i] - perp, uv: egui::Pos2::ZERO, color: stroke_color });
-                            
-                            if i > 0 {
-                                let idx = (i as u32) * 2;
-                                mesh.indices.extend_from_slice(&[idx-2, idx-1, idx]);
-                                mesh.indices.extend_from_slice(&[idx-1, idx+1, idx]);
-                            }
-                        }
-
-                        if render_pts.len() >= 2 {
-                            let mut add_cap = |pt: egui::Pos2, dir: egui::Vec2, is_start: bool| {
-                                if s.brush_shape == BrushShape::Round {
-                                    let steps = 12;
-                                    let center_idx = mesh.vertices.len() as u32;
-                                    mesh.vertices.push(egui::epaint::Vertex { pos: pt, uv: egui::Pos2::ZERO, color: stroke_color });
-                                    
-                                    let base_angle = dir.angle() + if is_start { std::f32::consts::PI / 2.0 } else { -std::f32::consts::PI / 2.0 };
-                                    for i in 0..=steps {
-                                        let a = base_angle + (i as f32 / steps as f32) * std::f32::consts::PI;
-                                        let pos = pt + egui::vec2(a.cos(), a.sin()) * width * 0.5;
-                                        mesh.vertices.push(egui::epaint::Vertex { pos, uv: egui::Pos2::ZERO, color: stroke_color });
-                                        if i > 0 {
-                                            mesh.indices.extend_from_slice(&[center_idx, center_idx + i as u32, center_idx + i as u32 + 1]);
+                        // Custom spaced stamps path when spacing > 12.0
+                        if spacing_val > 12.0 {
+                            let step_dist = (width * (spacing_val / 100.0)).max(1.0);
+                            let mut stamp_pts = Vec::new();
+                            if !pts.is_empty() {
+                                stamp_pts.push(pts[0]);
+                                for i in 1..pts.len() {
+                                    let p1 = pts[i-1];
+                                    let p2 = pts[i];
+                                    let d = p1.distance(p2);
+                                    if d > 0.001 {
+                                        let steps = (d / step_dist).ceil() as usize;
+                                        for step in 1..=steps {
+                                            let t = step as f32 / steps as f32;
+                                            stamp_pts.push(p1.lerp(p2, t));
                                         }
                                     }
-                                } else {
-                                    let perp = egui::vec2(-dir.y, dir.x) * width * 0.5;
-                                    let ext = dir * if is_start { -width * 0.5 } else { width * 0.5 };
-                                    
-                                    let p1 = pt + perp;
-                                    let p2 = pt - perp;
-                                    let p3 = pt - perp + ext;
-                                    let p4 = pt + perp + ext;
-                                    
-                                    let start_idx = mesh.vertices.len() as u32;
-                                    mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::Pos2::ZERO, color: stroke_color });
-                                    mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::Pos2::ZERO, color: stroke_color });
-                                    mesh.vertices.push(egui::epaint::Vertex { pos: p3, uv: egui::Pos2::ZERO, color: stroke_color });
-                                    mesh.vertices.push(egui::epaint::Vertex { pos: p4, uv: egui::Pos2::ZERO, color: stroke_color });
-                                    
-                                    mesh.indices.extend_from_slice(&[start_idx, start_idx+1, start_idx+2]);
-                                    mesh.indices.extend_from_slice(&[start_idx, start_idx+2, start_idx+3]);
                                 }
-                            };
+                            }
+
+                            for pt in stamp_pts {
+                                if s.brush_shape == BrushShape::Square {
+                                    let rect = egui::Rect::from_center_size(pt, egui::vec2(width, width));
+                                    if hardness_val >= 0.99 {
+                                        p.rect_filled(rect, 0.0, stroke_color);
+                                    } else {
+                                        let inner_w = width * hardness_val;
+                                        let inner_rect = egui::Rect::from_center_size(pt, egui::vec2(inner_w, inner_w));
+                                        p.rect_filled(inner_rect, 0.0, stroke_color);
+                                        // Soft outer border
+                                        let mut soft_mesh = egui::Mesh::default();
+                                        let transparent_color = egui::Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), 0);
+                                        
+                                        let o = rect;
+                                        let i = inner_rect;
+                                        let v = vec![
+                                            (o.left_top(), transparent_color), (i.left_top(), stroke_color),
+                                            (o.right_top(), transparent_color), (i.right_top(), stroke_color),
+                                            (o.right_bottom(), transparent_color), (i.right_bottom(), stroke_color),
+                                            (o.left_bottom(), transparent_color), (i.left_bottom(), stroke_color),
+                                        ];
+                                        for (pos, col) in v {
+                                            soft_mesh.vertices.push(egui::epaint::Vertex { pos, uv: egui::Pos2::ZERO, color: col });
+                                        }
+                                        soft_mesh.indices.extend_from_slice(&[0,1,3, 0,3,2, 2,3,5, 2,5,4, 4,5,7, 4,7,6, 6,7,1, 6,1,0]);
+                                        p.add(egui::Shape::mesh(soft_mesh));
+                                    }
+                                } else {
+                                    if hardness_val >= 0.99 {
+                                        p.circle_filled(pt, r, stroke_color);
+                                    } else {
+                                        let inner_r = (r * hardness_val).min(r - 0.5);
+                                        let mut soft_mesh = egui::Mesh::default();
+                                        let transparent_color = egui::Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), 0);
+                                        let center_idx = soft_mesh.vertices.len() as u32;
+                                        soft_mesh.vertices.push(egui::epaint::Vertex { pos: pt, uv: egui::Pos2::ZERO, color: stroke_color });
+
+                                        let steps = 16;
+                                        for k in 0..steps {
+                                            let a = (k as f32 / steps as f32) * std::f32::consts::TAU;
+                                            let dir = egui::vec2(a.cos(), a.sin());
+                                            let pos_inner = pt + dir * inner_r;
+                                            let pos_outer = pt + dir * r;
+
+                                            let idx_in = soft_mesh.vertices.len() as u32;
+                                            soft_mesh.vertices.push(egui::epaint::Vertex { pos: pos_inner, uv: egui::Pos2::ZERO, color: stroke_color });
+                                            soft_mesh.vertices.push(egui::epaint::Vertex { pos: pos_outer, uv: egui::Pos2::ZERO, color: transparent_color });
+
+                                            let next_k = (k + 1) % steps;
+                                            let next_in = center_idx + 1 + (next_k * 2) as u32;
+                                            let next_out = next_in + 1;
+
+                                            // Center to inner triangle
+                                            soft_mesh.indices.extend_from_slice(&[center_idx, idx_in, next_in]);
+                                            // Inner to outer quad
+                                            soft_mesh.indices.extend_from_slice(&[idx_in, idx_in + 1, next_out]);
+                                            soft_mesh.indices.extend_from_slice(&[idx_in, next_out, next_in]);
+                                        }
+                                        p.add(egui::Shape::mesh(soft_mesh));
+                                    }
+                                }
+                            }
+                        } else {
+                            // Continuous ribbon mesh with optional soft feathered edges
+                            let mut mesh = egui::Mesh::default();
                             
-                            add_cap(render_pts[0], (render_pts[1] - render_pts[0]).normalized(), true);
-                            add_cap(render_pts[render_pts.len()-1], (render_pts[render_pts.len()-1] - render_pts[render_pts.len()-2]).normalized(), false);
+                            let mut smoothed: Vec<egui::Pos2> = Vec::new();
+                            let min_dist = (width * 0.15).clamp(2.0, 10.0);
+                            for &pt in &pts {
+                                if smoothed.is_empty() || smoothed.last().unwrap().distance(pt) > min_dist {
+                                    smoothed.push(pt);
+                                }
+                            }
+                            if smoothed.len() < 2 { smoothed = pts.clone(); }
+                            let render_pts = smoothed;
+
+                            let transparent_color = egui::Color32::from_rgba_unmultiplied(stroke_color.r(), stroke_color.g(), stroke_color.b(), 0);
+
+                            if hardness_val >= 0.99 {
+                                for i in 0..render_pts.len() {
+                                    let dir = if i > 0 && i < render_pts.len() - 1 {
+                                        let d1 = (render_pts[i] - render_pts[i-1]).normalized();
+                                        let d2 = (render_pts[i+1] - render_pts[i]).normalized();
+                                        let mut miter = d1 + d2;
+                                        if miter.length() < 0.001 { miter = d1; }
+                                        miter.normalized()
+                                    } else if i < render_pts.len() - 1 {
+                                        let d = render_pts[i+1] - render_pts[i];
+                                        if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                                    } else if i > 0 {
+                                        let d = render_pts[i] - render_pts[i-1];
+                                        if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                                    } else {
+                                        egui::vec2(1.0, 0.0)
+                                    };
+
+                                    let perp = egui::vec2(-dir.y, dir.x) * r;
+                                    
+                                    mesh.vertices.push(egui::epaint::Vertex { pos: render_pts[i] + perp, uv: egui::Pos2::ZERO, color: stroke_color });
+                                    mesh.vertices.push(egui::epaint::Vertex { pos: render_pts[i] - perp, uv: egui::Pos2::ZERO, color: stroke_color });
+                                    
+                                    if i > 0 {
+                                        let idx = (i as u32) * 2;
+                                        mesh.indices.extend_from_slice(&[idx-2, idx-1, idx]);
+                                        mesh.indices.extend_from_slice(&[idx-1, idx+1, idx]);
+                                    }
+                                }
+
+                                if render_pts.len() >= 2 {
+                                    let mut add_cap = |pt: egui::Pos2, dir: egui::Vec2, is_start: bool| {
+                                        if s.brush_shape == BrushShape::Round {
+                                            let steps = 12;
+                                            let center_idx = mesh.vertices.len() as u32;
+                                            mesh.vertices.push(egui::epaint::Vertex { pos: pt, uv: egui::Pos2::ZERO, color: stroke_color });
+                                            
+                                            let base_angle = dir.angle() + if is_start { std::f32::consts::PI / 2.0 } else { -std::f32::consts::PI / 2.0 };
+                                            for i in 0..=steps {
+                                                let a = base_angle + (i as f32 / steps as f32) * std::f32::consts::PI;
+                                                let pos = pt + egui::vec2(a.cos(), a.sin()) * r;
+                                                mesh.vertices.push(egui::epaint::Vertex { pos, uv: egui::Pos2::ZERO, color: stroke_color });
+                                                if i > 0 {
+                                                    mesh.indices.extend_from_slice(&[center_idx, center_idx + i as u32, center_idx + i as u32 + 1]);
+                                                }
+                                            }
+                                        } else {
+                                            let perp = egui::vec2(-dir.y, dir.x) * r;
+                                            let ext = dir * if is_start { -r } else { r };
+                                            
+                                            let p1 = pt + perp;
+                                            let p2 = pt - perp;
+                                            let p3 = pt - perp + ext;
+                                            let p4 = pt + perp + ext;
+                                            
+                                            let start_idx = mesh.vertices.len() as u32;
+                                            mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: egui::Pos2::ZERO, color: stroke_color });
+                                            mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: egui::Pos2::ZERO, color: stroke_color });
+                                            mesh.vertices.push(egui::epaint::Vertex { pos: p3, uv: egui::Pos2::ZERO, color: stroke_color });
+                                            mesh.vertices.push(egui::epaint::Vertex { pos: p4, uv: egui::Pos2::ZERO, color: stroke_color });
+                                            
+                                            mesh.indices.extend_from_slice(&[start_idx, start_idx+1, start_idx+2]);
+                                            mesh.indices.extend_from_slice(&[start_idx, start_idx+2, start_idx+3]);
+                                        }
+                                    };
+
+                                    let start_dir = (render_pts[1] - render_pts[0]).normalized();
+                                    add_cap(render_pts[0], start_dir, true);
+
+                                    let end_dir = (render_pts[render_pts.len() - 1] - render_pts[render_pts.len() - 2]).normalized();
+                                    add_cap(render_pts[render_pts.len() - 1], end_dir, false);
+                                }
+                            } else {
+                                // Feathered soft ribbon mesh
+                                let inner_r = r * hardness_val;
+                                for i in 0..render_pts.len() {
+                                    let dir = if i > 0 && i < render_pts.len() - 1 {
+                                        let d1 = (render_pts[i] - render_pts[i-1]).normalized();
+                                        let d2 = (render_pts[i+1] - render_pts[i]).normalized();
+                                        let mut miter = d1 + d2;
+                                        if miter.length() < 0.001 { miter = d1; }
+                                        miter.normalized()
+                                    } else if i < render_pts.len() - 1 {
+                                        let d = render_pts[i+1] - render_pts[i];
+                                        if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                                    } else if i > 0 {
+                                        let d = render_pts[i] - render_pts[i-1];
+                                        if d.length() > 0.001 { d.normalized() } else { egui::vec2(1.0, 0.0) }
+                                    } else {
+                                        egui::vec2(1.0, 0.0)
+                                    };
+
+                                    let perp = egui::vec2(-dir.y, dir.x);
+                                    let p_out_top = render_pts[i] + perp * r;
+                                    let p_in_top  = render_pts[i] + perp * inner_r;
+                                    let p_in_bot  = render_pts[i] - perp * inner_r;
+                                    let p_out_bot = render_pts[i] - perp * r;
+
+                                    let base = (i as u32) * 4;
+                                    mesh.vertices.push(egui::epaint::Vertex { pos: p_out_top, uv: egui::Pos2::ZERO, color: transparent_color });
+                                    mesh.vertices.push(egui::epaint::Vertex { pos: p_in_top,  uv: egui::Pos2::ZERO, color: stroke_color });
+                                    mesh.vertices.push(egui::epaint::Vertex { pos: p_in_bot,  uv: egui::Pos2::ZERO, color: stroke_color });
+                                    mesh.vertices.push(egui::epaint::Vertex { pos: p_out_bot, uv: egui::Pos2::ZERO, color: transparent_color });
+
+                                    if i > 0 {
+                                        let prev = base - 4;
+                                        // Top edge fade
+                                        mesh.indices.extend_from_slice(&[prev, prev+1, base+1]);
+                                        mesh.indices.extend_from_slice(&[prev, base+1, base]);
+                                        // Center solid core
+                                        mesh.indices.extend_from_slice(&[prev+1, prev+2, base+2]);
+                                        mesh.indices.extend_from_slice(&[prev+1, base+2, base+1]);
+                                        // Bottom edge fade
+                                        mesh.indices.extend_from_slice(&[prev+2, prev+3, base+3]);
+                                        mesh.indices.extend_from_slice(&[prev+2, base+3, base+2]);
+                                    }
+                                }
+                            }
+                            p.add(egui::Shape::mesh(mesh));
                         }
-                        
-                        p.add(egui::Shape::mesh(mesh));
                     }
                 }
 
@@ -959,7 +1102,7 @@ pub fn render_preview(ctx: &mut ToolContext) {
     let pen_c = color32(&settings.pen_color);
     
     let pts: Vec<_> = ctx.current_stroke.clone();
-    let s = Stroke::new(pts, settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow, settings.spray_density, settings.highlight_opacity, settings.arrow_size);
+    let s = Stroke::new(pts, settings.pen_color, settings.pen_width, StrokeKind::Freehand, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, settings.brush_arrow, settings.spray_density, settings.highlight_opacity, settings.arrow_size, settings.brush_hardness, settings.brush_spacing);
     draw_stroke(&painter, &s, pen_c, egui::Vec2::ZERO, s.width, 1.0);
 }
 

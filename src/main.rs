@@ -1041,6 +1041,8 @@ impl eframe::App for OwerlayerApp {
                             self.settings.spray_density,
                             self.settings.highlight_opacity,
                             self.settings.arrow_size,
+                            self.settings.brush_hardness,
+                            self.settings.brush_spacing,
                         );
                         layer.strokes.push(s);
                     }
@@ -1066,12 +1068,15 @@ impl eframe::App for OwerlayerApp {
                     .fixed_pos(pending.position)
                     .show(ctx, |ui| {
                         let font = crate::tools::text::resolve_font(self.settings.text_font, self.settings.font_size);
+                        let measured = if pending.buffer.is_empty() { " " } else { &pending.buffer };
+                        let text_w = ui.ctx().fonts(|f| f.layout_no_wrap(measured.to_string(), font.clone(), egui::Color32::WHITE)).size().x;
+                        let dynamic_width = (text_w + 30.0).max(60.0);
                         let edit_resp = ui.add(
                             egui::TextEdit::singleline(&mut pending.buffer)
                                 .frame(false)
                                 .text_color(crate::utils::color32(&self.settings.pen_color))
                                 .font(font)
-                                .desired_width(500.0)
+                                .desired_width(dynamic_width)
                         );
                         edit_resp.request_focus();
                         
@@ -1115,7 +1120,6 @@ impl eframe::App for OwerlayerApp {
                             
                             let target_layer_idx = p.layer_idx.unwrap_or(self.project.active_layer);
                             let is_locked = target_layer_idx < self.project.layers.len() && self.project.layers[target_layer_idx].locked;
-                            let ask_mode = self.settings.auto_new_layer.is_none();
                             
                             let clean_text = text_str.replace('\n', " ");
                             let display_text = if clean_text.chars().count() > 15 {
@@ -1135,7 +1139,7 @@ impl eframe::App for OwerlayerApp {
                                 format!("Text: \"{}\"", display_text)
                             };
 
-                            if is_edit {
+                            if is_edit || !is_locked {
                                 if target_layer_idx < self.project.layers.len() {
                                     self.project.layers[target_layer_idx].text_annotations.push(ann);
                                     let new_idx = self.project.layers[target_layer_idx].text_annotations.len() - 1;
@@ -1148,22 +1152,9 @@ impl eframe::App for OwerlayerApp {
                                 }
                                 self.history.push(&self.project, label);
                                 self.project.save();
-                            } else if is_locked || ask_mode {
+                            } else {
                                 self.pending_text_to_add = Some(ann);
                                 self.layer_prompt_open = true;
-                            } else {
-                                if target_layer_idx < self.project.layers.len() {
-                                    self.project.layers[target_layer_idx].text_annotations.push(ann);
-                                    let new_idx = self.project.layers[target_layer_idx].text_annotations.len() - 1;
-                                    self.project.selected_object = Some(SelectedObject {
-                                        layer_idx: target_layer_idx,
-                                        object_type: crate::overlay::ObjectType::Text,
-                                        object_idx: new_idx,
-                                    });
-                                    self.project.layers[target_layer_idx].expanded = true;
-                                }
-                                self.history.push(&self.project, label);
-                                self.project.save();
                             }
                         }
                     }
@@ -2157,6 +2148,7 @@ impl eframe::App for OwerlayerApp {
         let is_over_ui_window = ctx.memory(|mem| {
             mem.layer_ids().any(|layer| {
                 if layer.order == egui::Order::Background { return false; }
+                if !self.is_window_open(layer.id, ctx) { return false; }
                 if let Some(rect) = mem.area_rect(layer.id) {
                     rect.contains(mouse_pos_points)
                 } else {

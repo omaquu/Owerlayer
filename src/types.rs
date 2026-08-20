@@ -281,6 +281,10 @@ pub struct Stroke {
     pub spray_density: u32,
     #[serde(default = "default_stroke_highlight_opacity")]
     pub highlight_opacity: f32,
+    #[serde(default = "default_brush_hardness")]
+    pub hardness: f32,
+    #[serde(default = "default_brush_spacing")]
+    pub spacing: f32,
     #[serde(default)]
     pub arrow_size: ArrowSize,
     #[serde(skip)]
@@ -306,6 +310,8 @@ impl Stroke {
         spray_density: u32,
         highlight_opacity: f32,
         arrow_size: ArrowSize,
+        hardness: f32,
+        spacing: f32,
     ) -> Self {
         let name = match kind {
             StrokeKind::Rect => "Rectangle".to_string(),
@@ -354,6 +360,8 @@ impl Stroke {
             locked: false,
             spray_density,
             highlight_opacity,
+            hardness,
+            spacing,
             arrow_size,
             cached_texture: None,
             cached_rect: None,

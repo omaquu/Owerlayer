@@ -185,6 +185,12 @@ impl CaptureThread {
             let active_ids: std::collections::HashSet<usize> = reqs.iter().map(|r| r.id).collect();
             mask_cache.retain(|k, _| active_ids.contains(k));
 
+            #[cfg(windows)]
+            {
+                let active_hwnds: std::collections::HashSet<isize> = reqs.iter().map(|r| r.hwnd as isize).collect();
+                wgc_window_sessions.retain(|hwnd, _| active_hwnds.contains(hwnd));
+            }
+
             // Poll all active WGC sessions once per loop iteration
             #[cfg(windows)]
             {
@@ -339,14 +345,16 @@ impl CaptureThread {
                 let mut new_mask = vec![255u8; sw * sh];
                 let ppp = req.ppp;
                 use rayon::prelude::*;
-                new_mask.par_chunks_mut(sw).enumerate().for_each(|(y, row)| {
-                    for x in 0..sw {
-                        let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
-                        if !crate::utils::is_inside_poly(pts, lp) {
-                            row[x] = 0;
+                if sw > 0 {
+                    new_mask.par_chunks_mut(sw).enumerate().for_each(|(y, row)| {
+                        for x in 0..sw {
+                            let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                            if !crate::utils::is_inside_poly(pts, lp) {
+                                row[x] = 0;
+                            }
                         }
-                    }
-                });
+                    });
+                }
                 mask_cache.insert(
                     req.id,
                     MaskCacheEntry::Poly {
@@ -546,14 +554,16 @@ impl CaptureThread {
                 let mut new_mask = vec![255u8; sw as usize * sh as usize];
                 let ppp = req.ppp;
                 use rayon::prelude::*;
-                new_mask.par_chunks_mut(sw as usize).enumerate().for_each(|(y, row)| {
-                    for x in 0..sw as usize {
-                        let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
-                        if !crate::utils::is_inside_poly(pts, lp) {
-                            row[x] = 0;
+                if sw > 0 {
+                    new_mask.par_chunks_mut(sw as usize).enumerate().for_each(|(y, row)| {
+                        for x in 0..sw as usize {
+                            let lp = egui::pos2(x as f32 / ppp, y as f32 / ppp);
+                            if !crate::utils::is_inside_poly(pts, lp) {
+                                row[x] = 0;
+                            }
                         }
-                    }
-                });
+                    });
+                }
                 mask_cache.insert(
                     req.id,
                     MaskCacheEntry::Poly {

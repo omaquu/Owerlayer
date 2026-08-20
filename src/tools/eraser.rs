@@ -288,12 +288,94 @@ pub fn update(ctx: &mut ToolContext) {
                     continue;
                 }
 
-                // Only split freehand strokes (solid or arrow); keep fixed shapes
-                let is_splittable = s.kind == crate::overlay::StrokeKind::Freehand;
-                if !is_splittable {
-                    keep_strokes.push(s);
-                    continue;
-                }
+                // Convert shapes to outline points so pixel eraser can split them
+                let (work_stroke, was_shape) = match s.kind {
+                    crate::overlay::StrokeKind::Rect => {
+                        if s.points.len() >= 2 {
+                            let rect = egui::Rect::from_two_pos(s.points[0], s.points[1]);
+                            let mut outline_pts = Vec::new();
+                            // Densely interpolate rectangle edges
+                            let corners = [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()];
+                            for pair in corners.windows(2) {
+                                let steps = ((pair[0].distance(pair[1]) / 2.0).ceil() as usize).max(4);
+                                for j in 0..steps {
+                                    let t = j as f32 / steps as f32;
+                                    outline_pts.push(pair[0].lerp(pair[1], t));
+                                }
+                            }
+                            let mut converted = s.clone();
+                            converted.points = outline_pts;
+                            converted.kind = crate::overlay::StrokeKind::Freehand;
+                            (converted, true)
+                        } else {
+                            (s, false)
+                        }
+                    }
+                    crate::overlay::StrokeKind::Circle => {
+                        if s.points.len() >= 2 {
+                            let center = s.points[0];
+                            let radius = s.points[0].distance(s.points[1]);
+                            let steps = 64;
+                            let mut outline_pts = Vec::new();
+                            for j in 0..=steps {
+                                let a = (j as f32 / steps as f32) * std::f32::consts::TAU;
+                                outline_pts.push(center + egui::vec2(a.cos() * radius, a.sin() * radius));
+                            }
+                            let mut converted = s.clone();
+                            converted.points = outline_pts;
+                            converted.kind = crate::overlay::StrokeKind::Freehand;
+                            (converted, true)
+                        } else {
+                            (s, false)
+                        }
+                    }
+                    crate::overlay::StrokeKind::Star => {
+                        if s.points.len() >= 2 {
+                            let center = s.points[0];
+                            let radius = s.points[0].distance(s.points[1]);
+                            let mut outline_pts = crate::utils::get_star_points(center, radius);
+                            outline_pts.push(outline_pts[0]); // close the loop
+                            let mut converted = s.clone();
+                            converted.points = outline_pts;
+                            converted.kind = crate::overlay::StrokeKind::Freehand;
+                            (converted, true)
+                        } else {
+                            (s, false)
+                        }
+                    }
+                    crate::overlay::StrokeKind::Heart => {
+                        if s.points.len() >= 2 {
+                            let center = s.points[0];
+                            let radius = s.points[0].distance(s.points[1]);
+                            let mut outline_pts = crate::utils::get_heart_points(center, radius);
+                            outline_pts.push(outline_pts[0]); // close the loop
+                            let mut converted = s.clone();
+                            converted.points = outline_pts;
+                            converted.kind = crate::overlay::StrokeKind::Freehand;
+                            (converted, true)
+                        } else {
+                            (s, false)
+                        }
+                    }
+                    crate::overlay::StrokeKind::Line | crate::overlay::StrokeKind::Arrow => {
+                        if s.points.len() >= 2 {
+                            let mut converted = s.clone();
+                            converted.kind = crate::overlay::StrokeKind::Freehand;
+                            converted.arrow = s.kind == crate::overlay::StrokeKind::Arrow;
+                            (converted, true)
+                        } else {
+                            (s, false)
+                        }
+                    }
+                    crate::overlay::StrokeKind::Freehand | crate::overlay::StrokeKind::Poly => {
+                        (s, false)
+                    }
+                    _ => {
+                        keep_strokes.push(s);
+                        continue;
+                    }
+                };
+                let s = work_stroke;
                 
                 let pts = get_transformed_points(&s);
                 let mut segments: Vec<Vec<egui::Pos2>> = Vec::new();
@@ -332,6 +414,8 @@ pub fn update(ctx: &mut ToolContext) {
                         s.spray_density,
                         s.highlight_opacity,
                         s.arrow_size,
+                        s.hardness,
+                        s.spacing,
                     );
                     s2.opacity = s.opacity;
                     s2.rotation = s.rotation;

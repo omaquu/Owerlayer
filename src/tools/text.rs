@@ -105,9 +105,16 @@ pub fn update(ctx: &mut ToolContext) {
     }
 
     if left_just_pressed && pending_text.is_none() && !painted_over {
-        // Start new text entry at click position
+        // Start new text entry at click position (snapped to grid if enabled)
+        let text_pos = if settings.snap_to_grid {
+            let grid_size = settings.grid_size.max(10.0);
+            egui::pos2(
+                (pos.x / grid_size).round() * grid_size,
+                (pos.y / grid_size).round() * grid_size,
+            )
+        } else { pos };
         *pending_text = Some(PendingText {
-            position: pos,
+            position: text_pos,
             buffer: String::new(),
             original: None,
             layer_idx: None,

@@ -25,6 +25,15 @@ pub fn update(ctx: &mut ToolContext) {
     if active_layer_idx >= project.layers.len() { return; }
     let layer = &mut project.layers[active_layer_idx];
 
+    // Snap position to grid if enabled
+    let grid_size = settings.grid_size.max(10.0);
+    let pos = if settings.snap_to_grid {
+        egui::pos2(
+            (pos.x / grid_size).round() * grid_size,
+            (pos.y / grid_size).round() * grid_size,
+        )
+    } else { pos };
+
                 if settings.shape_type == ShapeType::Poly {
                     if left_just_pressed { 
                         current_stroke.push(pos); 
@@ -53,7 +62,7 @@ pub fn update(ctx: &mut ToolContext) {
                         }
                         
                         if !added_to_existing {
-                            let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity, settings.arrow_size);
+                            let s = Stroke::new(final_points, settings.pen_color, settings.stroke_width, StrokeKind::Poly, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity, settings.arrow_size, settings.brush_hardness, settings.brush_spacing);
                             layer.strokes.push(s);
                             layer.expanded = true;
                             project.selected_object = Some(SelectedObject {
@@ -79,7 +88,7 @@ pub fn update(ctx: &mut ToolContext) {
                                 ShapeType::Arrow => StrokeKind::Arrow,
                                 _ => StrokeKind::Rect,
                             };
-                            let s = Stroke::new(vec![start, pos], settings.pen_color, settings.stroke_width, kind, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity, settings.arrow_size);
+                            let s = Stroke::new(vec![start, pos], settings.pen_color, settings.stroke_width, kind, settings.brush_mode, Some(settings.background_color), settings.brush_shadow, settings.brush_shape, settings.brush_outline, false, settings.spray_density, settings.highlight_opacity, settings.arrow_size, settings.brush_hardness, settings.brush_spacing);
                             let is_locked = layer.locked;
                             let ask_mode = settings.auto_new_layer.is_none();
                             if is_locked || ask_mode {

@@ -1011,13 +1011,13 @@ pub fn update(ctx: &mut ToolContext) {
                                 } else {
                                     crate::utils::translate_layer(layer, delta);
                                     if snap {
-                                        // Snap-to-grid for layers: snap first placed image position as reference
-                                        if let Some(img) = layer.placed_images.first_mut() {
+                                        // Snap-to-grid for layers: use layer bounds top-left as reference
+                                        if let Some(bounds) = crate::utils::layer_bounds(layer) {
                                             let snapped = egui::pos2(
-                                                (img.position.x / grid_size).round() * grid_size,
-                                                (img.position.y / grid_size).round() * grid_size,
+                                                (bounds.min.x / grid_size).round() * grid_size,
+                                                (bounds.min.y / grid_size).round() * grid_size,
                                             );
-                                            let snap_delta = snapped - img.position;
+                                            let snap_delta = snapped - bounds.min;
                                             if snap_delta.length_sq() > 0.01 {
                                                 crate::utils::translate_layer(layer, snap_delta);
                                             }

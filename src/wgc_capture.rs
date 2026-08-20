@@ -324,7 +324,8 @@ pub mod wgc {
                         Some(&box_region),
                     );
                 } else {
-                    self.d3d_context.CopyResource(&staging_texture, &source_texture);
+                    // Dimensions don't match for a safe copy, skip this frame
+                    return Ok(None);
                 }
                 let gpu_copy_time = gpu_copy_start.elapsed().as_micros();
 
@@ -342,6 +343,11 @@ pub mod wgc {
                 let width = crop_width;
                 let height = crop_height;
                 let pitch = mapped.RowPitch as usize;
+
+                if width == 0 || height == 0 || target_w == 0 || target_h == 0 {
+                    self.d3d_context.Unmap(&staging_texture, 0);
+                    return Ok(None);
+                }
 
                 let swap_start = std::time::Instant::now();
 

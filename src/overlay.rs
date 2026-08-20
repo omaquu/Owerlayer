@@ -183,7 +183,7 @@ pub fn render_canvas(
     // ── Grid Rendering ──
     if settings.show_grid && !settings.hide_all {
         let grid_size = settings.grid_size.max(10.0);
-        let color = egui::Color32::from_rgba_unmultiplied(200, 200, 200, 50); // 20% opacity subtle grid
+        let color = egui::Color32::from_rgba_unmultiplied(200, 200, 200, 38); // 15% opacity subtle grid
         let stroke = egui::Stroke::new(1.0, color);
         // Vertical lines
         let mut x = rect.min.x;
@@ -1216,7 +1216,7 @@ pub fn render_canvas(
 
                     // For silhouette passes (shadow/outline/glow), only use GL when blur effect is active
                     // so the blur kernel can spread the silhouette halo. Otherwise use fast software path.
-                    let use_gl = gl_renderer.is_some() && (apply_filters || final_effect > 0 || pass_blur_strength > 0.0 || spread > 0.0 || chromatic_val > 0.0 || aa_image || aa_outline || aa_shadow);
+                    let use_gl = gl_renderer.is_some() && (apply_filters || final_effect > 0 || pass_blur_strength > 0.0 || spread > 0.0 || chromatic_val > 0.0 || pass_antialias);
 
                     if use_gl {
                         let renderer = gl_renderer.as_ref().unwrap().clone();

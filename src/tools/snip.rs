@@ -82,12 +82,22 @@ pub fn update(ctx: &mut ToolContext) {
     let layer = &mut project.layers[active_layer_idx];
                 let mode = settings.snip_mode;
             if mode == SnipMode::Rect {
+                // Snap positions to grid if enabled
+                let grid_size = settings.grid_size.max(10.0);
+                let snap_pos = |p: egui::Pos2| -> egui::Pos2 {
+                    if settings.snap_to_grid {
+                        egui::pos2(
+                            (p.x / grid_size).round() * grid_size,
+                            (p.y / grid_size).round() * grid_size,
+                        )
+                    } else { p }
+                };
                 if left_just_pressed { 
-                    *line_start = Some(pos); 
+                    *line_start = Some(snap_pos(pos)); 
                 }
                 if left_just_released {
                     if let Some(start) = line_start.take() {
-                        let rect = egui::Rect::from_two_pos(start, pos);
+                        let rect = egui::Rect::from_two_pos(start, snap_pos(pos));
                         let w = rect.width();
                         let h = rect.height();
                         if w > 5.0 && h > 5.0 {

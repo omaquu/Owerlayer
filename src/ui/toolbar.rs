@@ -1365,6 +1365,32 @@ pub fn render_tool_options(
                                     img.show_source_rect = settings.show_source_rect;
                                 }
                             }
+
+                            let img_origin_color = if img.capture_source == CaptureSource::Origin { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                            if ui.add(egui::Button::new(egui::RichText::new("Origin").color(img_origin_color).strong()).selected(img.capture_source == CaptureSource::Origin)).on_hover_text("Capture from specific Window background").clicked() {
+                                img.capture_source = CaptureSource::Origin;
+                                img.snip_source_overlay = false;
+                                img.thumbnail_texture = None;
+                                img.is_live = true;
+                                if img.source_rect.is_none() {
+                                    img.source_rect = Some([img.position.x, img.position.y, img.display_size.unwrap_or([img.size[0] as f32, img.size[1] as f32])[0], img.display_size.unwrap_or([img.size[1] as f32, img.size[1] as f32])[1]]);
+                                    img.show_source_rect = settings.show_source_rect;
+                                }
+                                if img.target_hwnd == 0 {
+                                    let ppp = ui.ctx().pixels_per_point();
+                                    let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
+                                    if let Some(src) = img.source_rect {
+                                        let logical_cx = src[0] + src[2] / 2.0;
+                                        let logical_cy = src[1] + src[3] / 2.0;
+                                        let center_x = (logical_cx * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
+                                        let center_y = (logical_cy * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                                        if let Some((hwnd, _name, _rect)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
+                                            img.target_hwnd = hwnd as isize;
+                                        }
+                                    }
+                                }
+                            }
+
                             if img.is_live || img.source_rect.is_some() {
                                 let show_src_color = if img.show_source_rect { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
                                 if ui.add(egui::Button::new(egui::RichText::new("Show Source").color(show_src_color).strong()).selected(img.show_source_rect)).clicked() {
