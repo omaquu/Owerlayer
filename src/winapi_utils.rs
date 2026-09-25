@@ -97,6 +97,50 @@ pub fn get_monitor_rects() -> Vec<RECT> {
 #[cfg(not(windows))]
 pub fn get_monitor_rects() -> Vec<()> { Vec::new() }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct MonitorInfo {
+    pub index: usize,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub is_primary: bool,
+}
+
+#[cfg(windows)]
+pub fn get_all_monitors() -> Vec<MonitorInfo> {
+    use windows_sys::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, MONITORINFO, HMONITOR, HDC};
+    use windows_sys::Win32::Foundation::{RECT, LPARAM, BOOL};
+
+    unsafe extern "system" fn enum_proc(h_mon: HMONITOR, _: HDC, _: *mut RECT, l_param: LPARAM) -> BOOL {
+        let list = &mut *(l_param as *mut Vec<MonitorInfo>);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(h_mon, &mut info as *mut _ as *mut _) != 0 {
+            let is_primary = (info.dwFlags & 1) != 0;
+            let idx = list.len();
+            list.push(MonitorInfo {
+                index: idx,
+                x: info.rcMonitor.left,
+                y: info.rcMonitor.top,
+                width: info.rcMonitor.right - info.rcMonitor.left,
+                height: info.rcMonitor.bottom - info.rcMonitor.top,
+                is_primary,
+            });
+        }
+        1
+    }
+
+    let mut list = Vec::new();
+    unsafe {
+        EnumDisplayMonitors(std::ptr::null_mut(), std::ptr::null(), Some(enum_proc), &mut list as *mut _ as LPARAM);
+    }
+    list
+}
+
+#[cfg(not(windows))]
+pub fn get_all_monitors() -> Vec<MonitorInfo> { Vec::new() }
+
 /// Poll mouse position and left-button state via WinAPI.
 /// Works regardless of window focus or hit-testing.
 #[cfg(windows)]

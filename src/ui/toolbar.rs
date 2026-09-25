@@ -646,6 +646,75 @@ pub fn render_tool_options(
                 let live_color = if live_sel { egui::Color32::from_rgb(255, 150, 50) } else { egui::Color32::from_gray(140) };
                 if ui.add(egui::Button::new(egui::RichText::new("⏸ Static").color(static_color).strong()).selected(static_sel)).on_hover_text("Capture static/non-refreshing snip").clicked() { settings.snip_live = false; }
                 if ui.add(egui::Button::new(egui::RichText::new("⏺ Live").color(live_color).strong()).selected(live_sel)).on_hover_text("Capture real-time live mirror snip").clicked() { settings.snip_live = true; }
+                
+                let monitors = crate::winapi_utils::get_all_monitors();
+                if monitors.len() > 1 {
+                    ui.add(egui::Separator::default().vertical());
+                    ui.label(egui::RichText::new("Monitors:").size(11.0).color(egui::Color32::GRAY));
+                    for mon in &monitors {
+                        let btn_label = if mon.is_primary {
+                            format!("🖥️ Mon {} (Main)", mon.index + 1)
+                        } else {
+                            format!("🖥️ Mon {}", mon.index + 1)
+                        };
+                        if ui.button(egui::RichText::new(btn_label).strong())
+                            .on_hover_text(format!("Capture Monitor {} ({}x{}) into main monitor", mon.index + 1, mon.width, mon.height))
+                            .clicked()
+                        {
+                            let (target_w, target_h) = {
+                                let max_w = 640.0f32;
+                                let ratio = mon.width as f32 / mon.height as f32;
+                                (max_w, max_w / ratio)
+                            };
+                            let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos() as usize;
+                            let ppp = ui.ctx().pixels_per_point();
+                            let mut img = crate::types::PlacedImage::new(
+                                id,
+                                egui::pos2(100.0, 100.0),
+                                [(target_w * ppp).round() as usize, (target_h * ppp).round() as usize],
+                                Vec::new(),
+                            );
+                            img.name = format!("Monitor {}", mon.index + 1);
+                            img.is_live = settings.snip_live;
+                            img.display_size = Some([target_w, target_h]);
+                            img.source_rect = Some([mon.x as f32, mon.y as f32, mon.width as f32, mon.height as f32]);
+                            img.show_source_rect = settings.show_source_rect;
+                            img.blur = settings.blur_strength;
+                            img.blur_effect = settings.blur_effect;
+                            img.shadow = settings.snip_shadow;
+                            img.capture_source = crate::types::CaptureSource::Desktop;
+                            img.snip_points = Some(vec![
+                                egui::pos2(0.0, 0.0),
+                                egui::pos2(target_w, 0.0),
+                                egui::pos2(target_w, target_h),
+                                egui::pos2(0.0, target_h),
+                                egui::pos2(0.0, 0.0),
+                            ]);
+
+                            if !settings.snip_live {
+                                if let Some(pixels) = crate::tools::snip::capture_screen_rect_safe(settings, mon.x, mon.y, mon.width, mon.height) {
+                                    img.pixels = pixels;
+                                    img.size = [mon.width as usize, mon.height as usize];
+                                }
+                            }
+
+                            let active_layer_idx = project.active_layer;
+                            if active_layer_idx < project.layers.len() {
+                                let layer = &mut project.layers[active_layer_idx];
+                                layer.placed_images.push(img);
+                                let new_idx = layer.placed_images.len() - 1;
+                                layer.expanded = true;
+                                project.selected_object = Some(crate::types::SelectedObject {
+                                    layer_idx: active_layer_idx,
+                                    object_type: crate::types::ObjectType::Image,
+                                    object_idx: new_idx,
+                                });
+                                *active_tool = crate::types::Tool::Move;
+                                *request_history_push = Some(format!("Capture Monitor {}", mon.index + 1));
+                            }
+                        }
+                    }
+                }
                 ui.add(egui::Separator::default().vertical());
                 ui.add(egui::DragValue::new(&mut settings.blur_strength).speed(0.2).range(0.0..=300.0).prefix("Blur: ").max_decimals(0)).on_hover_text("Blur strength for capture");
                 if settings.blur_strength > 0.1 {
@@ -1049,6 +1118,30 @@ pub fn render_tool_options(
                                         img.capture_source = CaptureSource::Origin;
                                         img.snip_source_overlay = false;
                                         img_source_changed = true;
+                                    }
+
+                                    if img.capture_source == CaptureSource::Desktop {
+                                        let monitors = crate::winapi_utils::get_all_monitors();
+                                        if monitors.len() > 1 {
+                                            for mon in &monitors {
+                                                let is_current = if let Some(src) = img.source_rect {
+                                                    let cx = (src[0] + src[2] * 0.5) as i32;
+                                                    let cy = (src[1] + src[3] * 0.5) as i32;
+                                                    cx >= mon.x && cx < mon.x + mon.width && cy >= mon.y && cy < mon.y + mon.height
+                                                } else {
+                                                    false
+                                                };
+                                                let mon_color = if is_current { egui::Color32::from_rgb(255, 180, 50) } else { egui::Color32::from_gray(140) };
+                                                let mon_label = format!("Mon {}", mon.index + 1);
+                                                if ui.add(egui::Button::new(egui::RichText::new(mon_label).color(mon_color).strong()).selected(is_current))
+                                                    .on_hover_text(format!("Switch capture source to Monitor {}", mon.index + 1))
+                                                    .clicked()
+                                                {
+                                                    img.source_rect = Some([mon.x as f32, mon.y as f32, mon.width as f32, mon.height as f32]);
+                                                    img_source_changed = true;
+                                                }
+                                            }
+                                        }
                                     }
 
                                     if img.capture_source == CaptureSource::Origin && img.target_hwnd == 0 {

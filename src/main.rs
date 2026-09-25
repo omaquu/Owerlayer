@@ -759,18 +759,7 @@ impl eframe::App for OwerlayerApp {
             if self.frame_count == 2 {
                 crate::winapi_utils::setup_overlay_window(self.settings.fso_fix);
                 if self.settings.multi_monitor || self.settings.virtual_matrix {
-                    let (sw, sh, ox, oy) = if let Some(idx) = self.settings.monitor_lock {
-                        crate::winapi_utils::get_monitor_size_pos(idx)
-                    } else {
-                        let (sw, sh) = crate::winapi_utils::get_screen_size(true);
-                        let (ox, oy) = crate::winapi_utils::get_virtual_origin();
-                        (sw, sh, ox, oy)
-                    };
-                    if self.settings.fso_fix {
-                        crate::winapi_utils::reposition_overlay_window(ox as i32 - 2, oy as i32 - 2, sw as i32 + 4, sh as i32 + 4);
-                    } else {
-                        crate::winapi_utils::reposition_overlay_window(ox as i32, oy as i32, sw as i32, sh as i32);
-                    }
+                    crate::winapi_utils::reposition_overlay_to_primary_monitor(self.settings.fso_fix);
                 }
             }
         }
