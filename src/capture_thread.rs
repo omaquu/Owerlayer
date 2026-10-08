@@ -738,9 +738,8 @@ impl CaptureThread {
             }
         }
         if has_rect {
-            let (wx, wy) = req.window_offset;
-            let sx = (req.source_rect[0] * req.ppp).round() as i32 + if req.use_absolute { 0 } else { wx };
-            let sy = (req.source_rect[1] * req.ppp).round() as i32 + if req.use_absolute { 0 } else { wy };
+            let sx = (req.source_rect[0] * req.ppp).round() as i32;
+            let sy = (req.source_rect[1] * req.ppp).round() as i32;
             let sw = (req.source_rect[2] * req.ppp).round() as i32;
             let sh = (req.source_rect[3] * req.ppp).round() as i32;
             
@@ -752,7 +751,6 @@ impl CaptureThread {
         let mut pixels = None;
         let mut pw = 0;
         let mut ph = 0;
-        let mut wgc_attempted = false;
 
         // Try WGC for window capture
         if !req.live_performance_mode {
@@ -788,7 +786,6 @@ impl CaptureThread {
             }
 
             if let Some(Ok(session)) = wgc_window_sessions.get(&hwnd) {
-                wgc_attempted = true;
                 if let Ok(Some((crop_pixels, crop_w, crop_h, gpu_copy_us, map_wait_us, pixel_swap_us))) = session.get_latest_frame(req.id, crop) {
                     perf.wgc_gpu_copy_us = gpu_copy_us;
                     perf.wgc_map_wait_us = map_wait_us;
@@ -797,24 +794,19 @@ impl CaptureThread {
                     pixels = Some(crop_pixels);
                     pw = crop_w;
                     ph = crop_h;
-                } else {
-                    // WGC session is active, but no new frame was available.
-                    return None;
                 }
             }
         } else {
             wgc_window_sessions.remove(&hwnd);
         }
 
-        let is_bgra = wgc_attempted;
+        let is_wgc = pixels.is_some();
+        let is_bgra = is_wgc;
 
-        // Fallback to GDI legacy window capture
+        // Fallback to GDI legacy window capture if WGC did not provide a frame
         let mut pixels = match pixels {
             Some(p) => p,
             None => {
-                if wgc_attempted {
-                    return None;
-                }
                 let gdi_start = std::time::Instant::now();
                 let (p, w, h) = crate::winapi_utils::capture_window(req.hwnd)?;
                 perf.gdi_capture_us = gdi_start.elapsed().as_micros();

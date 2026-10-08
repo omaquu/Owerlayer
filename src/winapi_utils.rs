@@ -474,19 +474,9 @@ pub fn setup_overlay_window(fso_fix: bool) {
         
         SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
 
-        let is_dcomp = (ex_style & 0x00400000) != 0;
-        if is_dcomp && fso_fix {
-            // DirectComposition is active and FSO fix is enabled (window is slightly offset to prevent FSO).
-            // Do NOT add WS_EX_LAYERED to avoid OBS capture freeze and DWM composition conflicts.
-            let final_ex_style = new_ex_style & !WS_EX_LAYERED;
-            SetWindowLongW(hwnd, GWL_EXSTYLE, final_ex_style as i32);
-        } else {
-            // Either not DirectComposition, or FSO fix is disabled.
-            // Add WS_EX_LAYERED and set layered window attributes.
-            new_ex_style |= WS_EX_LAYERED;
-            SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style as i32);
-            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-        }
+        new_ex_style |= WS_EX_LAYERED;
+        SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style as i32);
+        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
 
         // Ensure always-on-top
         SetWindowPos(
@@ -697,28 +687,33 @@ pub fn capture_screen_rect(x: i32, y: i32, width: i32, height: i32) -> Option<Ve
 pub fn get_window_at_point(sx: i32, sy: i32) -> Option<(usize, String, [i32; 4])> {
     unsafe {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetWindow, GetTopWindow, GW_HWNDNEXT,
+            GetWindow, GetTopWindow, GW_HWNDNEXT, IsIconic,
         };
         let overlay = OVERLAY_HWND.load(Ordering::Relaxed);
         let mut hwnd = GetTopWindow(std::ptr::null_mut());
+        let mut fallback_window = None;
         while !hwnd.is_null() {
-            if hwnd != overlay && IsWindowVisible(hwnd) != 0 {
+            if hwnd != overlay && IsWindowVisible(hwnd) != 0 && IsIconic(hwnd) == 0 {
                 let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                 GetWindowRect(hwnd, &mut r);
                 if sx >= r.left && sx < r.right && sy >= r.top && sy < r.bottom {
-                    let mut buf = [0u16; 256];
-                    let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), 256);
-                    if len > 0 {
-                        let title = String::from_utf16_lossy(&buf[..len as usize]);
-                        let w = r.right - r.left;
-                        let h = r.bottom - r.top;
-                        return Some((hwnd as usize, title, [r.left, r.top, w, h]));
+                    let w = r.right - r.left;
+                    let h = r.bottom - r.top;
+                    if w > 10 && h > 10 {
+                        let mut buf = [0u16; 256];
+                        let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), 256);
+                        if len > 0 {
+                            let title = String::from_utf16_lossy(&buf[..len as usize]);
+                            return Some((hwnd as usize, title, [r.left, r.top, w, h]));
+                        } else if fallback_window.is_none() {
+                            fallback_window = Some((hwnd as usize, String::new(), [r.left, r.top, w, h]));
+                        }
                     }
                 }
             }
             hwnd = GetWindow(hwnd, GW_HWNDNEXT);
         }
-        None
+        fallback_window
     }
 }
 

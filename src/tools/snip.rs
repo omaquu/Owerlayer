@@ -128,7 +128,7 @@ pub fn update(ctx: &mut ToolContext) {
                                  let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
                                  let pw = (w * ppp).round() as i32;
                                  let ph = (h * ppp).round() as i32;
-                                 if let Some(pixels) = capture_screen_rect_safe(settings, sx, sy, pw, ph) {
+                                 if let Some(pixels) = capture_static_image(settings, settings.snip_source, settings.origin_target_hwnd, 0, sx, sy, pw, ph) {
                                      *snip_created = true;
                                      let mut img = PlacedImage::new(id, rect.min, [pw as usize, ph as usize], pixels);
 
@@ -209,7 +209,7 @@ pub fn update(ctx: &mut ToolContext) {
                             } else {
                                 let sx = (rect.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                                 let sy = (rect.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                                if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, pw as i32, ph as i32) {
+                                if let Some(mut pixels) = capture_static_image(settings, settings.snip_source, settings.origin_target_hwnd, 0, sx, sy, pw as i32, ph as i32) {
                                     *snip_created = true;
                                     for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                     let mut img = PlacedImage::new(id, rect.min, [pw, ph], pixels);
@@ -277,7 +277,7 @@ pub fn update(ctx: &mut ToolContext) {
                         } else {
                             let sx = (bounds.min.x * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
                             let sy = (bounds.min.y * ppp) as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
-                            if let Some(mut pixels) = capture_screen_rect_safe(settings, sx, sy, sw as i32, sh as i32) {
+                            if let Some(mut pixels) = capture_static_image(settings, settings.snip_source, settings.origin_target_hwnd, 0, sx, sy, sw as i32, sh as i32) {
                                 *snip_created = true;
                                 for (i, &m) in mask.iter().enumerate() { if m == 0 { pixels[i*4+3] = 0; } }
                                 let mut img = PlacedImage::new(id, bounds.min, [sw, sh], pixels);
@@ -478,13 +478,23 @@ pub fn update(ctx: &mut ToolContext) {
                         img.capture_source = settings.snip_source;
                         if settings.snip_source == crate::types::CaptureSource::Origin {
                             if let Some(src) = img.source_rect {
-                                let (wx, wy) = crate::winapi_utils::get_window_screen_pos();
                                 let ppp = ctx.ui.ctx().pixels_per_point();
-                                let center_x = ((src[0] + src[2] * 0.5) * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wx };
-                                let center_y = ((src[1] + src[3] * 0.5) * ppp).round() as i32 + if settings.use_absolute_screen_coords { 0 } else { wy };
+                                let center_x = ((src[0] + src[2] * 0.5) * ppp).round() as i32;
+                                let center_y = ((src[1] + src[3] * 0.5) * ppp).round() as i32;
                                 if let Some((hwnd, _, _)) = crate::winapi_utils::get_window_at_point(center_x, center_y) {
                                     img.target_hwnd = hwnd as isize;
                                     settings.origin_target_hwnd = hwnd as isize;
+                                    if !img.is_live {
+                                        let sx = (src[0] * ppp).round() as i32;
+                                        let sy = (src[1] * ppp).round() as i32;
+                                        let sw = (src[2] * ppp).round() as i32;
+                                        let sh = (src[3] * ppp).round() as i32;
+                                        if let Some(pix) = crate::winapi_utils::capture_window_rect(hwnd, sx, sy, sw, sh) {
+                                            img.pixels = pix;
+                                            img.texture = None;
+                                            img.thumbnail_texture = None;
+                                        }
+                                    }
                                 } else {
                                     img.target_hwnd = settings.origin_target_hwnd;
                                 }

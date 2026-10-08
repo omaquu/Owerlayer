@@ -221,13 +221,12 @@ pub mod wgc {
                 
                 // Check if this client has already processed the latest frame at the same crop coordinates
                 {
-                    let mut states = self.client_last_state.lock().unwrap();
+                    let states = self.client_last_state.lock().unwrap();
                     if let Some(&(last_seen, last_crop)) = states.get(&client_id) {
                         if last_seen >= current_counter && last_crop == crop {
                             return Ok(None);
                         }
                     }
-                    states.insert(client_id, (current_counter, crop));
                 }
 
                 // Get the shared texture
@@ -270,7 +269,7 @@ pub mod wgc {
                         false
                     }
                 } else {
-                    false
+                    true
                 };
 
                 let target_w = if let Some((_, _, cw, _ch)) = crop { cw as usize } else { crop_width };
@@ -394,6 +393,11 @@ pub mod wgc {
                 let pixel_swap_time = swap_start.elapsed().as_micros();
 
                 self.d3d_context.Unmap(&staging_texture, 0);
+
+                {
+                    let mut states = self.client_last_state.lock().unwrap();
+                    states.insert(client_id, (current_counter, crop));
+                }
 
                 Ok(Some((out_pixels, out_w, out_h, gpu_copy_time, map_wait_time, pixel_swap_time)))
             }

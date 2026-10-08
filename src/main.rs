@@ -753,14 +753,14 @@ impl eframe::App for OwerlayerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.settings.multi_monitor || self.settings.virtual_matrix {
             ctx.set_pixels_per_point(1.0);
+        } else {
+            ctx.set_pixels_per_point(self.settings.ui_scale);
         }
         #[cfg(windows)]
         {
             if self.frame_count == 2 {
                 crate::winapi_utils::setup_overlay_window(self.settings.fso_fix);
-                if self.settings.multi_monitor || self.settings.virtual_matrix {
-                    crate::winapi_utils::reposition_overlay_to_primary_monitor(self.settings.fso_fix);
-                }
+                crate::winapi_utils::reposition_overlay_to_primary_monitor(self.settings.fso_fix);
             }
         }
         if self.history.entries.is_empty() {
@@ -808,8 +808,11 @@ impl eframe::App for OwerlayerApp {
         }
 
         // ---- 1. Poll mouse ----
-        let ppp = self.settings.ui_scale;
-        let mouse = MouseState::poll(self.prev_mouse_down, self.prev_mouse_pos, ppp, self.settings.multi_monitor);
+        let ppp = ctx.pixels_per_point();
+        let mut mouse = MouseState::poll(self.prev_mouse_down, self.prev_mouse_pos, ppp, self.settings.multi_monitor);
+        if let Some(hover_pos) = ctx.input(|i| i.pointer.hover_pos()) {
+            mouse.pos = hover_pos;
+        }
         self.prev_mouse_down = mouse.left_down;
         self.prev_mouse_pos = mouse.pos;
 
@@ -954,6 +957,8 @@ impl eframe::App for OwerlayerApp {
         if passthrough != self.prev_passthrough {
             ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(passthrough));
             self.prev_passthrough = passthrough;
+            #[cfg(windows)]
+            winapi_utils::refresh_overlay_composition();
         }
 
         // ---- 3b. Update Capture Exclusion (Fix live snip mirror loop) ----
